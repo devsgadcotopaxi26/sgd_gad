@@ -1,0 +1,90 @@
+version: '3.9'
+
+services:
+
+  backend:
+    build: ./backend
+    container_name: sgd_backend
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    networks:
+      - sgd_net
+    command: >
+         sh -c "pip install gunicorn &&
+         python manage.py migrate &&
+         python manage.py collectstatic --noinput &&
+         gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --reload"
+
+  frontend:
+    build: ./frontend
+    container_name: sgd_frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    networks:
+      - sgd_net
+    command: npm run dev -- --host
+
+  redis:
+    image: redis:7-alpine
+    container_name: sgd_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - sgd_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: sgd_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./backend/staticfiles:/app/staticfiles
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - sgd_net
+
+  celery:
+    build: ./backend
+    container_name: sgd_celery
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    networks:
+      - sgd_net
+    command: celery -A config worker -l info
+
+  celery-beat:
+    build: ./backend
+    container_name: sgd_celery_beat
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    networks:
+      - sgd_net
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+networks:
+  sgd_net:
+    driver: bridge

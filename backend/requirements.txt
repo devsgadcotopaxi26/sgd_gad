@@ -1,0 +1,40 @@
+# ============================================================
+# SGD Backend — Dependencias Python
+# ============================================================
+
+# Framework principal
+Django==5.1.4
+djangorestframework==3.15.2
+
+# Autenticación JWT
+djangorestframework-simplejwt==5.3.1
+
+# Base de datos PostgreSQL
+psycopg2-binary==2.9.10
+
+# Variables de entorno
+python-decouple==3.8
+
+# CORS para el frontend React
+django-cors-headers==4.6.0
+
+# Celery — tareas asíncronas y cron
+celery==5.4.0
+django-celery-beat==2.7.0
+redis==5.2.1
+
+# Firma electrónica PDF
+pyhanko==0.25.1
+pyhanko-certvalidator==0.26.3
+
+# Generación de reportes PDF
+weasyprint==63.1
+
+# Filtros avanzados para la API
+django-filter==24.3
+
+# Utilidades
+Pillow==11.1.0
+python-dateutil==2.9.0
+
+gunicorn==21.2.0
