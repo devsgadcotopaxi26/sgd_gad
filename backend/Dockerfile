@@ -5,10 +5,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Dependencias del sistema para psycopg2 y WeasyPrint
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
+    postgresql-client \
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \

@@ -7,12 +7,13 @@ Django Settings
 from pathlib import Path
 from datetime import timedelta
 from decouple import config
+import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ── Seguridad ─────────────────────────────────────────────
-SECRET_KEY = config('DJANGO_SECRET_KEY')
-DEBUG = config('DJANGO_DEBUG', default=False, cast=bool)
+SECRET_KEY    = config('DJANGO_SECRET_KEY')
+DEBUG         = config('DJANGO_DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='localhost').split(',')
 
 # ── Apps instaladas ───────────────────────────────────────
@@ -80,15 +81,13 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # ── Base de datos PostgreSQL ──────────────────────────────
 DATABASES = {
     'default': {
-        'ENGINE': config('DB_ENGINE', default='django.db.backends.postgresql'),
-        'NAME': config('DB_NAME', default='sgd_gad_cotopaxi'),
-        'USER': config('DB_USER', default='postgres'),
+        'ENGINE':   config('DB_ENGINE',   default='django.db.backends.postgresql'),
+        'NAME':     config('DB_NAME',     default='sgd_gad_cotopaxi'),
+        'USER':     config('DB_USER',     default='postgres'),
         'PASSWORD': config('DB_PASSWORD', default='sgd2026'),
-        'HOST': config('DB_HOST', default='host.docker.internal'),
-        'PORT': config('DB_PORT', default='5432'),
-        'OPTIONS': {
-            'options': '-c search_path=public',
-        },
+        'HOST':     config('DB_HOST',     default='host.docker.internal'),
+        'PORT':     config('DB_PORT',     default='5432'),
+        'OPTIONS':  { 'options': '-c search_path=public' },
     }
 }
 
@@ -97,15 +96,15 @@ AUTH_USER_MODEL = 'usuarios.Usuario'
 
 # ── Internacionalización ──────────────────────────────────
 LANGUAGE_CODE = 'es-ec'
-TIME_ZONE = 'America/Guayaquil'
-USE_I18N = True
-USE_TZ = True
+TIME_ZONE     = 'America/Guayaquil'
+USE_I18N      = True
+USE_TZ        = True
 
 # ── Archivos estáticos ────────────────────────────────────
-STATIC_URL = '/static/'
+STATIC_URL  = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL   = '/media/'
+MEDIA_ROOT  = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -138,11 +137,11 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(
         days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)
     ),
-    'ROTATE_REFRESH_TOKENS': True,
+    'ROTATE_REFRESH_TOKENS':    True,
     'BLACKLIST_AFTER_ROTATION': True,
-    'AUTH_HEADER_TYPES': ('Bearer',),
-    'USER_ID_FIELD': 'id',
-    'USER_ID_CLAIM': 'user_id',
+    'AUTH_HEADER_TYPES':        ('Bearer',),
+    'USER_ID_FIELD':            'id',
+    'USER_ID_CLAIM':            'user_id',
 }
 
 # ── CORS ──────────────────────────────────────────────────
@@ -157,18 +156,18 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True
 
 # ── Celery ────────────────────────────────────────────────
-CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://redis:6379/0')
-CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://redis:6379/1')
-CELERY_TIMEZONE = TIME_ZONE
+CELERY_BROKER_URL       = config('CELERY_BROKER_URL',       default='redis://redis:6379/0')
+CELERY_RESULT_BACKEND   = config('CELERY_RESULT_BACKEND',   default='redis://redis:6379/1')
+CELERY_TIMEZONE         = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+CELERY_BEAT_SCHEDULER   = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # ── Email ─────────────────────────────────────────────────
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = config('EMAIL_HOST', default='localhost')
-EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
-EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_BACKEND      = config('EMAIL_BACKEND',      default='django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST         = config('EMAIL_HOST',         default='localhost')
+EMAIL_PORT         = config('EMAIL_PORT',         default=587, cast=int)
+EMAIL_USE_TLS      = config('EMAIL_USE_TLS',      default=True, cast=bool)
+EMAIL_HOST_USER    = config('EMAIL_HOST_USER',    default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='SGD GAD Cotopaxi <sgd@cotopaxi.gob.ec>')
 
@@ -184,19 +183,36 @@ LOGGING = {
     },
     'handlers': {
         'console': {
-            'class': 'logging.StreamHandler',
+            'class':     'logging.StreamHandler',
             'formatter': 'verbose',
         },
     },
     'root': {
         'handlers': ['console'],
-        'level': 'INFO',
+        'level':    'INFO',
     },
     'loggers': {
         'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
+            'handlers':  ['console'],
+            'level':     'INFO',
             'propagate': False,
         },
     },
 }
+
+# ── Configuración de producción (solo si DEBUG=False) ─────
+if not DEBUG:
+    SECURE_BROWSER_XSS_FILTER      = True
+    SECURE_CONTENT_TYPE_NOSNIFF    = True
+    X_FRAME_OPTIONS                = 'DENY'
+    SECURE_HSTS_SECONDS            = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SESSION_COOKIE_SECURE          = True
+    CSRF_COOKIE_SECURE             = True
+
+    LOGGING['handlers']['file'] = {
+        'class':     'logging.FileHandler',
+        'filename':  '/app/logs/sgd.log',
+        'formatter': 'verbose',
+    }
+    LOGGING['root']['handlers'] = ['console', 'file']

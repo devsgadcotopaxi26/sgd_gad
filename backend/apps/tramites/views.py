@@ -157,6 +157,15 @@ class TramiteViewSet(viewsets.ModelViewSet):
                 tramite.usuario_asignado_id = request.data['usuario_asignado']
 
         tramite.save()
+        if tramite.persona.notificacion_email and tramite.persona.email:
+            from apps.auditoria.emails import email_notificacion_ciudadano
+            email_notificacion_ciudadano(
+                tramite.persona.email,
+                tramite.persona.nombre_completo,
+                tramite.numero_tramite,
+                tramite.asunto,
+                dict(Tramite.ESTADO_CHOICES).get(nuevo_estado, nuevo_estado),
+            )
 
         Seguimiento.objects.create(
             tramite=tramite,
