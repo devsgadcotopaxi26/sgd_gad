@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-
+from rest_framework.views import APIView
 from .models import Categoria, TipoTramite, Persona, Tramite, Seguimiento
 from .serializers import (
     CategoriaSerializer, TipoTramiteListSerializer, TipoTramiteDetalleSerializer,
@@ -196,3 +196,106 @@ class TramiteViewSet(viewsets.ModelViewSet):
             })
         except Tramite.DoesNotExist:
             return Response({'detail': 'Trámite no encontrado.'}, status=404)
+
+class PortalCiudadanoView(APIView):
+    permission_classes = []  # público
+
+    def get(self, request):
+        numero = request.query_params.get('numero', '').strip()
+        cedula = request.query_params.get('cedula', '').strip()
+
+        if not numero and not cedula:
+            return Response({'detail': 'Ingresa el número de trámite o tu cédula.'}, status=400)
+
+        try:
+            if numero:
+                tramite = Tramite.objects.select_related(
+                    'tipo_tramite__categoria', 'persona', 'unidad_responsable'
+                ).get(numero_tramite=numero)
+            else:
+                tramites = Tramite.objects.select_related(
+                    'tipo_tramite__categoria', 'persona', 'unidad_responsable'
+                ).filter(persona__numero_identificacion=cedula).order_by('-fecha_ingreso')
+
+                if not tramites.exists():
+                    return Response({'detail': 'No se encontraron trámites con esa cédula.'}, status=404)
+
+                return Response({
+                    'tipo': 'lista',
+                    'tramites': [
+                        {
+                            'numero_tramite':  t.numero_tramite,
+                            'asunto':          t.asunto,
+                            'estado':          t.get_estado_display(),
+                            'estado_key':      t.estado,
+                            'categoria':       t.tipo_tramite.categoria.nombre,
+                            'fecha_ingreso':   t.fecha_ingreso.strftime('%d/%m/%Y'),
+                            'fecha_limite':    t.fecha_limite.strftime('%d/%m/%Y'),
+                            'fecha_resolucion': t.fecha_resolucion.strftime('%d/%m/%Y %H:%M') if t.fecha_resolucion else None,
+                        }
+                        for t in tramites[:10]
+                    ]
+                })
+
+            from django.utils import timezone
+            hoy = timezone.now().date()
+            seguimientos = tramite.seguimientos.filter(
+                visible_ciudadano=True
+            ).order_by('creado_en').values('estado_nuevo', 'observacion', 'creado_en')
+
+            dias_restantes = None
+            if tramite.estado not in ('resuelto', 'archivado', 'rechazado', 'desistido'):
+                dias_restantes = (tramite.fecha_limite - hoy).days
+
+            return Response({
+                'tipo':            'detalle',
+                'numero_tramite':  tramite.numero_tramite,
+                'asunto':          tramite.asunto,
+                'tipo_tramite':    tramite.tipo_tramite.nombre,
+                'categoria':       tramite.tipo_tramite.categoria.nombre,
+                'estado':          tramite.get_estado_display(),
+                'estado_key':      tramite.estado,
+                'prioridad':       tramite.prioridad,
+                'canal_ingreso':   tramite.canal_ingreso,
+                'unidad':          tramite.unidad_responsable.nombre,
+                'unidad_siglas':   tramite.unidad_responsable.siglas,
+                'fecha_ingreso':   tramite.fecha_ingreso.strftime('%d/%m/%Y %H:%M'),
+                'fecha_limite':    tramite.fecha_limite.strftime('%d/%m/%Y'),
+                'fecha_resolucion': tramite.fecha_resolucion.strftime('%d/%m/%Y %H:%M') if tramite.fecha_resolucion else None,
+                'dentro_plazo':    tramite.dentro_plazo,
+                'dias_restantes':  dias_restantes,
+                'calificacion':    tramite.calificacion,
+                'seguimientos': [
+                    {
+                        'estado':      s['estado_nuevo'],
+                        'observacion': s['observacion'],
+                        'fecha':       s['creado_en'].strftime('%d/%m/%Y %H:%M'),
+                    }
+                    for s in seguimientos
+                ],
+            })
+        except Tramite.DoesNotExist:
+            return Response({'detail': 'Trámite no encontrado. Verifica el número ingresado.'}, status=404)
+
+
+class CalificarTramiteView(APIView):
+    permission_classes = []  # público
+
+    def post(self, request):
+        numero      = request.data.get('numero_tramite', '').strip()
+        calificacion = request.data.get('calificacion')
+        comentario  = request.data.get('comentario', '')
+
+        if not numero or not calificacion:
+            return Response({'detail': 'Número de trámite y calificación son obligatorios.'}, status=400)
+
+        try:
+            tramite = Tramite.objects.get(numero_tramite=numero, estado='resuelto')
+            if tramite.calificacion:
+                return Response({'detail': 'Este trámite ya fue calificado.'}, status=400)
+            tramite.calificacion         = int(calificacion)
+            tramite.comentario_ciudadano = comentario
+            tramite.save(update_fields=['calificacion', 'comentario_ciudadano'])
+            return Response({'detail': 'Gracias por tu calificación.'})
+        except Tramite.DoesNotExist:
+            return Response({'detail': 'Trámite no encontrado o no está resuelto.'}, status=404)

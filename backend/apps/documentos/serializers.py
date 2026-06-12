@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import TipoDocumento, Documento, Destinatario, FlujoAprobacion, VersionDocumento
-
+from .models import BandejaDocumento, SeguimientoDocumento, Tarea, DestinatarioExterno
 
 class TipoDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -99,3 +99,47 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
         for uid in destinatarios_ids:
             Destinatario.objects.create(documento=doc, unidad_id=uid)
         return doc
+
+
+class SeguimientoDocumentoSerializer(serializers.ModelSerializer):
+    usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    unidad_nombre  = serializers.CharField(source='unidad.nombre',           read_only=True)
+    unidad_siglas  = serializers.CharField(source='unidad.siglas',           read_only=True)
+
+    class Meta:
+        model  = SeguimientoDocumento
+        fields = '__all__'
+
+
+class BandejaSerializer(serializers.ModelSerializer):
+    numero_documento      = serializers.CharField(source='documento.numero_documento', read_only=True)
+    asunto                = serializers.CharField(source='documento.asunto',           read_only=True)
+    tipo_nombre           = serializers.CharField(source='documento.tipo_documento.nombre', read_only=True)
+    tipo_codigo           = serializers.CharField(source='documento.tipo_documento.codigo', read_only=True)
+    tipo_prefijo          = serializers.CharField(source='documento.tipo_documento.prefijo_numeracion', read_only=True)
+    unidad_origen_nombre  = serializers.CharField(source='documento.unidad_origen.nombre', read_only=True)
+    unidad_origen_siglas  = serializers.CharField(source='documento.unidad_origen.siglas', read_only=True)
+    creado_por_nombre     = serializers.CharField(source='documento.creado_por.nombre_completo', read_only=True)
+    estado_documento      = serializers.CharField(source='documento.estado', read_only=True)
+    fecha_documento       = serializers.DateTimeField(source='documento.creado_en', read_only=True)
+    prioridad             = serializers.CharField(source='documento.prioridad', read_only=True)
+
+    class Meta:
+        model  = BandejaDocumento
+        fields = [
+            'id', 'bandeja', 'accion_tomada', 'leido', 'leido_en',
+            'es_urgente', 'numero_referencia', 'instrucciones',
+            'fecha_limite', 'creado_en',
+            'numero_documento', 'asunto', 'tipo_nombre', 'tipo_codigo',
+            'tipo_prefijo', 'unidad_origen_nombre', 'unidad_origen_siglas',
+            'creado_por_nombre', 'estado_documento', 'fecha_documento', 'prioridad',
+        ]
+
+
+class TareaSerializer(serializers.ModelSerializer):
+    asignada_por_nombre = serializers.CharField(source='asignada_por.nombre_completo', read_only=True)
+    asignada_a_nombre   = serializers.CharField(source='asignada_a.nombre_completo',   read_only=True)
+
+    class Meta:
+        model  = Tarea
+        fields = '__all__'

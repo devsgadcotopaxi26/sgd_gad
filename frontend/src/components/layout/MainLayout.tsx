@@ -2,62 +2,57 @@ import { useState } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import NotificacionesPanel from '@/components/ui/NotificacionesPanel'
-import { BarChart2 } from 'lucide-react'
 import {
   LayoutDashboard, FileText, ClipboardList, Mail,
-  Archive, Users, Settings, LogOut, Bell, ChevronRight,
-  Building2, Menu, X, Search
+  Archive, Users, Settings, LogOut, ChevronRight,
+  Building2, Menu, X, Search, BarChart2
 } from 'lucide-react'
-import clsx from 'clsx'
 
 const NAV = [
   {
     section: 'Principal',
     items: [
-      { to: '/dashboard',   label: 'Escritorio',   icon: LayoutDashboard },
+      { to: '/dashboard', label: 'Escritorio', icon: LayoutDashboard },
     ]
   },
   {
     section: 'Gestión documental',
     items: [
-      { to: '/documentos',  label: 'Documentos',   icon: FileText,       badge: 12 },
-      { to: '/tramites',    label: 'Trámites',     icon: ClipboardList,  badge: 5 },
-      { to: '/correos',     label: 'Correos',      icon: Mail,           badge: 3 },
+      { to: '/documentos', label: 'Documentos', icon: FileText,      badge: 12 },
+      { to: '/tramites',   label: 'Trámites',   icon: ClipboardList, badge: 5  },
+      { to: '/correos',    label: 'Correos',    icon: Mail,          badge: 3  },
     ]
   },
   {
     section: 'Organización',
     items: [
-      { to: '/archivo',     label: 'Archivo',      icon: Archive },
-      { to: '/organigrama', label: 'Organigrama',  icon: Building2 },
-      { to: '/usuarios',    label: 'Usuarios',     icon: Users },
+      { to: '/archivo',    label: 'Archivo',    icon: Archive },
+      { to: '/organigrama',label: 'Organigrama',icon: Building2 },
+      { to: '/usuarios',   label: 'Usuarios',   icon: Users },
     ]
   },
   {
     section: 'Sistema',
     items: [
-      { to: '/ajustes',     label: 'Ajustes',      icon: Settings },
       { to: '/reportes', label: 'Reportes', icon: BarChart2 },
+      { to: '/ajustes',  label: 'Ajustes',  icon: Settings },
     ]
   },
 ]
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
-  const { usuario, logout } = useAuthStore()
-  const navigate = useNavigate()
-  const location = useLocation()
+  const { usuario, logout }       = useAuthStore()
+  const navigate                  = useNavigate()
+  const location                  = useLocation()
 
   const handleLogout = async () => {
     await logout()
     navigate('/login')
   }
 
-  const iniciales = usuario
-    ? `${usuario.nombres?.[0] ?? ''}${usuario.apellidos?.[0] ?? ''}`.toUpperCase()
-    : '?'
-
-  const paginaActual = NAV.flatMap(s => s.items).find(i => location.pathname.startsWith(i.to))?.label ?? 'SGD'
+  const iniciales     = `${usuario?.nombres?.[0] ?? ''}${usuario?.apellidos?.[0] ?? ''}`.toUpperCase()
+  const paginaActual  = NAV.flatMap(s => s.items).find(i => location.pathname.startsWith(i.to))?.label ?? 'SGD'
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#f4f6fa', overflow: 'hidden' }}>
@@ -175,31 +170,33 @@ export default function MainLayout() {
           ))}
         </nav>
 
-        {/* Usuario */}
-        <div style={{
-          padding: collapsed ? '10px 8px' : '10px 12px',
-          borderTop: '1px solid #f5f5f5',
-        }}>
+        {/* Usuario en el pie del sidebar */}
+        <div style={{ padding: collapsed ? '10px 8px' : '10px 12px', borderTop: '1px solid #f5f5f5' }}>
           {collapsed ? (
-            <div style={{
-              width: 36, height: 36, borderRadius: '50%', margin: '0 auto',
-              background: 'linear-gradient(135deg,#002f6c,#0052cc)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer',
-            }} title={usuario?.nombre_completo}>
+            <div
+              onClick={() => navigate('/perfil')}
+              style={{
+                width: 36, height: 36, borderRadius: '50%', margin: '0 auto',
+                background: 'linear-gradient(135deg,#002f6c,#0052cc)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer',
+              }}
+              title={usuario?.nombre_completo}>
               {iniciales}
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{
-                width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
-                background: 'linear-gradient(135deg,#002f6c,#0052cc)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 11, fontWeight: 700, color: '#fff',
-              }}>
+              <div
+                onClick={() => navigate('/perfil')}
+                style={{
+                  width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+                  background: 'linear-gradient(135deg,#002f6c,#0052cc)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 700, color: '#fff', cursor: 'pointer',
+                }}>
                 {iniciales}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => navigate('/perfil')}>
                 <p style={{ fontSize: 12, fontWeight: 600, color: '#0a1628', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {usuario?.nombre_completo}
                 </p>
@@ -248,9 +245,7 @@ export default function MainLayout() {
           </div>
 
           {/* Buscador */}
-          <div style={{
-            flex: 1, maxWidth: 340, position: 'relative', marginLeft: 8,
-          }}>
+          <div style={{ flex: 1, maxWidth: 340, position: 'relative', marginLeft: 8 }}>
             <Search size={13} style={{
               position: 'absolute', left: 10, top: '50%',
               transform: 'translateY(-50%)', color: '#c4c9d4',
@@ -270,15 +265,17 @@ export default function MainLayout() {
           <div style={{ flex: 1 }} />
 
           {/* Notificaciones */}
-         <NotificacionesPanel />
+          <NotificacionesPanel />
 
-          {/* Avatar topbar */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '4px 10px 4px 4px',
-            borderRadius: 10, border: '1px solid #f0f0f0',
-            background: '#fff', cursor: 'pointer',
-          }}>
+          {/* Avatar topbar — click va al perfil */}
+          <div
+            onClick={() => navigate('/perfil')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '4px 10px 4px 4px',
+              borderRadius: 10, border: '1px solid #f0f0f0',
+              background: '#fff', cursor: 'pointer',
+            }}>
             <div style={{
               width: 28, height: 28, borderRadius: '50%',
               background: 'linear-gradient(135deg,#002f6c,#0052cc)',
@@ -298,7 +295,7 @@ export default function MainLayout() {
           </div>
         </header>
 
-        {/* Página */}
+        {/* Página activa */}
         <main style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
           <Outlet />
         </main>

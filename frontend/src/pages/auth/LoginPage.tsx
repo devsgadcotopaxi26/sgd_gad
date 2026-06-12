@@ -259,19 +259,20 @@ export default function LoginPage() {
             </div>
 
             <button
-              className="group w-full flex items-center justify-between p-4 rounded-2xl bg-gray-50 border border-gray-200 hover:border-[#002f6c] hover:bg-blue-50/50 transition-all duration-300 shadow-sm hover:shadow-md"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center group-hover:border-[#002f6c]/30 transition-colors">
-                  <User size={18} className="text-gray-500 group-hover:text-[#002f6c] transition-colors" />
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-bold text-gray-900 group-hover:text-[#002f6c] transition-colors">Portal Ciudadano</p>
-                  <p className="text-xs text-gray-500">Consulta de trámites públicos en línea</p>
-                </div>
-              </div>
-              <ArrowRight size={18} className="text-gray-400 group-hover:text-[#002f6c] group-hover:translate-x-1 transition-all duration-300" />
-            </button>
+  onClick={() => navigate('/portal')}
+  className="group w-full flex items-center justify-between p-4 rounded-2xl bg-gray-50 border border-gray-200 hover:border-[#002f6c] hover:bg-blue-50/50 transition-all duration-300 shadow-sm hover:shadow-md"
+>
+  <div className="flex items-center gap-4">
+    <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center group-hover:border-[#002f6c]/30 transition-colors">
+      <User size={18} className="text-gray-500 group-hover:text-[#002f6c] transition-colors" />
+    </div>
+    <div className="text-left">
+      <p className="text-sm font-bold text-gray-900 group-hover:text-[#002f6c] transition-colors">Portal Ciudadano</p>
+      <p className="text-xs text-gray-500">Consulta de trámites públicos en línea</p>
+    </div>
+  </div>
+  <ArrowRight size={18} className="text-gray-400 group-hover:text-[#002f6c] group-hover:translate-x-1 transition-all duration-300" />
+</button>
 
             <p className="text-center text-xs text-gray-400 mt-12 font-medium">
               &copy; {new Date().getFullYear()} G.A.D. Provincia de Cotopaxi<br />

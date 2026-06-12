@@ -190,3 +190,124 @@ class VersionDocumento(models.Model):
         db_table        = 'doc_version'
         unique_together = ('documento', 'numero_version')
         ordering        = ['-numero_version']
+
+class BandejaDocumento(models.Model):
+    BANDEJA_CHOICES = [
+        ('recibidos',        'Recibidos'),
+        ('en_elaboracion',   'En elaboración'),
+        ('enviados',         'Enviados'),
+        ('no_enviados',      'No enviados'),
+        ('tareas_recibidas', 'Tareas recibidas'),
+        ('tareas_enviadas',  'Tareas enviadas'),
+        ('archivados',       'Archivados'),
+        ('por_imprimir',     'Por imprimir'),
+    ]
+    ACCION_CHOICES = [
+        ('pendiente',   'Pendiente'),
+        ('leido',       'Leído'),
+        ('reasignado',  'Reasignado'),
+        ('informado',   'Informado'),
+        ('archivado',   'Archivado'),
+        ('comentado',   'Comentado'),
+        ('respondido',  'Respondido'),
+    ]
+
+    documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='bandejas')
+    usuario          = models.ForeignKey('usuarios.Usuario', on_delete=models.CASCADE, related_name='bandeja_documentos')
+    unidad           = models.ForeignKey('organizacion.Unidad', on_delete=models.PROTECT, null=True, blank=True)
+    bandeja          = models.CharField(max_length=30, choices=BANDEJA_CHOICES)
+    accion_tomada    = models.CharField(max_length=20, choices=ACCION_CHOICES, default='pendiente')
+    leido            = models.BooleanField(default=False)
+    leido_en         = models.DateTimeField(null=True, blank=True)
+    es_urgente       = models.BooleanField(default=False)
+    numero_referencia = models.CharField(max_length=60, blank=True)
+    instrucciones    = models.TextField(blank=True)
+    fecha_limite     = models.DateField(null=True, blank=True)
+    creado_en        = models.DateTimeField(auto_now_add=True)
+    modificado_en    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table        = 'doc_bandeja'
+        unique_together = ('documento', 'usuario', 'bandeja')
+        indexes         = [
+            models.Index(fields=['usuario', 'bandeja']),
+            models.Index(fields=['leido']),
+        ]
+
+
+class SeguimientoDocumento(models.Model):
+    ETAPA_CHOICES = [
+        ('elaborado',   'Elaborado'),
+        ('firmado',     'Firmado'),
+        ('enviado',     'Enviado'),
+        ('recibido',    'Recibido'),
+        ('reasignado',  'Reasignado'),
+        ('informado',   'Informado'),
+        ('comentado',   'Comentado'),
+        ('archivado',   'Archivado'),
+        ('respondido',  'Respondido'),
+    ]
+
+    documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='seguimiento_quipux')
+    etapa            = models.CharField(max_length=20, choices=ETAPA_CHOICES)
+    usuario          = models.ForeignKey('usuarios.Usuario', on_delete=models.PROTECT)
+    unidad           = models.ForeignKey('organizacion.Unidad', null=True, blank=True, on_delete=models.SET_NULL)
+    destinatario_externo = models.CharField(max_length=200, blank=True)
+    institucion_externa  = models.CharField(max_length=200, blank=True)
+    observacion      = models.TextField(blank=True)
+    creado_en        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doc_seguimiento'
+        ordering = ['creado_en']
+
+
+class Tarea(models.Model):
+    PRIORIDAD_CHOICES = [
+        ('normal',      'Normal'),
+        ('urgente',     'Urgente'),
+        ('muy_urgente', 'Muy urgente'),
+    ]
+    ESTADO_CHOICES = [
+        ('pendiente',  'Pendiente'),
+        ('en_proceso', 'En proceso'),
+        ('completada', 'Completada'),
+        ('cancelada',  'Cancelada'),
+    ]
+
+    documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='tareas')
+    asignada_por     = models.ForeignKey('usuarios.Usuario', on_delete=models.PROTECT, related_name='tareas_asignadas')
+    asignada_a       = models.ForeignKey('usuarios.Usuario', on_delete=models.PROTECT, related_name='tareas_recibidas')
+    unidad_destino   = models.ForeignKey('organizacion.Unidad', null=True, blank=True, on_delete=models.SET_NULL)
+    descripcion      = models.TextField()
+    prioridad        = models.CharField(max_length=20, choices=PRIORIDAD_CHOICES, default='normal')
+    estado           = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    fecha_limite     = models.DateField(null=True, blank=True)
+    completada_en    = models.DateTimeField(null=True, blank=True)
+    respuesta        = models.TextField(blank=True)
+    creado_en        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doc_tarea'
+        ordering = ['-creado_en']
+
+
+class DestinatarioExterno(models.Model):
+    TIPO_CHOICES = [
+        ('institucion', 'Institución externa'),
+        ('ciudadano',   'Ciudadano'),
+    ]
+
+    documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='destinatarios_externos')
+    tipo             = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    nombre           = models.CharField(max_length=200)
+    institucion      = models.CharField(max_length=200, blank=True)
+    email            = models.EmailField(max_length=200)
+    cedula_ruc       = models.CharField(max_length=20, blank=True)
+    enviado          = models.BooleanField(default=False)
+    enviado_en       = models.DateTimeField(null=True, blank=True)
+    notificado_email = models.BooleanField(default=False)
+    creado_en        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doc_destinatario_externo'

@@ -1,9 +1,17 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import TipoDocumentoViewSet, DocumentoViewSet
+from .views import (
+    TipoDocumentoViewSet, DocumentoViewSet,
+    BandejaViewSet, EnviarDocumentoView, DocumentoPDFView
+)
 
 router = DefaultRouter()
-router.register('tipos',  TipoDocumentoViewSet, basename='tipo-documento')
-router.register('',       DocumentoViewSet,      basename='documento')
+router.register('tipos',   TipoDocumentoViewSet, basename='tipo-documento')
+router.register('bandeja', BandejaViewSet,        basename='bandeja')
+router.register('enviar',  EnviarDocumentoView,   basename='enviar-documento')
+router.register('',        DocumentoViewSet,      basename='documento')
 
-urlpatterns = [path('', include(router.urls))]
+urlpatterns = [
+    path('<int:pk>/pdf/', DocumentoPDFView.as_view(), name='documento-pdf'),
+    path('', include(router.urls)),
+]

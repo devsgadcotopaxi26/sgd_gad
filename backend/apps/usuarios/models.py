@@ -134,10 +134,11 @@ class UsuarioRol(models.Model):
     hasta        = models.DateField(null=True, blank=True)
     activo       = models.BooleanField(default=True)
     asignado_por = models.ForeignKey(
-        Usuario, null=True, blank=True,
-        on_delete=models.SET_NULL,
-        related_name='roles_asignados',
-    )
+    Usuario, null=True, blank=True,
+    on_delete=models.SET_NULL,
+    related_name='roles_asignados',
+    db_column='asignado_por',
+)
     creado_en    = models.DateTimeField(auto_now_add=True)
 
     class Meta:

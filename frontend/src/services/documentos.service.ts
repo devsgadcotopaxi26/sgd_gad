@@ -75,4 +75,13 @@ export const documentosService = {
 
   tipos: () =>
     api.get<{ results: TipoDocumento[] }>('/documentos/tipos/').then(r => r.data.results),
+descargarPDF: async (id: number, numero: string) => {
+  const response = await api.get(`/documentos/${id}/pdf/`, { responseType: 'blob' })
+  const blob     = new Blob([response.data], { type: 'application/pdf' })
+  const link     = document.createElement('a')
+  link.href      = URL.createObjectURL(blob)
+  link.download  = `${numero || `doc_${id}`}.pdf`
+  link.click()
+  URL.revokeObjectURL(link.href)
+},
 }
