@@ -41,6 +41,11 @@ export const organizacionService = {
 
   actualizar: (id: number, data: Partial<Unidad>) =>
     api.patch<Unidad>(`/organizacion/unidades/${id}/`, data).then(r => r.data),
+  activar: (id: number) =>
+  api.post(`/organizacion/unidades/${id}/activar/`).then(r => r.data),
+
+desactivar: (id: number) =>
+  api.post(`/organizacion/unidades/${id}/desactivar/`).then(r => r.data),
 
   select: (tipo?: string) =>
     api.get<Unidad[]>('/organizacion/unidades/select/', {

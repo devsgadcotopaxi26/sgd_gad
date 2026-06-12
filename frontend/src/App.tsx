@@ -11,6 +11,7 @@ import ReportesPage   from '@/pages/reportes/ReportesPage'
 import PortalPage     from '@/pages/portal/PortalPage'
 import MainLayout     from '@/components/layout/MainLayout'
 import PerfilPage from '@/pages/usuarios/PerfilPage'
+import OrganigramaPage from '@/pages/usuarios/OrganigramaPage'
 function RutaProtegida({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="usuarios"   element={<UsuariosPage />} />
           <Route path="reportes"   element={<ReportesPage />} />
           <Route path="perfil" element={<PerfilPage />} />
+          <Route path="organigrama" element={<OrganigramaPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
