@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { bandejaService, BandejaItem } from '@/services/bandeja.service'
 import { documentosService, CrearDocumento } from '@/services/documentos.service'
 import { organizacionService } from '@/services/organizacion.service'
+import AdjuntosPanel from '@/components/ui/AdjuntosPanel'
 import {
   Inbox, Edit3, Send, Clock, CheckSquare, Archive,
   Folder, Printer, Search, Plus, X, Eye, Download,
@@ -173,7 +174,8 @@ function ModalNuevoDocumento({ onClose }: { onClose: () => void }) {
 
 function PanelDetalle({ item, onClose }: { item: BandejaItem; onClose: () => void }) {
   const qc = useQueryClient()
-  const [comentario, setComentario] = useState('')
+  const [comentario, setComentario]   = useState('')
+  const [tabActiva, setTab]           = useState<'preview' | 'adjuntos'>('preview')
 
   const archivar = useMutation({
     mutationFn: () => bandejaService.archivar(item.id),
@@ -268,9 +270,9 @@ function PanelDetalle({ item, onClose }: { item: BandejaItem; onClose: () => voi
         ))}
       </div>
 
-      {/* Timeline seguimiento */}
+      {/* Timeline */}
       <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #f5f6f8' }}>
-        <p style={{ fontSize: 11, fontWeight: 500, color: '#374151', marginBottom: 8 }}>Seguimiento del documento</p>
+        <p style={{ fontSize: 11, fontWeight: 500, color: '#374151', marginBottom: 8 }}>Seguimiento</p>
         <div style={{ display: 'flex', alignItems: 'flex-start' }}>
           {ETAPAS.map((etapa, i) => {
             const done   = i <= etapaIdx
@@ -299,29 +301,46 @@ function PanelDetalle({ item, onClose }: { item: BandejaItem; onClose: () => voi
         </div>
       </div>
 
-      {/* Vista previa */}
-      <div style={{ flex: 1, padding: 14, overflowY: 'auto' }}>
-        <p style={{ fontSize: 11, fontWeight: 500, color: '#374151', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Eye size={13} style={{ color: '#002f6c' }} /> Vista previa
-        </p>
-        <div style={{ background: '#f8faff', border: '0.5px solid #e5e7eb', borderRadius: 8, padding: 16, minHeight: 160 }}>
-          <div style={{ borderBottom: '2px solid #002f6c', paddingBottom: 8, marginBottom: 10 }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: '#002f6c' }}>{item.unidad_origen_nombre?.toUpperCase()}</p>
-            <p style={{ fontSize: 9, color: '#9ca3af', marginTop: 1 }}>GAD Provincia de Cotopaxi</p>
-          </div>
-          <p style={{ fontSize: 10, color: '#374151', lineHeight: 1.7 }}>
-            <strong>{item.tipo_nombre} No. {item.numero_documento || '(por asignar)'}</strong>
-          </p>
-          <p style={{ fontSize: 10, color: '#374151', lineHeight: 1.7, marginTop: 6 }}>
-            <strong>Asunto:</strong> {item.asunto}
-          </p>
-          <p style={{ fontSize: 9, color: '#9ca3af', marginTop: 10, fontStyle: 'italic' }}>
-            — Contenido completo disponible al descargar el PDF —
-          </p>
-        </div>
+      {/* Tabs */}
+      <div style={{ display: 'flex', borderBottom: '0.5px solid #f5f6f8', flexShrink: 0 }}>
+        {[['preview','Vista previa'],['adjuntos','Adjuntos']].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k as any)}
+            style={{
+              flex: 1, padding: '8px', fontSize: 11, fontWeight: 600,
+              border: 'none', cursor: 'pointer',
+              background: tabActiva === k ? '#fff' : '#fafbfc',
+              color: tabActiva === k ? '#002f6c' : '#9ca3af',
+              borderBottom: `2px solid ${tabActiva === k ? '#002f6c' : 'transparent'}`,
+            }}>
+            {l}
+          </button>
+        ))}
       </div>
 
-      {/* Caja de comentario */}
+      {/* Contenido tab */}
+      <div style={{ flex: 1, padding: 14, overflowY: 'auto' }}>
+        {tabActiva === 'preview' ? (
+          <div style={{ background: '#f8faff', border: '0.5px solid #e5e7eb', borderRadius: 8, padding: 16, minHeight: 160 }}>
+            <div style={{ borderBottom: '2px solid #002f6c', paddingBottom: 8, marginBottom: 10 }}>
+              <p style={{ fontSize: 11, fontWeight: 700, color: '#002f6c' }}>{item.unidad_origen_nombre?.toUpperCase()}</p>
+              <p style={{ fontSize: 9, color: '#9ca3af', marginTop: 1 }}>GAD Provincia de Cotopaxi</p>
+            </div>
+            <p style={{ fontSize: 10, color: '#374151', lineHeight: 1.7 }}>
+              <strong>{item.tipo_nombre} No. {item.numero_documento || '(por asignar)'}</strong>
+            </p>
+            <p style={{ fontSize: 10, color: '#374151', lineHeight: 1.7, marginTop: 6 }}>
+              <strong>Asunto:</strong> {item.asunto}
+            </p>
+            <p style={{ fontSize: 9, color: '#9ca3af', marginTop: 10, fontStyle: 'italic' }}>
+              — Contenido completo disponible al descargar el PDF —
+            </p>
+          </div>
+        ) : (
+          <AdjuntosPanel documentoId={item.id} />
+        )}
+      </div>
+
+      {/* Caja comentario */}
       <div style={{ padding: '10px 14px', borderTop: '0.5px solid #f0f0f0' }}>
         <textarea
           value={comentario}
@@ -415,7 +434,7 @@ export default function DocumentosPage() {
     }}>
       {modal && <ModalNuevoDocumento onClose={() => setModal(false)} />}
 
-      {/* ── SIDEBAR ── */}
+      {/* SIDEBAR */}
       <div style={{ background: '#f8faff', borderRight: '0.5px solid #eef0f5', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ padding: '10px 10px 4px' }}>
           <button onClick={() => setModal(true)}
@@ -470,10 +489,9 @@ export default function DocumentosPage() {
         </div>
       </div>
 
-      {/* ── CONTENIDO ── */}
+      {/* CONTENIDO */}
       <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
 
-        {/* Topbar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderBottom: '0.5px solid #f5f6f8', flexShrink: 0 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: '#0a1628', flexShrink: 0 }}>
             {BANDEJAS.find(b => b.key === bandejaActiva)?.label ?? 'Documentos'}
@@ -495,7 +513,6 @@ export default function DocumentosPage() {
           </button>
         </div>
 
-        {/* Barra de acciones Quipux */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 14px', borderBottom: '0.5px solid #f5f6f8', background: '#fafbfc', flexShrink: 0, flexWrap: 'wrap' }}>
           {[
             { label: 'Reasignar',   icon: ArrowRightLeft },
@@ -543,13 +560,11 @@ export default function DocumentosPage() {
           </div>
         </div>
 
-        {/* Info count */}
         <div style={{ padding: '5px 14px', background: '#fafbfc', borderBottom: '0.5px solid #f5f6f8', fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>
           No. de registros encontrados: <strong style={{ color: '#374151' }}>{data?.count ?? 0}</strong>
           &nbsp;|&nbsp; Bandeja: {BANDEJAS.find(b => b.key === bandejaActiva)?.label}
         </div>
 
-        {/* Lista documentos */}
         <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '24px 24px 64px 1fr 120px 140px 120px 100px', gap: 8, padding: '6px 12px', background: '#f9fafb', borderBottom: '0.5px solid #f5f6f8', position: 'sticky', top: 0, zIndex: 1 }}>
             {['','','De','Asunto','Fecha Doc.','N° Documento','N° Referencia','Estado'].map((h, i) => (

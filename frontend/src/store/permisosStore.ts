@@ -31,8 +31,11 @@ export const usePermisosStore = create<PermisosState>((set, get) => ({
   },
 
   puede: (modulo, accion) => {
-    const { permisos, esAdmin } = get()
-    if (esAdmin) return true
+    const { permisos, esAdmin, cargado } = get()
+    // Si no están cargados aún, permitir todo temporalmente
+    if (!cargado) return true
+    if (esAdmin)  return true
+    if (!modulo)  return true
     return (permisos[modulo] ?? []).includes(accion)
   },
 }))

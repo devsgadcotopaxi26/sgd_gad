@@ -2,30 +2,31 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { correosService } from '@/services/correos.service'
 import { organizacionService } from '@/services/organizacion.service'
+import AdjuntosPanel from '@/components/ui/AdjuntosPanel'
 import {
   Inbox, Send, Archive, Clock, AlertCircle,
   Search, Plus, X, Eye, Download, Printer,
   ArrowRightLeft, Info, MessageSquare, ClipboardPlus,
   Signature, RefreshCw, CheckCircle, BarChart2,
-  FilePlus, Mail, MailOpen
+  FilePlus, Mail
 } from 'lucide-react'
 
 const BANDEJAS = [
-  { key: 'recibidos',  label: 'Recibidos',    icon: Inbox,        seccion: 'bandejas' },
-  { key: 'enviados',   label: 'Enviados',      icon: Send,         seccion: 'bandejas' },
-  { key: 'borradores', label: 'Borradores',    icon: Mail,         seccion: 'bandejas' },
-  { key: 'archivados', label: 'Archivados',    icon: Archive,      seccion: 'bandejas' },
-  { key: 'por_vencer', label: 'Por vencer',    icon: AlertCircle,  seccion: 'otras' },
-  { key: 'sin_resp',   label: 'Sin responder', icon: Clock,        seccion: 'otras' },
+  { key: 'recibidos',  label: 'Recibidos',    icon: Inbox,       seccion: 'bandejas' },
+  { key: 'enviados',   label: 'Enviados',      icon: Send,        seccion: 'bandejas' },
+  { key: 'borradores', label: 'Borradores',    icon: Mail,        seccion: 'bandejas' },
+  { key: 'archivados', label: 'Archivados',    icon: Archive,     seccion: 'bandejas' },
+  { key: 'por_vencer', label: 'Por vencer',    icon: AlertCircle, seccion: 'otras' },
+  { key: 'sin_resp',   label: 'Sin responder', icon: Clock,       seccion: 'otras' },
 ]
 
 const ETIQUETA_COLORS: Record<string, { bg: string; text: string }> = {
-  'Contraloría': { bg: '#fef2f2', text: '#dc2626' },
-  'Ministerios': { bg: '#f0fdf4', text: '#15803d' },
-  'Municipios':  { bg: '#faeeda', text: '#854f0b' },
-  'Interno GAD': { bg: '#f3f4f6', text: '#534ab7' },
+  'Contraloría':  { bg: '#fef2f2', text: '#dc2626' },
+  'Ministerios':  { bg: '#f0fdf4', text: '#15803d' },
+  'Municipios':   { bg: '#faeeda', text: '#854f0b' },
+  'Interno GAD':  { bg: '#f3f4f6', text: '#534ab7' },
   'Planificación':{ bg: '#e1f5ee', text: '#0f6e56' },
-  'Financiero':  { bg: '#faeeda', text: '#854f0b' },
+  'Financiero':   { bg: '#faeeda', text: '#854f0b' },
 }
 
 const ESTADOS: Record<string, { bg: string; text: string; label: string }> = {
@@ -47,15 +48,10 @@ const ETAPAS_SEGUIMIENTO = [
 
 function ModalNuevoCorreo({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
-  const [form, setForm] = useState<Record<string, any>>({
-    tipo: 'recibido', prioridad: 'normal', etiquetas: []
-  })
+  const [form, setForm] = useState<Record<string, any>>({ tipo: 'recibido', prioridad: 'normal', etiquetas: [] })
   const [error, setError] = useState('')
 
-  const { data: unidades } = useQuery({
-    queryKey: ['unidades-select'],
-    queryFn: () => organizacionService.select(),
-  })
+  const { data: unidades } = useQuery({ queryKey: ['unidades-select'], queryFn: () => organizacionService.select() })
 
   const mutation = useMutation({
     mutationFn: (data: any) => correosService.crear(data),
@@ -67,8 +63,7 @@ function ModalNuevoCorreo({ onClose }: { onClose: () => void }) {
   const cls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.45)' }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
       <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
@@ -77,9 +72,7 @@ function ModalNuevoCorreo({ onClose }: { onClose: () => void }) {
             </div>
             <h3 className="font-bold text-gray-900 text-sm">Registrar correo institucional</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
-            <X size={16} className="text-gray-500" />
-          </button>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100"><X size={16} className="text-gray-500" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
@@ -134,16 +127,13 @@ function ModalNuevoCorreo({ onClose }: { onClose: () => void }) {
             <select className={cls} value={form.unidad_destino ?? ''}
               onChange={e => set('unidad_destino', e.target.value ? Number(e.target.value) : undefined)}>
               <option value="">— Sin asignar —</option>
-              {unidades?.map(u => (
-                <option key={u.id} value={u.id}>{u.siglas ? `[${u.siglas}] ` : ''}{u.nombre}</option>
-              ))}
+              {unidades?.map(u => <option key={u.id} value={u.id}>{u.siglas ? `[${u.siglas}] ` : ''}{u.nombre}</option>)}
             </select>
           </div>
 
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Cuerpo del correo</label>
-            <textarea className={cls + ' resize-none'} rows={4}
-              placeholder="Contenido del correo..."
+            <textarea className={cls + ' resize-none'} rows={4} placeholder="Contenido del correo..."
               value={form.cuerpo ?? ''} onChange={e => set('cuerpo', e.target.value)} />
           </div>
 
@@ -161,9 +151,7 @@ function ModalNuevoCorreo({ onClose }: { onClose: () => void }) {
                 const c   = ETIQUETA_COLORS[et]
                 return (
                   <button key={et} type="button"
-                    onClick={() => set('etiquetas', sel
-                      ? form.etiquetas.filter((e: string) => e !== et)
-                      : [...(form.etiquetas ?? []), et])}
+                    onClick={() => set('etiquetas', sel ? form.etiquetas.filter((e: string) => e !== et) : [...(form.etiquetas ?? []), et])}
                     className="text-xs font-semibold px-2.5 py-1 rounded-full border transition-all"
                     style={{ background: sel ? c.bg : '#f9fafb', color: sel ? c.text : '#9ca3af', borderColor: sel ? c.text : '#e5e7eb' }}>
                     {et}
@@ -175,18 +163,14 @@ function ModalNuevoCorreo({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
-          <button onClick={onClose}
-            className="px-4 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
-            Cancelar
-          </button>
+          <button onClick={onClose} className="px-4 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">Cancelar</button>
           <button
             onClick={() => { if (!form.asunto) { setError('El asunto es obligatorio'); return }; mutation.mutate(form) }}
             disabled={mutation.isPending}
             className="px-4 py-2.5 text-sm font-bold text-white rounded-xl flex items-center gap-2"
             style={{ background: mutation.isPending ? '#4a90e2' : '#002f6c' }}>
             {mutation.isPending
-              ? <><span className="w-4 h-4 border-2 rounded-full animate-spin"
-                  style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} /> Registrando...</>
+              ? <><span className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} /> Registrando...</>
               : <><Plus size={15} /> Registrar correo</>}
           </button>
         </div>
@@ -197,7 +181,8 @@ function ModalNuevoCorreo({ onClose }: { onClose: () => void }) {
 
 function PanelDetalleCorreo({ correo, onClose }: { correo: any; onClose: () => void }) {
   const qc = useQueryClient()
-  const [respuesta, setRespuesta] = useState('')
+  const [respuesta, setRespuesta]         = useState('')
+  const [tabCorreo, setTabCorreo]         = useState<'contenido' | 'adjuntos'>('contenido')
 
   const { data: detalle } = useQuery({
     queryKey: ['correo-detalle', correo.id],
@@ -214,14 +199,12 @@ function PanelDetalleCorreo({ correo, onClose }: { correo: any; onClose: () => v
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['correos'] }); setRespuesta('') },
   })
 
-  const est = ESTADOS[correo.estado] ?? ESTADOS.nuevo
-
+  const est      = ESTADOS[correo.estado] ?? ESTADOS.nuevo
   const etapaActual = correo.estado === 'respondido' ? 'respuesta'
-    : correo.estado === 'asignado' ? 'asignado'
+    : correo.estado === 'asignado'   ? 'asignado'
     : correo.estado === 'registrado' ? 'registrado'
-    : correo.estado === 'archivado' ? 'archivado'
+    : correo.estado === 'archivado'  ? 'archivado'
     : 'recibido'
-
   const etapaIdx = ETAPAS_SEGUIMIENTO.findIndex(e => e.key === etapaActual)
 
   return (
@@ -237,27 +220,22 @@ function PanelDetalleCorreo({ correo, onClose }: { correo: any; onClose: () => v
             {correo.numero_registro || '—'}
           </span>
           {correo.prioridad !== 'normal' && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#da291c', background: '#fef2f2', padding: '1px 6px', borderRadius: 10 }}>
-              Urgente
-            </span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#da291c', background: '#fef2f2', padding: '1px 6px', borderRadius: 10 }}>Urgente</span>
           )}
-          <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, background: est.bg, color: est.text }}>
-            {est.label}
-          </span>
+          <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 10, background: est.bg, color: est.text }}>{est.label}</span>
           <button onClick={onClose} style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
             <X size={14} />
           </button>
         </div>
         <p style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', lineHeight: 1.3, marginBottom: 10 }}>{correo.asunto}</p>
 
-        {/* Acciones Quipux */}
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           {[
-            { label: 'Reasignar',    icon: ArrowRightLeft, primary: true },
-            { label: 'Informar',     icon: Info },
-            { label: 'Archivar',     icon: Archive, action: () => archivar.mutate() },
-            { label: 'Comentar',     icon: MessageSquare },
-            { label: 'Nueva Tarea',  icon: ClipboardPlus },
+            { label: 'Reasignar',      icon: ArrowRightLeft, primary: true },
+            { label: 'Informar',       icon: Info },
+            { label: 'Archivar',       icon: Archive, action: () => archivar.mutate() },
+            { label: 'Comentar',       icon: MessageSquare },
+            { label: 'Nueva Tarea',    icon: ClipboardPlus },
             { label: 'Generar oficio', icon: FilePlus },
             { label: 'Crear trámite',  icon: ClipboardPlus },
           ].map(({ label, icon: Icon, primary, action }: any) => (
@@ -279,37 +257,29 @@ function PanelDetalleCorreo({ correo, onClose }: { correo: any; onClose: () => v
       {/* Meta */}
       <div style={{ padding: '10px 14px', background: '#fafbfc', borderBottom: '0.5px solid #f5f6f8' }}>
         {[
-          { label: 'De:', value: correo.remitente_nombre || correo.remitente_email || '—' },
-          { label: 'Institución:', value: correo.remitente_entidad || '—' },
-          { label: 'Para:', value: correo.unidad_destino_nombre || 'Sin asignar' },
+          { label: 'De:',         value: correo.remitente_nombre || correo.remitente_email || '—' },
+          { label: 'Institución:',value: correo.remitente_entidad || '—' },
+          { label: 'Para:',       value: correo.unidad_destino_nombre || 'Sin asignar' },
           { label: 'Asignado a:', value: correo.usuario_asignado_nombre || 'Sin asignar' },
-          { label: 'Fecha:', value: new Date(correo.fecha_recepcion).toLocaleString('es-EC') },
-          ...(correo.fecha_limite_resp ? [{
-            label: 'Vence:', value: new Date(correo.fecha_limite_resp).toLocaleDateString('es-EC'), danger: true
-          }] : []),
+          { label: 'Fecha:',      value: new Date(correo.fecha_recepcion).toLocaleString('es-EC') },
+          ...(correo.fecha_limite_resp ? [{ label: 'Vence:', value: new Date(correo.fecha_limite_resp).toLocaleDateString('es-EC'), danger: true }] : []),
         ].map(({ label, value, danger }: any) => (
           <div key={label} style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 11 }}>
             <span style={{ color: '#9ca3af', minWidth: 80, flexShrink: 0 }}>{label}</span>
             <span style={{ fontWeight: 500, color: danger ? '#da291c' : '#374151' }}>{value}</span>
           </div>
         ))}
-
-        {/* Etiquetas */}
         {(correo.etiquetas ?? []).length > 0 && (
           <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
             {correo.etiquetas.map((et: string) => {
               const c = ETIQUETA_COLORS[et] ?? { bg: '#f3f4f6', text: '#6b7280' }
-              return (
-                <span key={et} style={{ fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10, background: c.bg, color: c.text }}>
-                  {et}
-                </span>
-              )
+              return <span key={et} style={{ fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 10, background: c.bg, color: c.text }}>{et}</span>
             })}
           </div>
         )}
       </div>
 
-      {/* Timeline seguimiento */}
+      {/* Timeline */}
       <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #f5f6f8' }}>
         <p style={{ fontSize: 11, fontWeight: 500, color: '#374151', marginBottom: 8 }}>Seguimiento del correo</p>
         <div style={{ display: 'flex', alignItems: 'flex-start' }}>
@@ -344,20 +314,37 @@ function PanelDetalleCorreo({ correo, onClose }: { correo: any; onClose: () => v
         </div>
       </div>
 
-      {/* Contenido del correo */}
-      <div style={{ flex: 1, padding: 14, overflowY: 'auto' }}>
-        <p style={{ fontSize: 11, fontWeight: 500, color: '#374151', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-          <Eye size={13} style={{ color: '#002f6c' }} /> Contenido del correo
-        </p>
-        <div style={{ background: '#f8faff', border: '0.5px solid #e5e7eb', borderRadius: 8, padding: 14, minHeight: 120 }}>
-          {detalle?.cuerpo
-            ? <p style={{ fontSize: 12, color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{detalle.cuerpo}</p>
-            : <p style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>Sin contenido registrado.</p>
-          }
-        </div>
+      {/* Tabs */}
+      <div style={{ display: 'flex', borderBottom: '0.5px solid #f5f6f8', flexShrink: 0 }}>
+        {[['contenido','Contenido'],['adjuntos','Adjuntos']].map(([k, l]) => (
+          <button key={k} onClick={() => setTabCorreo(k as any)}
+            style={{
+              flex: 1, padding: '8px', fontSize: 11, fontWeight: 600,
+              border: 'none', cursor: 'pointer',
+              background: tabCorreo === k ? '#fff' : '#fafbfc',
+              color: tabCorreo === k ? '#002f6c' : '#9ca3af',
+              borderBottom: `2px solid ${tabCorreo === k ? '#002f6c' : 'transparent'}`,
+            }}>
+            {l}
+          </button>
+        ))}
       </div>
 
-      {/* Caja de respuesta */}
+      {/* Contenido tab */}
+      <div style={{ flex: 1, padding: 14, overflowY: 'auto' }}>
+        {tabCorreo === 'contenido' ? (
+          <div style={{ background: '#f8faff', border: '0.5px solid #e5e7eb', borderRadius: 8, padding: 14, minHeight: 120 }}>
+            {detalle?.cuerpo
+              ? <p style={{ fontSize: 12, color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{detalle.cuerpo}</p>
+              : <p style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic' }}>Sin contenido registrado.</p>
+            }
+          </div>
+        ) : (
+          <AdjuntosPanel correoId={correo.id} />
+        )}
+      </div>
+
+      {/* Caja respuesta */}
       <div style={{ padding: '10px 14px', borderTop: '0.5px solid #f0f0f0' }}>
         <textarea
           value={respuesta}
@@ -379,9 +366,10 @@ function PanelDetalleCorreo({ correo, onClose }: { correo: any; onClose: () => v
             disabled={!respuesta.trim() || responder.isPending}
             style={{
               display: 'flex', alignItems: 'center', gap: 5,
-              padding: '7px 14px', background: respuesta.trim() ? '#002f6c' : '#e5e7eb',
-              color: respuesta.trim() ? '#fff' : '#9ca3af', border: 'none',
-              borderRadius: 9, fontSize: 11, fontWeight: 600,
+              padding: '7px 14px',
+              background: respuesta.trim() ? '#002f6c' : '#e5e7eb',
+              color: respuesta.trim() ? '#fff' : '#9ca3af',
+              border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
               cursor: respuesta.trim() ? 'pointer' : 'not-allowed',
             }}>
             <Send size={13} /> Enviar respuesta
@@ -394,31 +382,31 @@ function PanelDetalleCorreo({ correo, onClose }: { correo: any; onClose: () => v
 
 export default function CorreosPage() {
   const qc = useQueryClient()
-  const [bandejaActiva, setBandeja] = useState('recibidos')
-  const [selected, setSelected]     = useState<any>(null)
-  const [modal, setModal]           = useState(false)
-  const [busqueda, setBusqueda]     = useState('')
+  const [bandejaActiva, setBandeja]   = useState('recibidos')
+  const [selected, setSelected]       = useState<any>(null)
+  const [modal, setModal]             = useState(false)
+  const [busqueda, setBusqueda]       = useState('')
   const [filtroLeido, setFiltroLeido] = useState('')
 
   const params: Record<string, string> = { ...(busqueda ? { search: busqueda } : {}) }
-  if (bandejaActiva === 'recibidos')  params.tipo = 'recibido'
-  if (bandejaActiva === 'enviados')   params.tipo = 'enviado'
-  if (filtroLeido)                    params.leido = filtroLeido
+  if (bandejaActiva === 'recibidos') params.tipo  = 'recibido'
+  if (bandejaActiva === 'enviados')  params.tipo  = 'enviado'
+  if (filtroLeido)                   params.leido = filtroLeido
 
   const { data: stats } = useQuery({
     queryKey: ['correos-stats'],
-    queryFn: correosService.estadisticas,
+    queryFn:  correosService.estadisticas,
     refetchInterval: 30000,
   })
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['correos', bandejaActiva, busqueda, filtroLeido],
-    queryFn: () => correosService.listar(params),
+    queryFn:  () => correosService.listar(params),
   })
 
   const marcarLeido = useMutation({
     mutationFn: (id: number) => correosService.marcarLeido(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['correos'] }),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['correos'] }),
   })
 
   const handleSelect = (c: any) => {
@@ -429,8 +417,8 @@ export default function CorreosPage() {
   const correos = data?.results ?? []
 
   const getBadge = (key: string) => {
-    if (key === 'recibidos')  return stats?.nuevos ?? 0
-    if (key === 'por_vencer') return stats?.por_vencer ?? 0
+    if (key === 'recibidos')  return stats?.nuevos      ?? 0
+    if (key === 'por_vencer') return stats?.por_vencer  ?? 0
     if (key === 'sin_resp')   return stats?.sin_responder ?? 0
     return 0
   }
@@ -444,7 +432,7 @@ export default function CorreosPage() {
     }}>
       {modal && <ModalNuevoCorreo onClose={() => setModal(false)} />}
 
-      {/* ── SIDEBAR ── */}
+      {/* SIDEBAR */}
       <div style={{ background: '#f8faff', borderRight: '0.5px solid #eef0f5', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ padding: '10px 10px 4px' }}>
           <button onClick={() => setModal(true)}
@@ -456,7 +444,7 @@ export default function CorreosPage() {
         <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 8 }}>
           <p style={{ fontSize: 9, fontWeight: 700, color: '#b8bfc9', textTransform: 'uppercase', letterSpacing: '.08em', padding: '10px 12px 4px' }}>Bandejas</p>
           {BANDEJAS.map(({ key, label, icon: Icon }) => {
-            const badge   = getBadge(key)
+            const badge    = getBadge(key)
             const isActive = bandejaActiva === key
             return (
               <div key={key} onClick={() => { setBandeja(key); setSelected(null) }}
@@ -489,9 +477,9 @@ export default function CorreosPage() {
 
           <p style={{ fontSize: 9, fontWeight: 700, color: '#b8bfc9', textTransform: 'uppercase', letterSpacing: '.08em', padding: '10px 12px 4px' }}>Acciones rápidas</p>
           {[
-            { label: 'Crear trámite', icon: ClipboardPlus },
+            { label: 'Crear trámite',  icon: ClipboardPlus },
             { label: 'Generar oficio', icon: FilePlus },
-            { label: 'Reportes', icon: BarChart2 },
+            { label: 'Reportes',       icon: BarChart2 },
           ].map(({ label, icon: Icon }) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', cursor: 'pointer', fontSize: 12, color: '#4b5563' }}>
               <Icon size={14} style={{ flexShrink: 0 }} /> {label}
@@ -500,10 +488,9 @@ export default function CorreosPage() {
         </div>
       </div>
 
-      {/* ── CONTENIDO ── */}
+      {/* CONTENIDO */}
       <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
 
-        {/* Topbar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderBottom: '0.5px solid #f5f6f8', flexShrink: 0 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: '#0a1628', flexShrink: 0 }}>
             {BANDEJAS.find(b => b.key === bandejaActiva)?.label ?? 'Correos'}
@@ -520,7 +507,6 @@ export default function CorreosPage() {
           </button>
         </div>
 
-        {/* Barra de acciones Quipux */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 14px', borderBottom: '0.5px solid #f5f6f8', background: '#fafbfc', flexShrink: 0, flexWrap: 'wrap' }}>
           {[
             { label: 'Reasignar',   icon: ArrowRightLeft },
@@ -568,13 +554,11 @@ export default function CorreosPage() {
           </div>
         </div>
 
-        {/* Info count */}
         <div style={{ padding: '5px 14px', background: '#fafbfc', borderBottom: '0.5px solid #f5f6f8', fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>
           No. de registros encontrados: <strong style={{ color: '#374151' }}>{data?.count ?? 0}</strong>
           &nbsp;|&nbsp; Bandeja: {BANDEJAS.find(b => b.key === bandejaActiva)?.label}
         </div>
 
-        {/* Lista correos */}
         <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '20px 80px 1fr 120px 140px 110px', gap: 8, padding: '6px 12px', background: '#f9fafb', borderBottom: '0.5px solid #f5f6f8', position: 'sticky', top: 0, zIndex: 1 }}>
             {['','De','Asunto','Fecha','N° Registro','Estado'].map((h, i) => (
@@ -590,8 +574,8 @@ export default function CorreosPage() {
               <p style={{ fontSize: 12 }}>Esta bandeja está vacía</p>
             </div>
           ) : correos.map((c: any) => {
-            const est   = ESTADOS[c.estado] ?? ESTADOS.nuevo
-            const isOn  = selected?.id === c.id
+            const est  = ESTADOS[c.estado] ?? ESTADOS.nuevo
+            const isOn = selected?.id === c.id
             return (
               <div key={c.id} onClick={() => handleSelect(c)}
                 style={{
@@ -638,7 +622,6 @@ export default function CorreosPage() {
           })}
         </div>
 
-        {/* Panel detalle */}
         {selected && <PanelDetalleCorreo correo={selected} onClose={() => setSelected(null)} />}
       </div>
     </div>

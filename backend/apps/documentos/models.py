@@ -311,3 +311,38 @@ class DestinatarioExterno(models.Model):
 
     class Meta:
         db_table = 'doc_destinatario_externo'
+
+class AdjuntoDocumento(models.Model):
+    TIPO_CHOICES = [
+        ('documento', 'Documento principal'),
+        ('anexo',     'Anexo'),
+        ('respaldo',  'Respaldo'),
+        ('otro',      'Otro'),
+    ]
+
+    documento     = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='archivos_adjuntos', null=True, blank=True)
+    tramite       = models.ForeignKey('tramites.Tramite', on_delete=models.CASCADE, related_name='archivos_adjuntos', null=True, blank=True)
+    correo        = models.ForeignKey('correos.Correo', on_delete=models.CASCADE, related_name='archivos_adjuntos', null=True, blank=True)
+    nombre        = models.CharField(max_length=255)
+    archivo       = models.FileField(upload_to='adjuntos/%Y/%m/')
+    tipo          = models.CharField(max_length=20, choices=TIPO_CHOICES, default='anexo')
+    tamanio       = models.BigIntegerField(default=0)
+    mime_type     = models.CharField(max_length=100, blank=True)
+    subido_por    = models.ForeignKey('usuarios.Usuario', on_delete=models.PROTECT)
+    creado_en     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doc_adjunto'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return self.nombre
+
+    @property
+    def tamanio_legible(self):
+        t = self.tamanio
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if t < 1024:
+                return f'{t:.1f} {unit}'
+            t /= 1024
+        return f'{t:.1f} GB'

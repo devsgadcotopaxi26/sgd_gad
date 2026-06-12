@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { usePermisosStore } from '@/store/permisosStore'
@@ -44,9 +44,15 @@ const NAV = [
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const { usuario, logout }       = useAuthStore()
-  const { puede }                 = usePermisosStore()
   const navigate                  = useNavigate()
   const location                  = useLocation()
+  const { puede, cargado, cargar } = usePermisosStore()
+
+  useEffect(() => {
+    if (usuario && !cargado) {
+      cargar()
+    }
+  }, [usuario, cargado])
 
   const handleLogout = async () => {
     await logout()

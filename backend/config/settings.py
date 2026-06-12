@@ -216,3 +216,11 @@ if not DEBUG:
         'formatter': 'verbose',
     }
     LOGGING['root']['handlers'] = ['console', 'file']
+
+# Media files
+MEDIA_URL  = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Límite de subida: 50MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
+FILE_UPLOAD_MAX_MEMORY_SIZE = 52428800

@@ -1,7 +1,10 @@
 from rest_framework import serializers
-from .models import TipoDocumento, Documento, Destinatario, FlujoAprobacion, VersionDocumento
-from .models import BandejaDocumento, SeguimientoDocumento, Tarea, DestinatarioExterno
-
+from .models import (
+    TipoDocumento, Documento, Destinatario,
+    FlujoAprobacion, VersionDocumento,
+    BandejaDocumento, SeguimientoDocumento,
+    Tarea, DestinatarioExterno, AdjuntoDocumento
+)
 class TipoDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = TipoDocumento
@@ -143,3 +146,20 @@ class TareaSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Tarea
         fields = '__all__'
+
+class AdjuntoSerializer(serializers.ModelSerializer):
+    subido_por_nombre = serializers.CharField(source='subido_por.nombre_completo', read_only=True)
+    tamanio_legible   = serializers.ReadOnlyField()
+    url_descarga      = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = AdjuntoDocumento
+        fields = [
+            'id', 'nombre', 'archivo', 'tipo', 'tamanio',
+            'tamanio_legible', 'mime_type', 'subido_por_nombre',
+            'creado_en', 'url_descarga',
+            'documento', 'tramite', 'correo',
+        ]
+
+    def get_url_descarga(self, obj):
+        return f'/api/v1/documentos/adjuntos/{obj.id}/descargar/'

@@ -30,3 +30,4 @@ urlpatterns = [
     path(API_V1 + 'archivo/',      include('apps.archivo.urls')),
     path(API_V1 + 'auditoria/',    include('apps.auditoria.urls')),
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

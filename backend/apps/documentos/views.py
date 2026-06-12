@@ -7,7 +7,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.views import APIView
 from .models import BandejaDocumento, SeguimientoDocumento, Tarea, DestinatarioExterno
-from .models import TipoDocumento, Documento, FlujoAprobacion, VersionDocumento
+from .models import TipoDocumento, Documento, FlujoAprobacion, VersionDocumento, AdjuntoDocumento
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.http import HttpResponse
 from apps.auditoria.reportes import generar_pdf, html_base
 from .serializers import (
@@ -370,3 +371,45 @@ class DocumentoPDFView(APIView):
 
         filename = f'{doc.numero_documento or f"doc_{doc.id}"}.pdf'.replace('/', '-')
         return generar_pdf(html, filename)
+
+class AdjuntoViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    parser_classes     = [MultiPartParser, FormParser]
+
+    def get_queryset(self):
+        qs = AdjuntoDocumento.objects.select_related('subido_por')
+        doc_id     = self.request.query_params.get('documento')
+        tramite_id = self.request.query_params.get('tramite')
+        correo_id  = self.request.query_params.get('correo')
+        if doc_id:     qs = qs.filter(documento_id=doc_id)
+        if tramite_id: qs = qs.filter(tramite_id=tramite_id)
+        if correo_id:  qs = qs.filter(correo_id=correo_id)
+        return qs
+
+    def get_serializer_class(self):
+        from .serializers import AdjuntoSerializer
+        return AdjuntoSerializer
+
+    def perform_create(self, serializer):
+        archivo    = self.request.FILES.get('archivo')
+        nombre     = archivo.name if archivo else 'sin nombre'
+        tamanio    = archivo.size if archivo else 0
+        mime_type  = archivo.content_type if archivo else ''
+        serializer.save(
+            subido_por = self.request.user,
+            nombre     = nombre,
+            tamanio    = tamanio,
+            mime_type  = mime_type,
+        )
+
+    @action(detail=True, methods=['get'], url_path='descargar')
+    def descargar(self, request, pk=None):
+        adjunto = self.get_object()
+        try:
+            return FileResponse(
+                adjunto.archivo.open('rb'),
+                as_attachment=True,
+                filename=adjunto.nombre,
+            )
+        except Exception:
+            return Response({'detail': 'Archivo no encontrado.'}, status=404)

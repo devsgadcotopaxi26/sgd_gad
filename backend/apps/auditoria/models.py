@@ -47,3 +47,4 @@ class Notificacion(models.Model):
 
     def __str__(self):
         return f'{self.usuario} — {self.titulo}'
+
