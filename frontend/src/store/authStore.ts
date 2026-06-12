@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import api from '@/services/api'
-
+import { usePermisosStore } from './permisosStore'
 interface Usuario {
   id: number
   uuid: string
@@ -39,26 +39,28 @@ export const useAuthStore = create<AuthState>()(
       error: null,
 
       login: async (email, password) => {
-        set({ isLoading: true, error: null })
-        try {
-          const { data } = await api.post('/auth/login/', { email, password })
-          localStorage.setItem('access_token', data.access)
-          localStorage.setItem('refresh_token', data.refresh)
-          set({
-            usuario: data.usuario,
-            access_token: data.access,
-            refresh_token: data.refresh,
-            isAuthenticated: true,
-            isLoading: false,
-          })
-        } catch (err: any) {
-          const msg = err.response?.data?.detail
-            || err.response?.data?.non_field_errors?.[0]
-            || 'Error al iniciar sesión'
-          set({ error: msg, isLoading: false })
-          throw new Error(msg)
-        }
-      },
+  set({ isLoading: true, error: null })
+  try {
+    const { data } = await api.post('/auth/login/', { email, password })
+    localStorage.setItem('access_token', data.access)
+    localStorage.setItem('refresh_token', data.refresh)
+    set({
+      usuario: data.usuario,
+      access_token: data.access,
+      refresh_token: data.refresh,
+      isAuthenticated: true,
+      isLoading: false,
+    })
+    // Cargar permisos DESPUÉS de guardar el token
+    await usePermisosStore.getState().cargar()
+  } catch (err: any) {
+    const msg = err.response?.data?.detail
+      || err.response?.data?.non_field_errors?.[0]
+      || 'Error al iniciar sesión'
+    set({ error: msg, isLoading: false })
+    throw new Error(msg)
+  }
+},
 
       logout: async () => {
         try {

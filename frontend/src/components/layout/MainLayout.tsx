@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
+import { usePermisosStore } from '@/store/permisosStore'
 import NotificacionesPanel from '@/components/ui/NotificacionesPanel'
 import {
   LayoutDashboard, FileText, ClipboardList, Mail,
@@ -12,30 +13,30 @@ const NAV = [
   {
     section: 'Principal',
     items: [
-      { to: '/dashboard', label: 'Escritorio', icon: LayoutDashboard },
+      { to: '/dashboard',  label: 'Escritorio',  icon: LayoutDashboard, modulo: '' },
     ]
   },
   {
     section: 'Gestión documental',
     items: [
-      { to: '/documentos', label: 'Documentos', icon: FileText,      badge: 12 },
-      { to: '/tramites',   label: 'Trámites',   icon: ClipboardList, badge: 5  },
-      { to: '/correos',    label: 'Correos',    icon: Mail,          badge: 3  },
+      { to: '/documentos', label: 'Documentos',  icon: FileText,        modulo: 'documentos', badge: 12 },
+      { to: '/tramites',   label: 'Trámites',    icon: ClipboardList,   modulo: 'tramites',   badge: 5  },
+      { to: '/correos',    label: 'Correos',     icon: Mail,            modulo: 'correos',    badge: 3  },
     ]
   },
   {
     section: 'Organización',
     items: [
-      { to: '/archivo',    label: 'Archivo',    icon: Archive },
-      { to: '/organigrama',label: 'Organigrama',icon: Building2 },
-      { to: '/usuarios',   label: 'Usuarios',   icon: Users },
+      { to: '/archivo',    label: 'Archivo',     icon: Archive,         modulo: 'archivo'    },
+      { to: '/organigrama',label: 'Organigrama', icon: Building2,       modulo: ''           },
+      { to: '/usuarios',   label: 'Usuarios',    icon: Users,           modulo: 'usuarios'   },
     ]
   },
   {
     section: 'Sistema',
     items: [
-      { to: '/reportes', label: 'Reportes', icon: BarChart2 },
-      { to: '/ajustes',  label: 'Ajustes',  icon: Settings },
+      { to: '/reportes',   label: 'Reportes',    icon: BarChart2,       modulo: 'reportes'   },
+      { to: '/ajustes',    label: 'Ajustes',     icon: Settings,        modulo: ''           },
     ]
   },
 ]
@@ -43,6 +44,7 @@ const NAV = [
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const { usuario, logout }       = useAuthStore()
+  const { puede }                 = usePermisosStore()
   const navigate                  = useNavigate()
   const location                  = useLocation()
 
@@ -51,8 +53,8 @@ export default function MainLayout() {
     navigate('/login')
   }
 
-  const iniciales     = `${usuario?.nombres?.[0] ?? ''}${usuario?.apellidos?.[0] ?? ''}`.toUpperCase()
-  const paginaActual  = NAV.flatMap(s => s.items).find(i => location.pathname.startsWith(i.to))?.label ?? 'SGD'
+  const iniciales    = `${usuario?.nombres?.[0] ?? ''}${usuario?.apellidos?.[0] ?? ''}`.toUpperCase()
+  const paginaActual = NAV.flatMap(s => s.items).find(i => location.pathname.startsWith(i.to))?.label ?? 'SGD'
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#f4f6fa', overflow: 'hidden' }}>
@@ -104,77 +106,82 @@ export default function MainLayout() {
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: '10px 8px', overflowY: 'auto', overflowX: 'hidden' }}>
-          {NAV.map(({ section, items }) => (
-            <div key={section} style={{ marginBottom: 4 }}>
-              {!collapsed && (
-                <p style={{
-                  fontSize: 9, fontWeight: 700, color: '#c4c9d4',
-                  textTransform: 'uppercase', letterSpacing: '0.08em',
-                  padding: '8px 10px 4px',
-                }}>
-                  {section}
-                </p>
-              )}
-              {items.map(({ to, label, icon: Icon, badge }: any) => (
-                <NavLink key={to} to={to} title={collapsed ? label : undefined}
-                  style={({ isActive }) => ({
-                    display: 'flex', alignItems: 'center',
-                    gap: 10, padding: collapsed ? '9px 14px' : '9px 12px',
-                    borderRadius: 10, marginBottom: 2,
-                    textDecoration: 'none', position: 'relative',
-                    transition: 'background .15s',
-                    background: isActive ? '#002f6c' : 'transparent',
-                    justifyContent: collapsed ? 'center' : 'flex-start',
-                  })}>
-                  {({ isActive }) => (
-                    <>
-                      <Icon size={17} style={{
-                        color: isActive ? '#fff' : '#9ca3af',
-                        flexShrink: 0, transition: 'color .15s',
-                      }} />
-                      {!collapsed && (
-                        <>
-                          <span style={{
-                            fontSize: 13, fontWeight: isActive ? 600 : 500,
-                            color: isActive ? '#fff' : '#4b5563',
-                            flex: 1, whiteSpace: 'nowrap',
-                          }}>
-                            {label}
-                          </span>
-                          {badge && !isActive && (
-                            <span style={{
-                              fontSize: 10, fontWeight: 700,
-                              background: '#da291c', color: '#fff',
-                              padding: '1px 6px', borderRadius: 20, flexShrink: 0,
-                            }}>
-                              {badge}
-                            </span>
-                          )}
-                          {isActive && (
-                            <ChevronRight size={13} style={{ color: 'rgba(255,255,255,0.5)', flexShrink: 0 }} />
-                          )}
-                        </>
-                      )}
-                      {collapsed && badge && (
-                        <span style={{
-                          position: 'absolute', top: 6, right: 6,
-                          width: 7, height: 7, borderRadius: '50%',
-                          background: '#da291c',
+          {NAV.map(({ section, items }) => {
+            const itemsVisibles = items.filter(({ modulo }: any) =>
+              !modulo || puede(modulo, 'ver')
+            )
+            if (itemsVisibles.length === 0) return null
+            return (
+              <div key={section} style={{ marginBottom: 4 }}>
+                {!collapsed && (
+                  <p style={{
+                    fontSize: 9, fontWeight: 700, color: '#c4c9d4',
+                    textTransform: 'uppercase', letterSpacing: '0.08em',
+                    padding: '8px 10px 4px',
+                  }}>
+                    {section}
+                  </p>
+                )}
+                {itemsVisibles.map(({ to, label, icon: Icon, badge }: any) => (
+                  <NavLink key={to} to={to} title={collapsed ? label : undefined}
+                    style={({ isActive }) => ({
+                      display: 'flex', alignItems: 'center',
+                      gap: 10, padding: collapsed ? '9px 14px' : '9px 12px',
+                      borderRadius: 10, marginBottom: 2,
+                      textDecoration: 'none', position: 'relative',
+                      transition: 'background .15s',
+                      background: isActive ? '#002f6c' : 'transparent',
+                      justifyContent: collapsed ? 'center' : 'flex-start',
+                    })}>
+                    {({ isActive }) => (
+                      <>
+                        <Icon size={17} style={{
+                          color: isActive ? '#fff' : '#9ca3af',
+                          flexShrink: 0, transition: 'color .15s',
                         }} />
-                      )}
-                    </>
-                  )}
-                </NavLink>
-              ))}
-            </div>
-          ))}
+                        {!collapsed && (
+                          <>
+                            <span style={{
+                              fontSize: 13, fontWeight: isActive ? 600 : 500,
+                              color: isActive ? '#fff' : '#4b5563',
+                              flex: 1, whiteSpace: 'nowrap',
+                            }}>
+                              {label}
+                            </span>
+                            {badge && !isActive && (
+                              <span style={{
+                                fontSize: 10, fontWeight: 700,
+                                background: '#da291c', color: '#fff',
+                                padding: '1px 6px', borderRadius: 20, flexShrink: 0,
+                              }}>
+                                {badge}
+                              </span>
+                            )}
+                            {isActive && (
+                              <ChevronRight size={13} style={{ color: 'rgba(255,255,255,0.5)', flexShrink: 0 }} />
+                            )}
+                          </>
+                        )}
+                        {collapsed && badge && (
+                          <span style={{
+                            position: 'absolute', top: 6, right: 6,
+                            width: 7, height: 7, borderRadius: '50%',
+                            background: '#da291c',
+                          }} />
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            )
+          })}
         </nav>
 
-        {/* Usuario en el pie del sidebar */}
+        {/* Usuario */}
         <div style={{ padding: collapsed ? '10px 8px' : '10px 12px', borderTop: '1px solid #f5f5f5' }}>
           {collapsed ? (
-            <div
-              onClick={() => navigate('/perfil')}
+            <div onClick={() => navigate('/perfil')}
               style={{
                 width: 36, height: 36, borderRadius: '50%', margin: '0 auto',
                 background: 'linear-gradient(135deg,#002f6c,#0052cc)',
@@ -186,8 +193,7 @@ export default function MainLayout() {
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div
-                onClick={() => navigate('/perfil')}
+              <div onClick={() => navigate('/perfil')}
                 style={{
                   width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
                   background: 'linear-gradient(135deg,#002f6c,#0052cc)',
@@ -226,8 +232,7 @@ export default function MainLayout() {
           display: 'flex', alignItems: 'center', gap: 12,
           flexShrink: 0,
         }}>
-          <button
-            onClick={() => setCollapsed(!collapsed)}
+          <button onClick={() => setCollapsed(!collapsed)}
             style={{
               width: 32, height: 32, borderRadius: 8, border: '1px solid #f0f0f0',
               background: '#fff', cursor: 'pointer', display: 'flex',
@@ -237,21 +242,18 @@ export default function MainLayout() {
             {collapsed ? <Menu size={16} /> : <X size={16} />}
           </button>
 
-          {/* Breadcrumb */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: 12, color: '#9ca3af' }}>SGD</span>
             <ChevronRight size={12} style={{ color: '#d1d5db' }} />
             <span style={{ fontSize: 13, fontWeight: 600, color: '#0a1628' }}>{paginaActual}</span>
           </div>
 
-          {/* Buscador */}
           <div style={{ flex: 1, maxWidth: 340, position: 'relative', marginLeft: 8 }}>
             <Search size={13} style={{
               position: 'absolute', left: 10, top: '50%',
               transform: 'translateY(-50%)', color: '#c4c9d4',
             }} />
-            <input
-              type="text"
+            <input type="text"
               placeholder="Buscar documentos, trámites, expedientes..."
               style={{
                 width: '100%', padding: '7px 12px 7px 30px',
@@ -264,12 +266,9 @@ export default function MainLayout() {
 
           <div style={{ flex: 1 }} />
 
-          {/* Notificaciones */}
           <NotificacionesPanel />
 
-          {/* Avatar topbar — click va al perfil */}
-          <div
-            onClick={() => navigate('/perfil')}
+          <div onClick={() => navigate('/perfil')}
             style={{
               display: 'flex', alignItems: 'center', gap: 8,
               padding: '4px 10px 4px 4px',
@@ -295,7 +294,6 @@ export default function MainLayout() {
           </div>
         </header>
 
-        {/* Página activa */}
         <main style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
           <Outlet />
         </main>

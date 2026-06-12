@@ -7,8 +7,9 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-
+from .permisos import get_permisos_usuario
 from .models import Rol, UsuarioRol
+from rest_framework.decorators import api_view, permission_classes
 from .serializers import (
     LoginSerializer, UsuarioResumenSerializer, UsuarioListSerializer,
     UsuarioDetalleSerializer, UsuarioCrearSerializer,
@@ -117,3 +118,15 @@ class RolViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset           = Rol.objects.filter(activo=True).order_by('nivel')
     serializer_class   = RolSerializer
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def mis_permisos(request):
+    permisos = get_permisos_usuario(request.user)
+    roles    = list(request.user.roles.filter(activo=True).values_list('rol__codigo', flat=True))
+    return Response({
+        'usuario_id': request.user.id,
+        'es_admin':   request.user.is_superuser,
+        'roles':      roles,
+        'permisos':   permisos,
+    })
