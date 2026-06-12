@@ -2,421 +2,416 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { organizacionService } from '@/services/organizacion.service'
 import {
-  Building2, ChevronRight, ChevronDown, Users,
-  Plus, X, Edit3, CheckCircle, XCircle, Search,
-  LayoutList, Network
+  ChevronRight, ChevronDown, Building2,
+  Search, CheckCircle, XCircle, RefreshCw
 } from 'lucide-react'
 
-const TIPO_CONFIG: Record<string, { bg: string; text: string; border: string }> = {
-  prefectura:   { bg: '#002f6c', text: '#fff',    border: '#002f6c' },
-  viceprefectura:{ bg: '#003d8f', text: '#fff',   border: '#003d8f' },
-  secretaria:   { bg: '#e8f1fd', text: '#002f6c', border: '#b5d4f4' },
-  direccion:    { bg: '#faeeda', text: '#854f0b', border: '#f5c98a' },
-  departamento: { bg: '#f0fdf4', text: '#15803d', border: '#86efac' },
-  unidad:       { bg: '#f9fafb', text: '#374151', border: '#e5e7eb' },
-  coordinacion: { bg: '#faf5ff', text: '#7e22ce', border: '#d8b4fe' },
-  other:        { bg: '#f9fafb', text: '#6b7280', border: '#e5e7eb' },
+const TIPO_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  prefectura:     { bg: '#002f6c', border: '#002f6c',  text: '#fff'    },
+  viceprefectura: { bg: '#003d8f', border: '#003d8f',  text: '#fff'    },
+  consejo:        { bg: '#1f2937', border: '#1f2937',  text: '#fff'    },
+  secretaria:     { bg: '#dbeafe', border: '#93c5fd',  text: '#1e3a8a' },
+  direccion:      { bg: '#f3f4f6', border: '#d1d5db',  text: '#111827' },
+  departamento:   { bg: '#ffffff', border: '#e5e7eb',  text: '#374151' },
+  coordinacion:   { bg: '#ede9fe', border: '#a78bfa',  text: '#4c1d95' },
+  unidad:         { bg: '#f9fafb', border: '#e5e7eb',  text: '#4b5563' },
+  asesoria:       { bg: '#fef3c7', border: '#fcd34d',  text: '#78350f' },
+  zona:           { bg: '#ecfdf5', border: '#6ee7b7',  text: '#065f46' },
+  other:          { bg: '#f9fafb', border: '#e5e7eb',  text: '#4b5563' },
 }
 
-function getNivelPadding(nivel: number) {
-  return nivel * 20
-}
-
-function UnidadRow({
-  unidad, nivel, expanded, onToggle, onSelect, selected
+function NodoFila({
+  nodo, nivel, expandidos, onToggle, onSelect, selected
 }: {
-  unidad: any; nivel: number; expanded: boolean
-  onToggle: () => void; onSelect: () => void; selected: boolean
+  nodo: any; nivel: number
+  expandidos: Set<number>
+  onToggle: (id: number) => void
+  onSelect: (n: any) => void
+  selected: any
 }) {
-  const cfg     = TIPO_CONFIG[unidad.tipo] ?? TIPO_CONFIG.other
-  const tieneHijos = unidad.hijos?.length > 0
+  const cfg      = TIPO_COLORS[nodo.tipo] ?? TIPO_COLORS.other
+  const isExp    = expandidos.has(nodo.id)
+  const hasKids  = (nodo.hijos ?? []).length > 0
+  const isSel    = selected?.id === nodo.id
+  const indent   = nivel * 24
 
-  return (
-    <div
-      onClick={onSelect}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 12px',
-        paddingLeft: 12 + getNivelPadding(nivel),
-        cursor: 'pointer',
-        background: selected ? '#e8f1fd' : 'transparent',
-        borderLeft: selected ? '2px solid #002f6c' : '2px solid transparent',
-        borderBottom: '0.5px solid #f5f6f8',
-        transition: 'background .1s',
-      }}
-    >
-      {/* Toggle */}
-      <div
-        onClick={e => { e.stopPropagation(); if (tieneHijos) onToggle() }}
-        style={{
-          width: 18, height: 18, flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          color: tieneHijos ? '#9ca3af' : 'transparent',
-          cursor: tieneHijos ? 'pointer' : 'default',
-        }}>
-        {tieneHijos
-          ? expanded
-            ? <ChevronDown size={14} />
-            : <ChevronRight size={14} />
-          : <span style={{ width: 14 }} />}
-      </div>
-
-      {/* Ícono tipo */}
-      <div style={{
-        width: 28, height: 28, borderRadius: 7, flexShrink: 0,
-        background: cfg.bg, border: `1px solid ${cfg.border}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <Building2 size={13} style={{ color: cfg.text }} />
-      </div>
-
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{
-          fontSize: 12, fontWeight: selected ? 600 : 500,
-          color: selected ? '#002f6c' : '#0a1628',
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>
-          {unidad.nombre}
-        </p>
-        <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>
-          {unidad.tipo?.charAt(0).toUpperCase() + unidad.tipo?.slice(1)}
-          {unidad.siglas ? ` · ${unidad.siglas}` : ''}
-        </p>
-      </div>
-
-      {/* Estado */}
-      {!unidad.activo && (
-        <span style={{ fontSize: 9, fontWeight: 600, padding: '1px 6px', borderRadius: 10, background: '#fef2f2', color: '#dc2626' }}>
-          Inactivo
-        </span>
-      )}
-    </div>
-  )
-}
-
-function ArbolRecursivo({
-  nodos, nivel = 0, expandidos, onToggle, onSelect, selected
-}: {
-  nodos: any[]; nivel?: number
-  expandidos: Set<number>; onToggle: (id: number) => void
-  onSelect: (u: any) => void; selected: any
-}) {
   return (
     <>
-      {nodos.map(nodo => (
-        <div key={nodo.id}>
-          <UnidadRow
-            unidad={nodo} nivel={nivel}
-            expanded={expandidos.has(nodo.id)}
-            onToggle={() => onToggle(nodo.id)}
-            onSelect={() => onSelect(nodo)}
-            selected={selected?.id === nodo.id}
-          />
-          {expandidos.has(nodo.id) && nodo.hijos?.length > 0 && (
-            <ArbolRecursivo
-              nodos={nodo.hijos} nivel={nivel + 1}
-              expandidos={expandidos} onToggle={onToggle}
-              onSelect={onSelect} selected={selected}
-            />
+      <div
+        onClick={() => onSelect(nodo)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '7px 14px',
+          paddingLeft: 14 + indent,
+          background: isSel ? '#e8f1fd' : 'transparent',
+          borderLeft: `3px solid ${isSel ? '#002f6c' : 'transparent'}`,
+          borderBottom: '0.5px solid #f5f6f8',
+          cursor: 'pointer',
+          transition: 'background .1s',
+        }}
+        onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#f8faff' }}
+        onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+      >
+        {/* Toggle */}
+        <div
+          onClick={e => { e.stopPropagation(); if (hasKids) onToggle(nodo.id) }}
+          style={{
+            width: 18, height: 18, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: hasKids ? '#9ca3af' : 'transparent',
+            cursor: hasKids ? 'pointer' : 'default',
+          }}
+        >
+          {hasKids
+            ? isExp ? <ChevronDown size={14} /> : <ChevronRight size={14} />
+            : null}
+        </div>
+
+        {/* Badge tipo */}
+        <div style={{
+          width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+          background: cfg.bg, border: `1.5px solid ${isSel ? '#002f6c' : cfg.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <Building2 size={14} style={{ color: isSel ? '#002f6c' : cfg.text === '#fff' ? '#fff' : cfg.text }} />
+        </div>
+
+        {/* Nombre */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{
+            fontSize: 13, fontWeight: isSel ? 600 : 500,
+            color: isSel ? '#002f6c' : '#0a1628',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            margin: 0,
+          }}>
+            {nodo.nombre}
+          </p>
+          <p style={{ fontSize: 10, color: '#9ca3af', margin: '1px 0 0' }}>
+            {nodo.tipo?.charAt(0).toUpperCase() + nodo.tipo?.slice(1)}
+            {nodo.siglas ? ` · ${nodo.siglas}` : ''}
+          </p>
+        </div>
+
+        {/* Badges */}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          {hasKids && (
+            <span style={{
+              fontSize: 9, fontWeight: 600, padding: '1px 6px', borderRadius: 10,
+              background: '#f3f4f6', color: '#6b7280',
+            }}>
+              {(nodo.hijos ?? []).length} sub
+            </span>
+          )}
+          {!nodo.activo && (
+            <span style={{
+              fontSize: 9, fontWeight: 600, padding: '1px 6px', borderRadius: 10,
+              background: '#fef2f2', color: '#dc2626',
+            }}>
+              Inactivo
+            </span>
           )}
         </div>
+      </div>
+
+      {/* Hijos */}
+      {isExp && hasKids && (nodo.hijos ?? []).map((hijo: any) => (
+        <NodoFila
+          key={hijo.id}
+          nodo={hijo} nivel={nivel + 1}
+          expandidos={expandidos}
+          onToggle={onToggle}
+          onSelect={onSelect}
+          selected={selected}
+        />
       ))}
     </>
   )
 }
 
-function PanelDetalle({ unidad, onClose }: { unidad: any; onClose: () => void }) {
-  const qc = useQueryClient()
-  const cfg = TIPO_CONFIG[unidad.tipo] ?? TIPO_CONFIG.other
-
-  const activar = useMutation({
-    mutationFn: () => organizacionService.activar(unidad.id),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['organigrama-arbol'] }),
-  })
-
-  const desactivar = useMutation({
-    mutationFn: () => organizacionService.desactivar(unidad.id),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['organigrama-arbol'] }),
-  })
-
-  return (
-    <div style={{
-      width: 320, flexShrink: 0, background: '#fff',
-      borderLeft: '0.5px solid #e5e7eb',
-      display: 'flex', flexDirection: 'column',
-      overflow: 'hidden',
-    }}>
-      {/* Header */}
-      <div style={{ padding: '14px 16px', borderBottom: '0.5px solid #f5f6f8' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-            background: cfg.bg, border: `1px solid ${cfg.border}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <Building2 size={16} style={{ color: cfg.text }} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', lineHeight: 1.3 }}>
-              {unidad.nombre}
-            </p>
-            <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 1 }}>
-              {unidad.tipo?.charAt(0).toUpperCase() + unidad.tipo?.slice(1)}
-            </p>
-          </div>
-          <button onClick={onClose}
-            style={{ padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
-            <X size={14} />
-          </button>
-        </div>
-
-        {/* Acciones */}
-        <div style={{ display: 'flex', gap: 5 }}>
-          {unidad.activo ? (
-            <button onClick={() => desactivar.mutate()}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 8, border: '0.5px solid #fecaca', background: '#fef2f2', color: '#dc2626', fontSize: 11, fontWeight: 500, cursor: 'pointer' }}>
-              <XCircle size={12} /> Desactivar
-            </button>
-          ) : (
-            <button onClick={() => activar.mutate()}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', borderRadius: 8, border: '0.5px solid #86efac', background: '#f0fdf4', color: '#15803d', fontSize: 11, fontWeight: 500, cursor: 'pointer' }}>
-              <CheckCircle size={12} /> Activar
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Datos */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-        {[
-          { label: 'Código',      value: unidad.codigo     },
-          { label: 'Siglas',      value: unidad.siglas     },
-          { label: 'Tipo',        value: unidad.tipo       },
-          { label: 'Nivel',       value: unidad.nivel_nombre },
-          { label: 'Responsable', value: unidad.responsable_nombre || 'Sin asignar' },
-          { label: 'Email',       value: unidad.email      },
-          { label: 'Teléfono',    value: unidad.telefono   },
-          { label: 'Ubicación',   value: unidad.ubicacion  },
-        ].filter(({ value }) => value).map(({ label, value }) => (
-          <div key={label} style={{ marginBottom: 12 }}>
-            <p style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 2 }}>
-              {label}
-            </p>
-            <p style={{ fontSize: 13, color: '#374151', fontWeight: 500 }}>{value}</p>
-          </div>
-        ))}
-
-        {unidad.funciones && (
-          <div style={{ marginBottom: 12 }}>
-            <p style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>
-              Funciones
-            </p>
-            <p style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>{unidad.funciones}</p>
-          </div>
-        )}
-
-        {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 16 }}>
-          {[
-            { label: 'Subunidades', value: unidad.hijos?.length ?? 0 },
-            { label: 'Estado',      value: unidad.activo ? 'Activo' : 'Inactivo' },
-          ].map(({ label, value }) => (
-            <div key={label} style={{ padding: 10, borderRadius: 8, background: '#f8faff', textAlign: 'center' }}>
-              <p style={{ fontSize: 15, fontWeight: 700, color: '#002f6c' }}>{value}</p>
-              <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{label}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export default function OrganigramaPage() {
-  const [expandidos, setExpandidos]   = useState<Set<number>>(new Set([1, 2, 3]))
-  const [selected, setSelected]       = useState<any>(null)
-  const [busqueda, setBusqueda]       = useState('')
-  const [vista, setVista]             = useState<'arbol' | 'lista'>('arbol')
-  const [filtroTipo, setFiltroTipo]   = useState('')
+  const qc = useQueryClient()
+  const [expandidos, setExpandidos] = useState<Set<number>>(new Set([1]))
+  const [selected, setSelected]     = useState<any>(null)
+  const [busqueda, setBusqueda]     = useState('')
 
-  const { data: arbol, isLoading } = useQuery({
+  const { data: arbol, isLoading, refetch } = useQuery({
     queryKey: ['organigrama-arbol'],
     queryFn:  organizacionService.arbol,
   })
 
-  const { data: lista } = useQuery({
-    queryKey: ['organigrama-lista', busqueda, filtroTipo],
-    queryFn: () => organizacionService.listar({ search: busqueda, tipo: filtroTipo }),
-    enabled: vista === 'lista',
+  const activar = useMutation({
+    mutationFn: (id: number) => organizacionService.activar(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['organigrama-arbol'] })
+      refetch()
+    },
   })
 
-  const toggleExpanded = (id: number) => {
-    setExpandidos(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
+  const desactivar = useMutation({
+    mutationFn: (id: number) => organizacionService.desactivar(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['organigrama-arbol'] })
+      refetch()
+    },
+  })
+
+  const nodos = arbol ?? []
+
+  const toggle = (id: number) => setExpandidos(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
 
   const expandirTodo = () => {
     const ids = new Set<number>()
-    const recopilar = (nodos: any[]) => {
-      nodos.forEach(n => { ids.add(n.id); if (n.hijos) recopilar(n.hijos) })
-    }
-    if (arbol) recopilar(arbol)
+    const rec = (ns: any[]) => ns.forEach(n => { ids.add(n.id); if (n.hijos) rec(n.hijos) })
+    rec(nodos)
     setExpandidos(ids)
   }
 
-  const contraerTodo = () => setExpandidos(new Set())
+  const contraerTodo = () => setExpandidos(new Set([nodos[0]?.id]))
 
-  const nodos = arbol ?? []
-  const unidades = lista?.results ?? []
+  // Búsqueda flat
+  const flatNodes: any[] = []
+  const flatten = (ns: any[]) => ns.forEach(n => { flatNodes.push(n); if (n.hijos) flatten(n.hijos) })
+  flatten(nodos)
+  const filtrados = busqueda
+    ? flatNodes.filter(n =>
+        n.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+        (n.siglas ?? '').toLowerCase().includes(busqueda.toLowerCase()))
+    : []
+
+  // Contar por tipo
+  const conteos: Record<string, number> = {}
+  flatNodes.forEach(n => { conteos[n.tipo] = (conteos[n.tipo] ?? 0) + 1 })
+
+  const cfg = selected ? (TIPO_COLORS[selected.tipo] ?? TIPO_COLORS.other) : null
 
   return (
     <div>
-      {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Organigrama institucional</h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            Estructura organizativa del GAD Provincial de Cotopaxi
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setVista('arbol')}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-all"
-            style={{ background: vista === 'arbol' ? '#002f6c' : '#f3f4f6', color: vista === 'arbol' ? '#fff' : '#6b7280' }}>
-            <Network size={13} /> Árbol
-          </button>
-          <button onClick={() => setVista('lista')}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl transition-all"
-            style={{ background: vista === 'lista' ? '#002f6c' : '#f3f4f6', color: vista === 'lista' ? '#fff' : '#6b7280' }}>
-            <LayoutList size={13} /> Lista
-          </button>
+          <p className="text-sm text-gray-400 mt-0.5">GAD Provincia de Cotopaxi — Estructura Orgánica por Procesos</p>
         </div>
       </div>
 
-      {/* Leyenda tipos */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {Object.entries(TIPO_CONFIG).filter(([k]) => k !== 'other').map(([tipo, cfg]) => (
+      {/* Stats por tipo */}
+      <div className="flex flex-wrap gap-2 mb-5">
+        {Object.entries(TIPO_COLORS).filter(([k]) => k !== 'other' && conteos[k]).map(([tipo, c]) => (
           <span key={tipo} style={{
             fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
-            background: cfg.bg, color: cfg.text, border: `1px solid ${cfg.border}`,
-            textTransform: 'capitalize', cursor: 'pointer',
-          }}
-            onClick={() => setFiltroTipo(filtroTipo === tipo ? '' : tipo)}>
-            {tipo}
+            background: c.bg, color: c.text === '#fff' ? c.text : c.text,
+            border: `1px solid ${c.border}`,
+          }}>
+            {tipo.charAt(0).toUpperCase() + tipo.slice(1)} ({conteos[tipo]})
           </span>
         ))}
       </div>
 
-      <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 220px)' }}>
+      <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 240px)' }}>
 
-        {/* Panel principal */}
-        <div style={{ flex: 1, background: '#fff', borderRadius: 14, border: '0.5px solid #e5e7eb', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-
+        {/* Panel árbol */}
+        <div style={{
+          flex: 1, background: '#fff', borderRadius: 14,
+          border: '0.5px solid #e5e7eb', overflow: 'hidden',
+          display: 'flex', flexDirection: 'column',
+        }}>
           {/* Toolbar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '0.5px solid #f5f6f8' }}>
-            <div style={{ position: 'relative', flex: 1, maxWidth: 320 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 14px', borderBottom: '0.5px solid #f5f6f8',
+            flexShrink: 0,
+          }}>
+            <div style={{ position: 'relative', flex: 1, maxWidth: 300 }}>
               <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
-              <input placeholder="Buscar unidad..."
-                value={busqueda} onChange={e => setBusqueda(e.target.value)}
-                style={{ width: '100%', padding: '6px 10px 6px 26px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }} />
+              <input
+                placeholder="Buscar unidad por nombre o siglas..."
+                value={busqueda}
+                onChange={e => setBusqueda(e.target.value)}
+                style={{ width: '100%', padding: '6px 10px 6px 26px', fontSize: 12, border: '0.5px solid #e5e7eb', borderRadius: 8, outline: 'none', background: '#f9fafb', color: '#374151' }}
+              />
             </div>
-
-            {vista === 'arbol' && (
-              <>
-                <button onClick={expandirTodo}
-                  style={{ padding: '5px 10px', fontSize: 11, fontWeight: 500, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', color: '#6b7280' }}>
-                  Expandir todo
-                </button>
-                <button onClick={contraerTodo}
-                  style={{ padding: '5px 10px', fontSize: 11, fontWeight: 500, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', color: '#6b7280' }}>
-                  Contraer todo
-                </button>
-              </>
-            )}
-
-            {vista === 'lista' && (
-              <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}
-                style={{ padding: '6px 10px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }}>
-                <option value="">Todos los tipos</option>
-                {Object.keys(TIPO_CONFIG).filter(k => k !== 'other').map(t => (
-                  <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-                ))}
-              </select>
-            )}
-
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Users size={13} style={{ color: '#9ca3af' }} />
-              <span style={{ fontSize: 11, color: '#9ca3af' }}>
-                {vista === 'arbol' ? `${nodos.length} raíces` : `${lista?.count ?? 0} unidades`}
-              </span>
-            </div>
+            <button onClick={expandirTodo}
+              style={{ padding: '5px 12px', fontSize: 11, fontWeight: 600, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', color: '#374151' }}>
+              Expandir todo
+            </button>
+            <button onClick={contraerTodo}
+              style={{ padding: '5px 12px', fontSize: 11, fontWeight: 600, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', color: '#374151' }}>
+              Contraer
+            </button>
+            <button onClick={() => refetch()}
+              style={{ width: 30, height: 30, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+              <RefreshCw size={13} />
+            </button>
+            <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 4 }}>
+              {flatNodes.length} unidades
+            </span>
           </div>
 
-          {/* Contenido */}
+          {/* Lista */}
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {isLoading ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100, fontSize: 12, color: '#9ca3af' }}>
                 Cargando organigrama...
               </div>
-            ) : vista === 'arbol' ? (
-              <ArbolRecursivo
-                nodos={nodos} expandidos={expandidos}
-                onToggle={toggleExpanded} onSelect={setSelected}
-                selected={selected}
-              />
+            ) : busqueda ? (
+              // Vista búsqueda
+              filtrados.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100, fontSize: 12, color: '#9ca3af' }}>
+                  Sin resultados para "{busqueda}"
+                </div>
+              ) : filtrados.map(n => (
+                <NodoFila
+                  key={n.id} nodo={n} nivel={0}
+                  expandidos={expandidos} onToggle={toggle}
+                  onSelect={setSelected} selected={selected}
+                />
+              ))
             ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: '#f9fafb', borderBottom: '0.5px solid #f5f6f8' }}>
-                    {['Nombre', 'Siglas', 'Tipo', 'Estado'].map(h => (
-                      <th key={h} style={{ padding: '7px 12px', fontSize: 10, fontWeight: 600, color: '#9ca3af', textAlign: 'left', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {unidades
-                    .filter(u => !busqueda || u.nombre.toLowerCase().includes(busqueda.toLowerCase()))
-                    .map((u: any) => {
-                      const cfg = TIPO_CONFIG[u.tipo] ?? TIPO_CONFIG.other
-                      return (
-                        <tr key={u.id} onClick={() => setSelected(u)}
-                          style={{ borderBottom: '0.5px solid #f9fafb', cursor: 'pointer', background: selected?.id === u.id ? '#e8f1fd' : 'transparent' }}>
-                          <td style={{ padding: '8px 12px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ width: 26, height: 26, borderRadius: 6, background: cfg.bg, border: `1px solid ${cfg.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                <Building2 size={12} style={{ color: cfg.text }} />
-                              </div>
-                              <span style={{ fontSize: 12, fontWeight: 500, color: '#0a1628' }}>{u.nombre}</span>
-                            </div>
-                          </td>
-                          <td style={{ padding: '8px 12px', fontSize: 11, color: '#374151', fontFamily: 'monospace', fontWeight: 600 }}>{u.siglas || '—'}</td>
-                          <td style={{ padding: '8px 12px' }}>
-                            <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: cfg.bg, color: cfg.text, border: `1px solid ${cfg.border}` }}>
-                              {u.tipo}
-                            </span>
-                          </td>
-                          <td style={{ padding: '8px 12px' }}>
-                            <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: u.activo ? '#f0fdf4' : '#fef2f2', color: u.activo ? '#15803d' : '#dc2626' }}>
-                              {u.activo ? 'Activo' : 'Inactivo'}
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                </tbody>
-              </table>
+              // Vista árbol
+              nodos.map((n: any) => (
+                <NodoFila
+                  key={n.id} nodo={n} nivel={0}
+                  expandidos={expandidos} onToggle={toggle}
+                  onSelect={setSelected} selected={selected}
+                />
+              ))
             )}
           </div>
         </div>
 
         {/* Panel detalle */}
-        {selected && (
-          <PanelDetalle unidad={selected} onClose={() => setSelected(null)} />
-        )}
+        <div style={{
+          width: selected ? 300 : 0,
+          minWidth: selected ? 300 : 0,
+          background: '#fff', borderRadius: 14,
+          border: selected ? '0.5px solid #e5e7eb' : 'none',
+          overflow: 'hidden', transition: 'all .2s ease',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          {selected && cfg && (
+            <>
+              {/* Header detalle */}
+              <div style={{ padding: '16px', borderBottom: '0.5px solid #f5f6f8' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                  <div style={{
+                    width: 42, height: 42, borderRadius: 10, flexShrink: 0,
+                    background: cfg.bg, border: `1.5px solid ${cfg.border}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Building2 size={18} style={{ color: cfg.text === '#fff' ? '#fff' : cfg.text }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                      textTransform: 'capitalize', background: cfg.bg,
+                      color: cfg.text === '#fff' ? cfg.text : cfg.text,
+                      border: `1px solid ${cfg.border}`,
+                    }}>
+                      {selected.tipo}
+                    </span>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', marginTop: 4, marginBottom: 0, lineHeight: 1.3 }}>
+                      {selected.nombre}
+                    </p>
+                  </div>
+                  <button onClick={() => setSelected(null)}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 18, lineHeight: 1, flexShrink: 0 }}>
+                    ×
+                  </button>
+                </div>
+
+                {/* Acciones */}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {selected.activo !== false ? (
+                    <button
+                      onClick={() => desactivar.mutate(selected.id)}
+                      disabled={desactivar.isPending}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', borderRadius: 8, border: '0.5px solid #fecaca', background: '#fef2f2', color: '#dc2626', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                      <XCircle size={13} /> Desactivar
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => activar.mutate(selected.id)}
+                      disabled={activar.isPending}
+                      style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', borderRadius: 8, border: '0.5px solid #86efac', background: '#f0fdf4', color: '#15803d', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                      <CheckCircle size={13} /> Activar
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Datos */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+                  {[
+                    { label: 'Siglas',       value: selected.siglas     || '—' },
+                    { label: 'Código',       value: selected.codigo     || '—' },
+                    { label: 'Subunidades',  value: (selected.hijos ?? []).length },
+                    { label: 'Estado',       value: selected.activo !== false ? 'Activo' : 'Inactivo' },
+                  ].map(({ label, value }) => (
+                    <div key={label} style={{ padding: '8px 10px', background: '#f8faff', borderRadius: 8 }}>
+                      <p style={{ fontSize: 9, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', margin: 0 }}>{label}</p>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: '#374151', margin: '3px 0 0' }}>{String(value)}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {selected.responsable_nombre && (
+                  <div style={{ marginBottom: 12 }}>
+                    <p style={{ fontSize: 10, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Responsable</p>
+                    <p style={{ fontSize: 13, color: '#374151', fontWeight: 500 }}>{selected.responsable_nombre}</p>
+                  </div>
+                )}
+
+                {selected.email && (
+                  <div style={{ marginBottom: 12 }}>
+                    <p style={{ fontSize: 10, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Email</p>
+                    <p style={{ fontSize: 13, color: '#002f6c', fontWeight: 500 }}>{selected.email}</p>
+                  </div>
+                )}
+
+                {selected.funciones && (
+                  <div>
+                    <p style={{ fontSize: 10, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Funciones</p>
+                    <p style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>{selected.funciones}</p>
+                  </div>
+                )}
+
+                {/* Subunidades */}
+                {(selected.hijos ?? []).length > 0 && (
+                  <div style={{ marginTop: 16 }}>
+                    <p style={{ fontSize: 10, color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>
+                      Subunidades ({(selected.hijos ?? []).length})
+                    </p>
+                    {(selected.hijos ?? []).map((h: any) => {
+                      const hcfg = TIPO_COLORS[h.tipo] ?? TIPO_COLORS.other
+                      return (
+                        <div
+                          key={h.id}
+                          onClick={() => setSelected(h)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 4, border: '0.5px solid #f5f6f8' }}
+                          onMouseEnter={e => (e.currentTarget.style.background = '#f8faff')}
+                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <div style={{ width: 24, height: 24, borderRadius: 6, background: hcfg.bg, border: `1px solid ${hcfg.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Building2 size={12} style={{ color: hcfg.text === '#fff' ? '#fff' : hcfg.text }} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontSize: 12, fontWeight: 500, color: '#0a1628', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: 0 }}>{h.nombre}</p>
+                            <p style={{ fontSize: 10, color: '#9ca3af', margin: 0 }}>{h.siglas}</p>
+                          </div>
+                          <ChevronRight size={13} style={{ color: '#d1d5db', flexShrink: 0 }} />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   )
