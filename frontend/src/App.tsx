@@ -12,6 +12,8 @@ import PortalPage     from '@/pages/portal/PortalPage'
 import MainLayout     from '@/components/layout/MainLayout'
 import PerfilPage from '@/pages/usuarios/PerfilPage'
 import OrganigramaPage from '@/pages/usuarios/OrganigramaPage'
+import CuadroClasificacionPage from '@/pages/archivo/CuadroClasificacionPage'
+import CicloVitalPage from '@/pages/archivo/CicloVitalPage'
 function RutaProtegida({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
@@ -38,6 +40,8 @@ export default function App() {
           <Route path="tramites"   element={<TramitesPage />} />
           <Route path="correos"    element={<CorreosPage />} />
           <Route path="archivo"    element={<ArchivoPage />} />
+          <Route path="archivo/cuadro-clasificacion" element={<CuadroClasificacionPage />} />
+          <Route path="archivo/ciclo-vital" element={<CicloVitalPage />} />
           <Route path="usuarios"   element={<UsuariosPage />} />
           <Route path="reportes"   element={<ReportesPage />} />
           <Route path="perfil" element={<PerfilPage />} />

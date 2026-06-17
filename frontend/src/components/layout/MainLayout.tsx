@@ -6,7 +6,7 @@ import NotificacionesPanel from '@/components/ui/NotificacionesPanel'
 import {
   LayoutDashboard, FileText, ClipboardList, Mail,
   Archive, Users, Settings, LogOut, ChevronRight,
-  Building2, Menu, X, Search, BarChart2
+  Building2, Menu, X, Search, BarChart2, FolderTree, ArrowRight
 } from 'lucide-react'
 
 const NAV = [
@@ -30,6 +30,8 @@ const NAV = [
       { to: '/archivo',    label: 'Archivo',     icon: Archive,         modulo: 'archivo'    },
       { to: '/organigrama',label: 'Organigrama', icon: Building2,       modulo: ''           },
       { to: '/usuarios',   label: 'Usuarios',    icon: Users,           modulo: 'usuarios'   },
+      { to: '/archivo/cuadro-clasificacion', label: 'Cuadro de Clasificación', icon: FolderTree, modulo: 'archivo' },
+      { to: '/archivo/ciclo-vital', label: 'Ciclo Vital', icon: ArrowRight, modulo: 'archivo' },
     ]
   },
   {
