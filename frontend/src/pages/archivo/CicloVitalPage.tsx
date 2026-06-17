@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { archivoService, Expediente, Transferencia } from '@/services/archivo.service'
 import {
   Inbox, Building2, Archive, Landmark,
-  ArrowRight, Search, Plus, X, FileText,
+  ArrowRight, X, FileText,
   Clock, CheckCircle, AlertTriangle, Send
 } from 'lucide-react'
 
@@ -43,7 +43,6 @@ function ModalNuevaTransferencia({ categoria, onClose }: { categoria: string; on
   const mutation = useMutation({
     mutationFn: async (data: any) => {
       const transferencia = await archivoService.crearTransferencia(data)
-      // Aquí se asociarían los expedientes seleccionados a la transferencia
       return transferencia
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['transferencias'] }); onClose() },
@@ -121,10 +120,58 @@ function ModalNuevaTransferencia({ categoria, onClose }: { categoria: string; on
   )
 }
 
+function ExpurgarButton({ expediente, onDone }: { expediente: Expediente; onDone: () => void }) {
+  const qc = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: () => archivoService.expurgar(expediente.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['expedientes-categoria'] }); onDone() },
+  })
+  return (
+    <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
+      className="px-4 py-2.5 text-sm font-bold text-white rounded-xl" style={{ background: '#854f0b' }}>
+      {mutation.isPending ? 'Procesando...' : 'Marcar expurgo realizado'}
+    </button>
+  )
+}
+
+function FoliarButton({ expediente, onDone }: { expediente: Expediente; onDone: () => void }) {
+  const qc = useQueryClient()
+  const [numFojas, setNumFojas] = useState(expediente.num_fojas || 0)
+  const mutation = useMutation({
+    mutationFn: () => archivoService.foliar(expediente.id, numFojas),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['expedientes-categoria'] }); onDone() },
+  })
+  return (
+    <div className="flex items-center gap-2">
+      <input type="number" value={numFojas} onChange={e => setNumFojas(Number(e.target.value))}
+        className="w-20 px-2 py-2 text-sm border border-gray-200 rounded-xl outline-none" placeholder="Fojas" />
+      <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
+        className="px-4 py-2.5 text-sm font-bold text-white rounded-xl" style={{ background: '#0f6e56' }}>
+        {mutation.isPending ? 'Procesando...' : 'Marcar foliación realizada'}
+      </button>
+    </div>
+  )
+}
+
+function CerrarButton({ expediente, onDone }: { expediente: Expediente; onDone: () => void }) {
+  const qc = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: () => archivoService.cerrar(expediente.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['expedientes-categoria'] }); onDone() },
+  })
+  return (
+    <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
+      className="px-4 py-2.5 text-sm font-bold text-white rounded-xl" style={{ background: '#002f6c' }}>
+      {mutation.isPending ? 'Procesando...' : 'Cerrar expediente'}
+    </button>
+  )
+}
+
 export default function CicloVitalPage() {
   const [categoriaActiva, setCategoriaActiva] = useState('gestion')
   const [modalTransferencia, setModalTransferencia] = useState(false)
   const [vista, setVista] = useState<'expedientes' | 'transferencias'>('expedientes')
+  const [selectedExp, setSelectedExp] = useState<Expediente | null>(null)
 
   const { data: expedientesData, isLoading } = useQuery({
     queryKey: ['expedientes-categoria', categoriaActiva],
@@ -163,7 +210,6 @@ export default function CicloVitalPage() {
         </div>
       </div>
 
-      {/* Pipeline visual de categorías */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 20 }}>
         {CATEGORIAS.map((cat, i) => {
           const Icon = cat.icon
@@ -221,7 +267,7 @@ export default function CicloVitalPage() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {expedientes.map(exp => (
-                  <tr key={exp.id} className="hover:bg-gray-50">
+                  <tr key={exp.id} onClick={() => setSelectedExp(exp)} className="hover:bg-gray-50 cursor-pointer">
                     <td className="px-5 py-3.5">
                       <p className="text-xs font-bold font-mono" style={{ color: '#002f6c' }}>{exp.codigo_expediente}</p>
                       <p className="text-sm font-medium text-gray-900 mt-0.5">{exp.titulo}</p>
@@ -297,6 +343,61 @@ export default function CicloVitalPage() {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {selectedExp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div>
+                <p className="text-xs font-bold font-mono" style={{ color: '#002f6c' }}>{selectedExp.codigo_expediente}</p>
+                <h3 className="font-bold text-gray-900 text-sm mt-0.5">{selectedExp.titulo}</h3>
+              </div>
+              <button onClick={() => setSelectedExp(null)} className="p-1.5 rounded-lg hover:bg-gray-100">
+                <X size={16} className="text-gray-500" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl" style={{ background: selectedExp.expurgado ? '#f0fdf4' : '#fef2f2' }}>
+                  <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: selectedExp.expurgado ? '#15803d' : '#dc2626' }}>
+                    Expurgo
+                  </p>
+                  <p className="text-xs text-gray-600">
+                    {selectedExp.expurgado ? `Realizado el ${new Date(selectedExp.fecha_expurgo!).toLocaleDateString('es-EC')}` : 'Pendiente'}
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl" style={{ background: selectedExp.foliado ? '#f0fdf4' : '#fef2f2' }}>
+                  <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: selectedExp.foliado ? '#15803d' : '#dc2626' }}>
+                    Foliación
+                  </p>
+                  <p className="text-xs text-gray-600">
+                    {selectedExp.foliado ? `${selectedExp.num_fojas} fojas — ${new Date(selectedExp.fecha_foliacion!).toLocaleDateString('es-EC')}` : 'Pendiente'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                <p className="text-xs text-blue-800">
+                  Conforme al Art. 33-35 de la Regla Técnica, el expediente debe expurgarse y foliarse antes de cerrarse o transferirse.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+              {!selectedExp.expurgado && (
+                <ExpurgarButton expediente={selectedExp} onDone={() => setSelectedExp(null)} />
+              )}
+              {selectedExp.expurgado && !selectedExp.foliado && (
+                <FoliarButton expediente={selectedExp} onDone={() => setSelectedExp(null)} />
+              )}
+              {selectedExp.expurgado && selectedExp.foliado && selectedExp.estado === 'abierto' && (
+                <CerrarButton expediente={selectedExp} onDone={() => setSelectedExp(null)} />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
