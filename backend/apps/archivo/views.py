@@ -240,8 +240,12 @@ class BajaDocumentalViewSet(viewsets.ModelViewSet):
         return BajaDocumental.objects.select_related('unidad', 'solicitado_por', 'aprobado_por').all()
 
     def perform_create(self, serializer):
-        serializer.save(solicitado_por=self.request.user)
+        expedientes_ids = self.request.data.get('expedientes_ids', [])
+        baja = serializer.save(solicitado_por=self.request.user)
 
+        from .models import BajaExpediente
+        for exp_id in expedientes_ids:
+            BajaExpediente.objects.create(baja=baja, expediente_id=exp_id)
 
 class PrestamoDocumentalViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]

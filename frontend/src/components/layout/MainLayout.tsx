@@ -3,10 +3,11 @@ import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { usePermisosStore } from '@/store/permisosStore'
 import NotificacionesPanel from '@/components/ui/NotificacionesPanel'
+
 import {
   LayoutDashboard, FileText, ClipboardList, Mail,
   Archive, Users, Settings, LogOut, ChevronRight,
-  Building2, Menu, X, Search, BarChart2, FolderTree, ArrowRight
+  Building2, Menu, X, Search, BarChart2, FolderTree, ArrowRight, Trash2
 } from 'lucide-react'
 
 const NAV = [
@@ -32,6 +33,7 @@ const NAV = [
       { to: '/usuarios',   label: 'Usuarios',    icon: Users,           modulo: 'usuarios'   },
       { to: '/archivo/cuadro-clasificacion', label: 'Cuadro de Clasificación', icon: FolderTree, modulo: 'archivo' },
       { to: '/archivo/ciclo-vital', label: 'Ciclo Vital', icon: ArrowRight, modulo: 'archivo' },
+      { to: '/archivo/baja-documental', label: 'Baja Documental', icon: Trash2, modulo: 'archivo' },
     ]
   },
   {
