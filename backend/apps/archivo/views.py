@@ -69,6 +69,47 @@ class ExpedienteViewSet(viewsets.ModelViewSet):
         exp.num_fojas = exp.documentos.count()
         exp.save(update_fields=['num_fojas'])
         return Response(ExpedienteDocumentoSerializer(item).data, status=201)
+    def agregar_documento_quipux(self, request, pk=None):
+        """Vincula un documento/correo/trámite de Quipux a este expediente (Art. 31)."""
+        from .models import ExpedienteDocumento
+
+        expediente   = self.get_object()
+        documento_id = request.data.get('documento_id')
+        tramite_id   = request.data.get('tramite_id')
+        correo_id    = request.data.get('correo_id')
+
+        if not any([documento_id, tramite_id, correo_id]):
+            return Response({'detail': 'Debe especificar documento_id, tramite_id o correo_id.'}, status=400)
+
+        ultimo_orden = expediente.documentos.count()
+        vinculo = ExpedienteDocumento.objects.create(
+            expediente=expediente,
+            documento_id=documento_id,
+            tramite_id=tramite_id,
+            correo_id=correo_id,
+            orden_foja=ultimo_orden + 1,
+            agregado_por=request.user,
+        )
+
+        return Response({
+            'detail': 'Documento vinculado al expediente correctamente.',
+            'orden_foja': vinculo.orden_foja,
+            'total_documentos': expediente.documentos.count(),
+        })
+    @action(detail=False, methods=['get'], url_path='elegibles')
+    def elegibles(self, request):
+        """Lista expedientes abiertos disponibles para vincular un documento (autocompletado)."""
+        serie_id  = request.query_params.get('serie')
+        search    = request.query_params.get('search', '')
+
+        qs = self.get_queryset().filter(estado='abierto')
+        if serie_id:
+            qs = qs.filter(serie_id=serie_id)
+        if search:
+            qs = qs.filter(titulo__icontains=search)
+
+        qs = qs[:20]
+        return Response(ExpedienteSerializer(qs, many=True).data)
 
     @action(detail=True, methods=['post'], url_path='cerrar')
     def cerrar(self, request, pk=None):

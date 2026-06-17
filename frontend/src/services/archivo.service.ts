@@ -245,4 +245,10 @@ export const archivoService = {
     api.get<{ results: CopiaCertificada[]; count: number }>('/archivo/copias-certificadas/', { params }).then(r => r.data),
   crearCopia: (data: Record<string, any>) =>
     api.post<CopiaCertificada>('/archivo/copias-certificadas/', data).then(r => r.data),
+
+  agregarDocumentoExpediente: (expedienteId: number, data: { documento_id?: number; tramite_id?: number; correo_id?: number }) =>
+    api.post(`/archivo/expedientes/${expedienteId}/agregar-documento/`, data).then(r => r.data),
+
+  expedientesElegibles: (params?: { serie?: number; search?: string }) =>
+    api.get<Expediente[]>('/archivo/expedientes/elegibles/', { params }).then(r => r.data),
 }

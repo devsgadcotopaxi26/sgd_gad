@@ -4,6 +4,7 @@ import { bandejaService, BandejaItem } from '@/services/bandeja.service'
 import { documentosService, CrearDocumento } from '@/services/documentos.service'
 import { organizacionService } from '@/services/organizacion.service'
 import AdjuntosPanel from '@/components/ui/AdjuntosPanel'
+import VincularExpedienteModal from '@/components/ui/VincularExpedienteModal'
 import {
   Inbox, Edit3, Send, Clock, CheckSquare, Archive,
   Folder, Printer, Search, Plus, X, Eye, Download,
@@ -181,7 +182,7 @@ function PanelDetalle({ item, onClose }: { item: BandejaItem; onClose: () => voi
     mutationFn: () => bandejaService.archivar(item.id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['bandeja'] }); onClose() },
   })
-
+  const [mostrarVincular, setMostrarVincular] = useState(false)
   const comentar = useMutation({
     mutationFn: () => bandejaService.comentar(item.id, comentario),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['bandeja'] }); setComentario('') },
@@ -234,7 +235,7 @@ function PanelDetalle({ item, onClose }: { item: BandejaItem; onClose: () => voi
           {[
             { label: 'Reasignar',   icon: ArrowRightLeft, primary: true },
             { label: 'Informar',    icon: Info },
-            { label: 'Archivar',    icon: Archive, action: () => archivar.mutate() },
+            { label: 'Archivar',    icon: Archive, action: () => setMostrarVincular(true) },
             { label: 'Comentar',    icon: MessageSquare },
             { label: 'Nueva Tarea', icon: ClipboardPlus },
             { label: 'Firmar',      icon: Signature },
@@ -377,7 +378,15 @@ function PanelDetalle({ item, onClose }: { item: BandejaItem; onClose: () => voi
           </button>
         </div>
       </div>
+      {mostrarVincular && (
+        <VincularExpedienteModal
+          documentoId={item.id}
+          onClose={() => setMostrarVincular(false)}
+          onVinculado={() => { archivar.mutate(); onClose() }}
+        />
+      )}
     </div>
+    
   )
 }
 
