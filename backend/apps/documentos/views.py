@@ -341,6 +341,29 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
         )
         return Response({'detail': 'Tarea creada.', 'tarea_id': tarea.id})
 
+    @action(detail=True, methods=['post'], url_path='agregar_imprimir')
+    def agregar_imprimir(self, request, pk=None):
+        item = self.get_object()
+        BandejaDocumento.objects.get_or_create(
+            documento = item.documento,
+            usuario   = request.user,
+            bandeja   = 'por_imprimir',
+        )
+        return Response({'detail': 'Documento agregado a la cola de impresión.'})
+
+    @action(detail=True, methods=['post'], url_path='marcar_impreso')
+    def marcar_impreso(self, request, pk=None):
+        item               = self.get_object()
+        item.accion_tomada = 'impreso'
+        item.save()
+        SeguimientoDocumento.objects.create(
+            documento   = item.documento,
+            etapa       = 'comentado',
+            usuario     = request.user,
+            observacion = 'Documento impreso',
+        )
+        return Response({'detail': 'Marcado como impreso.'})
+
 
 class EnviarDocumentoView(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]

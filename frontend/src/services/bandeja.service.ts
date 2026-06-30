@@ -59,4 +59,10 @@ export const bandejaService = {
 
   enviar: (documentoId: number, data: Record<string, any>) =>
     api.post(`/documentos/enviar/${documentoId}/enviar/`, data).then(r => r.data),
+
+  agregarImprimir: (id: number) =>
+    api.post(`/documentos/bandeja/${id}/agregar_imprimir/`).then(r => r.data),
+
+  marcarImpreso: (id: number) =>
+    api.post(`/documentos/bandeja/${id}/marcar_impreso/`).then(r => r.data),
 }

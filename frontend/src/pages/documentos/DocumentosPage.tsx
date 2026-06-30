@@ -67,6 +67,7 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const [enviarDestinatarios, setEnviarDestinatarios] = useState<number[]>([])
   const [enviarInstrucciones, setEnviarInstrucciones] = useState('')
   const [enviarUrgente, setEnviarUrgente] = useState(false)
+  const [imprimiendo, setImprimiendo] = useState(false)
 
   useEffect(() => {
     if (!trigger) return
@@ -129,6 +130,26 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
       onClose()
     },
   })
+
+  const marcarImpreso = useMutation({
+    mutationFn: () => bandejaService.marcarImpreso(item.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+    },
+  })
+
+  const handleImprimir = async () => {
+    setImprimiendo(true)
+    try {
+      // Agrega a la cola por_imprimir y abre el PDF con diálogo de impresora
+      await bandejaService.agregarImprimir(item.id)
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      await documentosService.imprimirPDF(item.documento_id)
+    } finally {
+      setImprimiendo(false)
+    }
+  }
 
   const ETAPAS = [
     { key: 'elaborado',  label: 'Elaborado' },
@@ -383,6 +404,16 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                 action: undefined,
               },
               {
+                label: 'Imprimir ahora', icon: Printer,
+                visible: b === 'por_imprimir',
+                action: handleImprimir,
+              },
+              {
+                label: 'Ya impreso', icon: CheckCircle,
+                visible: b === 'por_imprimir',
+                action: () => marcarImpreso.mutate(),
+              },
+              {
                 label: 'Comentar', icon: MessageSquare,
                 visible: true,
                 action: undefined,
@@ -579,8 +610,11 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               style={{ width: 28, height: 28, borderRadius: 7, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
               <Download size={13} />
             </button>
-            <button title="Imprimir"
-              style={{ width: 28, height: 28, borderRadius: 7, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+            <button
+              onClick={handleImprimir}
+              disabled={imprimiendo}
+              title={imprimiendo ? 'Generando PDF...' : 'Imprimir documento'}
+              style={{ width: 28, height: 28, borderRadius: 7, border: '0.5px solid #e5e7eb', background: '#fff', cursor: imprimiendo ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: imprimiendo ? '#c4c9d4' : '#9ca3af' }}>
               <Printer size={13} />
             </button>
             <button onClick={() => setMostrarEmail(true)} title="Enviar por email externo"

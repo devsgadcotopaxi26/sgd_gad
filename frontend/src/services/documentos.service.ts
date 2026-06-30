@@ -118,4 +118,21 @@ descargarPDF: async (id: number, numero: string) => {
   link.click()
   URL.revokeObjectURL(link.href)
 },
+
+imprimirPDF: async (id: number) => {
+  const response = await api.get(`/documentos/${id}/pdf/`, { responseType: 'blob' })
+  const blob = new Blob([response.data], { type: 'application/pdf' })
+  const url  = URL.createObjectURL(blob)
+
+  // Abre el PDF en ventana nueva — el visor del navegador tiene el diálogo
+  // de impresora del sistema (Ctrl+P / ⌘P) con reconocimiento del documento
+  const win = window.open(url, '_blank')
+  if (!win) {
+    // Si popup bloqueado, fallback a anchor
+    const a = document.createElement('a')
+    a.href = url; a.target = '_blank'; a.click()
+  }
+  // Liberar blob URL después de que cargue la ventana
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+},
 }
