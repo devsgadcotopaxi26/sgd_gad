@@ -716,3 +716,202 @@ class DigitalizacionMasivaView(APIView):
             'procesados': procesados,
             'sin_texto':  sin_texto,
         })
+
+
+# ─────────────────────────────────────────────────────────
+# FirmaEC — integración con la app de firma del gobierno EC
+# ─────────────────────────────────────────────────────────
+
+import jwt as pyjwt
+import base64
+import os as _os
+
+_FIRMAEC_SISTEMA = _os.environ.get('FIRMAEC_SISTEMA', 'sgdGadCotopaxi')
+_FIRMAEC_SECRET  = _os.environ.get('FIRMAEC_SECRET',  'sgd-gad-cotopaxi-firmaec-2026-secreto')
+
+
+class GenerarTokenFirmaECView(APIView):
+    """Autenticado — genera el URL firmaec:// para abrir la app FirmaEC."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from django.shortcuts import get_object_or_404
+        from datetime import datetime, timedelta
+
+        doc = get_object_or_404(Documento, pk=pk)
+        cedula = getattr(request.user, 'cedula', '') or str(request.user.id)
+
+        payload = {
+            'cedula':  cedula,
+            'sistema': _FIRMAEC_SISTEMA,
+            'ids':     str(pk),
+            'exp':     datetime.utcnow() + timedelta(minutes=30),
+        }
+        token = pyjwt.encode(payload, _FIRMAEC_SECRET, algorithm='HS512')
+
+        api_url = request.build_absolute_uri('/api/v1/documentos/firmaec')
+        firmaec_url = (
+            f"firmaec://{_FIRMAEC_SISTEMA}/firmar"
+            f"?token={token}"
+            f"&tipo_certificado=2"
+            f"&llx=222&lly=85&urx=422&ury=49"
+            f"&url={api_url}"
+        )
+        return Response({'firmaec_url': firmaec_url, 'token': token})
+
+
+class BajarDocumentoFirmaECView(APIView):
+    """
+    Sin autenticación JWT — FirmaEC descarga el PDF a firmar.
+    GET /api/v1/documentos/firmaec/bajar_documento/?sistema=...&tokenJwt=...
+    """
+    permission_classes = []
+    authentication_classes = []
+
+    def get(self, request):
+        token = request.query_params.get('tokenJwt') or request.query_params.get('token')
+        if not token:
+            return Response({'error': 'Token requerido'}, status=400)
+        try:
+            payload = pyjwt.decode(token, _FIRMAEC_SECRET, algorithms=['HS512'])
+        except pyjwt.ExpiredSignatureError:
+            return Response({'error': 'Token expirado'}, status=401)
+        except pyjwt.InvalidTokenError:
+            return Response({'error': 'Token inválido'}, status=401)
+
+        doc_id = payload.get('ids')
+        try:
+            doc = Documento.objects.select_related(
+                'tipo_documento', 'unidad_origen', 'creado_por', 'firmado_por'
+            ).get(pk=doc_id)
+        except Documento.DoesNotExist:
+            return Response({'error': 'Documento no encontrado'}, status=404)
+
+        from .plantillas import html_documento_oficial
+        from apps.auditoria.reportes import generar_pdf as _generar_pdf
+        html = html_documento_oficial(doc)
+        pdf_response = _generar_pdf(html, f'{doc.id}.pdf')
+        pdf_bytes = pdf_response.content
+
+        doc_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
+        return Response({
+            'documentos_recibidos': [{
+                'id':        str(doc.id),
+                'nombre':    f'{doc.numero_documento or f"doc_{doc.id}"}.pdf',
+                'documento': doc_b64,
+            }]
+        })
+
+
+class GuardarDocumentoFirmaECView(APIView):
+    """
+    Sin autenticación JWT — FirmaEC envía el PDF firmado.
+    POST /api/v1/documentos/firmaec/guardar_documento/
+    Body JSON: { tokenJwt, sistema, documentos_firmados: [{id, nombre, documento (b64)}] }
+    """
+    permission_classes = []
+    authentication_classes = []
+
+    def post(self, request):
+        token = request.data.get('tokenJwt') or request.data.get('token')
+        documentos_firmados = request.data.get('documentos_firmados', [])
+
+        if not token:
+            return Response({'error': 'Token requerido'}, status=400)
+        try:
+            payload = pyjwt.decode(token, _FIRMAEC_SECRET, algorithms=['HS512'])
+        except pyjwt.ExpiredSignatureError:
+            return Response({'error': 'Token expirado'}, status=401)
+        except pyjwt.InvalidTokenError:
+            return Response({'error': 'Token inválido'}, status=401)
+
+        doc_id = payload.get('ids')
+        cedula = payload.get('cedula', '')
+
+        try:
+            doc = Documento.objects.get(pk=doc_id)
+        except Documento.DoesNotExist:
+            return Response({'error': 'Documento no encontrado'}, status=404)
+
+        from apps.usuarios.models import Usuario
+        from django.core.files.base import ContentFile
+
+        usuario = None
+        if cedula:
+            try:
+                usuario = Usuario.objects.get(cedula=cedula)
+            except Usuario.DoesNotExist:
+                pass
+
+        for item in documentos_firmados:
+            contenido_b64 = item.get('documento') or item.get('contenido', '')
+            if not contenido_b64:
+                continue
+            try:
+                pdf_bytes = base64.b64decode(contenido_b64)
+            except Exception:
+                continue
+
+            nombre_archivo = f'{doc.numero_documento or f"doc_{doc.id}"}_firmado_firmaec.pdf'
+            adjunto = AdjuntoDocumento(
+                documento  = doc,
+                nombre     = nombre_archivo,
+                tipo       = 'documento',
+                mime_type  = 'application/pdf',
+                tamanio    = len(pdf_bytes),
+                subido_por = usuario,
+                origen_digitalizacion = 'nativo_digital',
+            )
+            adjunto.archivo.save(nombre_archivo, ContentFile(pdf_bytes))
+            adjunto.save()
+
+        doc.estado     = 'firmado'
+        doc.fecha_firma = timezone.now()
+        doc.firma_bce_info = {
+            'metodo':      'firmaec',
+            'cedula':      cedula,
+            'fecha_firma': timezone.now().isoformat(),
+            'firmado_por': usuario.nombre_completo if usuario else cedula,
+        }
+        if usuario:
+            doc.firmado_por = usuario
+        doc.save(update_fields=['estado', 'fecha_firma', 'firma_bce_info', 'firmado_por'])
+
+        if usuario:
+            SeguimientoDocumento.objects.create(
+                documento   = doc,
+                etapa       = 'firmado',
+                usuario     = usuario,
+                observacion = 'Firmado con FirmaEC',
+            )
+        return Response({'mensaje': 'Documento firmado y guardado correctamente.'})
+
+
+class FirmaFisicaView(APIView):
+    """Autenticado — registra que el documento fue firmado físicamente (papel)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from django.shortcuts import get_object_or_404
+        doc = get_object_or_404(Documento, pk=pk)
+        observacion = request.data.get('observacion', 'Firma física manuscrita')
+
+        doc.estado     = 'firmado'
+        doc.fecha_firma = timezone.now()
+        doc.firmado_por = request.user
+        doc.firma_bce_info = {
+            'metodo':      'fisica',
+            'firmado_por': request.user.nombre_completo,
+            'cedula':      request.user.cedula or '',
+            'fecha_firma': timezone.now().isoformat(),
+            'observacion': observacion,
+        }
+        doc.save(update_fields=['estado', 'fecha_firma', 'firmado_por', 'firma_bce_info'])
+
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'firmado',
+            usuario     = request.user,
+            observacion = f'Firma física: {observacion}',
+        )
+        return Response({'detail': 'Documento registrado con firma física.'})

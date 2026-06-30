@@ -6,38 +6,67 @@ backups de Quipux. Si las bases no estan disponibles, se retorna 503.
 """
 
 import base64
+import mimetypes
 
 from django.db import connections
 from django.http import HttpResponse
+from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (
+    QuipuxAnexo,
     QuipuxHistEventos,
     QuipuxRadicado,
     QuipuxTransaccion,
     QuipuxUsuario,
+    QuipuxUsuariosRadicado,
 )
 from .serializers import (
     ESTADO_MAP,
+    TIPO_MIME,
+    TIPO_EXT,
+    QuipuxAnexoSerializer,
     QuipuxHistEventoSerializer,
     QuipuxRadicadoListSerializer,
 )
 
+# Roles en usuarios_radicado
+TIPO_ENVIADO  = 1
+TIPO_RECIBIDO = 2
+TIPO_COPIA    = 3
+
+
+def _cedula_usuario(user):
+    """Retorna la cédula del usuario SGD actual."""
+    return getattr(user, 'cedula', '') or ''
+
+
+def _es_admin(user):
+    return user.is_superuser or user.roles.filter(nombre__in=['ADMIN', 'ARCHIVO']).exists()
+
 
 class QuipuxDocumentosView(APIView):
-    """Listado paginado de documentos radicados con filtros."""
+    """
+    Listado paginado de documentos radicados.
+    - Admin/Archivo: ve todos (o puede filtrar por bandeja global)
+    - Resto de usuarios: solo ve sus documentos según su cédula + bandeja
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        search = request.query_params.get('search', '')
-        estado = request.query_params.get('estado', '')
-        tipo = request.query_params.get('tipo', '')
-        desde = request.query_params.get('desde', '')
-        hasta = request.query_params.get('hasta', '')
-        page = int(request.query_params.get('page', 1))
+        search    = request.query_params.get('search', '')
+        estado    = request.query_params.get('estado', '')
+        tipo      = request.query_params.get('tipo', '')
+        desde     = request.query_params.get('desde', '')
+        hasta     = request.query_params.get('hasta', '')
+        bandeja   = request.query_params.get('bandeja', '')   # recibidos|enviados|copia|todos
+        page      = int(request.query_params.get('page', 1))
         page_size = int(request.query_params.get('page_size', 50))
+
+        es_admin = _es_admin(request.user)
+        cedula   = _cedula_usuario(request.user)
 
         try:
             qs = QuipuxRadicado.objects.using('quipux_transaccional').all()
@@ -47,8 +76,33 @@ class QuipuxDocumentosView(APIView):
                 status=503,
             )
 
+        # ── Filtro por usuario si no es admin ──
+        TIPO_MAP = {'recibidos': TIPO_RECIBIDO, 'enviados': TIPO_ENVIADO, 'copia': TIPO_COPIA}
+        if not es_admin and cedula:
+            try:
+                ur_filter = {'usua_cedula': cedula}
+                tipo_filtro = TIPO_MAP.get(bandeja)
+                if tipo_filtro:
+                    ur_filter['radi_usua_tipo'] = tipo_filtro
+                mis_ids = QuipuxUsuariosRadicado.objects.using('quipux_transaccional').filter(
+                    **ur_filter
+                ).values_list('radi_nume_radi', flat=True)
+                qs = qs.filter(radi_nume_radi__in=mis_ids)
+            except Exception:
+                pass
+        elif es_admin and bandeja and bandeja != 'todos':
+            tipo_filtro = TIPO_MAP.get(bandeja)
+            if tipo_filtro:
+                try:
+                    mis_ids = QuipuxUsuariosRadicado.objects.using('quipux_transaccional').filter(
+                        radi_usua_tipo=tipo_filtro
+                    ).values_list('radi_nume_radi', flat=True)
+                    qs = qs.filter(radi_nume_radi__in=mis_ids)
+                except Exception:
+                    pass
+
+        # ── Filtros adicionales ──
         if search:
-            from django.db.models import Q
             qs = qs.filter(
                 Q(radi_asunto__icontains=search)
                 | Q(radi_nume_text__icontains=search)
@@ -63,24 +117,15 @@ class QuipuxDocumentosView(APIView):
         if hasta:
             qs = qs.filter(radi_fech_radi__lte=hasta)
 
-        total = qs.count()
+        total  = qs.count()
         offset = (page - 1) * page_size
-        items = list(qs.order_by('-radi_fech_radi')[offset:offset + page_size])
+        items  = list(qs.order_by('-radi_fech_radi')[offset:offset + page_size])
 
-        # Resolve user names for creators
-        user_ids = set()
-        for item in items:
-            if item.radi_usua_radi:
-                user_ids.add(item.radi_usua_radi)
-            if item.radi_usua_actu:
-                user_ids.add(item.radi_usua_actu)
-
+        user_ids = {u for item in items for u in [item.radi_usua_radi, item.radi_usua_actu] if u}
         users = {}
         if user_ids:
             try:
-                for u in QuipuxUsuario.objects.using('quipux_transaccional').filter(
-                    usua_codi__in=user_ids
-                ):
+                for u in QuipuxUsuario.objects.using('quipux_transaccional').filter(usua_codi__in=user_ids):
                     users[u.usua_codi] = u
             except Exception:
                 pass
@@ -88,15 +133,12 @@ class QuipuxDocumentosView(APIView):
         for item in items:
             u = users.get(item.radi_usua_radi)
             item._creador_nombre = u.usua_nombre if u else ''
-            item._area_nombre = u.depe_nomb if u else ''
-
-        data = QuipuxRadicadoListSerializer(items, many=True).data
+            item._area_nombre    = u.depe_nomb  if u else ''
 
         return Response({
-            'count': total,
-            'page': page,
-            'page_size': page_size,
-            'results': data,
+            'count': total, 'page': page, 'page_size': page_size,
+            'results': QuipuxRadicadoListSerializer(items, many=True).data,
+            'es_admin': es_admin,
         })
 
 
@@ -291,3 +333,88 @@ class QuipuxEstadisticasView(APIView):
             return Response(
                 {'detail': f'Base Quipux no disponible: {str(e)}'}, status=503
             )
+
+
+class QuipuxAnexosView(APIView):
+    """Lista los anexos (adjuntos) de un radicado."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, radi_id):
+        try:
+            anexos = QuipuxAnexo.objects.using('quipux_transaccional').filter(
+                anex_radi_nume=radi_id,
+                anex_borrado='N',
+            ).order_by('anex_numero')
+        except Exception:
+            return Response({'detail': 'Base de datos Quipux no disponible.'}, status=503)
+
+        return Response(QuipuxAnexoSerializer(anexos, many=True).data)
+
+
+class QuipuxAnexoDownloadView(APIView):
+    """Descarga el archivo de un anexo desde la base documental."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, anex_codigo):
+        try:
+            anexo = QuipuxAnexo.objects.using('quipux_transaccional').get(
+                anex_codigo=anex_codigo
+            )
+        except QuipuxAnexo.DoesNotExist:
+            return Response({'detail': 'Anexo no encontrado.'}, status=404)
+        except Exception:
+            return Response({'detail': 'Base de datos Quipux no disponible.'}, status=503)
+
+        arch_id = anexo.arch_codi
+        if not arch_id or arch_id == 0:
+            return Response({'detail': 'Este anexo no tiene archivo almacenado.'}, status=404)
+
+        try:
+            with connections['quipux_documental'].cursor() as cursor:
+                cursor.execute('SELECT func_recuperar_archivo(%s)', [arch_id])
+                row = cursor.fetchone()
+                if not row or not row[0]:
+                    return Response({'detail': 'Archivo no encontrado en la base documental.'}, status=404)
+
+                file_bytes = base64.b64decode(row[0])
+
+                nombre   = anexo.anex_nombre or f'anexo_{anex_codigo}'
+                ext      = TIPO_EXT.get(anexo.anex_tipo, 'bin')
+                if not nombre.lower().endswith(f'.{ext}'):
+                    nombre = f'{nombre}.{ext}'
+                mime = TIPO_MIME.get(anexo.anex_tipo, 'application/octet-stream')
+
+                response = HttpResponse(file_bytes, content_type=mime)
+                response['Content-Disposition'] = f'attachment; filename="{nombre}"'
+                return response
+        except Exception as e:
+            return Response({'detail': f'Error al recuperar archivo: {str(e)}'}, status=500)
+
+
+class QuipuxMisBandejasView(APIView):
+    """Conteo de documentos del usuario actual por bandeja en Quipux histórico."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        cedula = _cedula_usuario(request.user)
+        if not cedula:
+            return Response({'recibidos': 0, 'enviados': 0, 'copia': 0, 'total': 0})
+
+        try:
+            with connections['quipux_transaccional'].cursor() as cursor:
+                cursor.execute("""
+                    SELECT radi_usua_tipo, COUNT(DISTINCT radi_nume_radi)
+                    FROM usuarios_radicado
+                    WHERE usua_cedula = %s
+                    GROUP BY radi_usua_tipo
+                """, [cedula])
+                rows = {row[0]: row[1] for row in cursor.fetchall()}
+
+            return Response({
+                'recibidos': rows.get(TIPO_RECIBIDO, 0),
+                'enviados':  rows.get(TIPO_ENVIADO, 0),
+                'copia':     rows.get(TIPO_COPIA, 0),
+                'total':     sum(rows.values()),
+            })
+        except Exception as e:
+            return Response({'detail': str(e)}, status=503)

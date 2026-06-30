@@ -119,6 +119,12 @@ descargarPDF: async (id: number, numero: string) => {
   URL.revokeObjectURL(link.href)
 },
 
+generarTokenFirmaEC: async (id: number) =>
+  api.post<{ firmaec_url: string; token: string }>(`/documentos/${id}/firmaec/generar-token/`).then(r => r.data),
+
+registrarFirmaFisica: async (id: number, observacion?: string) =>
+  api.post(`/documentos/${id}/firma-fisica/`, { observacion }).then(r => r.data),
+
 obtenerUrlPDF: async (id: number): Promise<string> => {
   const response = await api.get(`/documentos/${id}/pdf/`, { responseType: 'blob' })
   return URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))

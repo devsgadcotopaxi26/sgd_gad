@@ -152,6 +152,47 @@ class QuipuxTransaccion(models.Model):
         return self.sgd_ttr_descrip
 
 
+class QuipuxAnexo(models.Model):
+    """Archivos adjuntos a un radicado (Excel, PDF, Word, etc.)."""
+    usua_radi_codi  = models.BigAutoField(primary_key=True)
+    anex_radi_nume  = models.DecimalField(max_digits=20, decimal_places=0)
+    anex_codigo     = models.CharField(max_length=50)
+    anex_tipo       = models.SmallIntegerField()
+    anex_desc       = models.CharField(max_length=512, blank=True)
+    anex_numero     = models.DecimalField(max_digits=5, decimal_places=0)
+    anex_borrado    = models.CharField(max_length=1, default='N')
+    anex_fecha      = models.DateTimeField(null=True)
+    anex_nombre     = models.CharField(max_length=100, blank=True)
+    anex_usua_codi  = models.IntegerField(null=True)
+    anex_tamano     = models.DecimalField(max_digits=20, decimal_places=2, null=True)
+    arch_codi       = models.BigIntegerField(default=0)
+    arch_codi_firma = models.BigIntegerField(default=0)
+
+    class Meta:
+        managed  = False
+        db_table = 'anexos'
+
+    def __str__(self):
+        return self.anex_nombre or self.anex_codigo
+
+
+class QuipuxUsuariosRadicado(models.Model):
+    """Relación usuario-radicado con tipo de participación (bandeja)."""
+    usua_radi_codi  = models.BigAutoField(primary_key=True)
+    radi_nume_radi  = models.DecimalField(max_digits=20, decimal_places=0)
+    usua_cedula     = models.CharField(max_length=50, blank=True)
+    usua_nombre     = models.CharField(max_length=200, blank=True)
+    usua_apellido   = models.CharField(max_length=200, blank=True)
+    usua_cargo      = models.CharField(max_length=200, blank=True)
+    usua_area       = models.CharField(max_length=150, blank=True)
+    radi_usua_tipo  = models.SmallIntegerField()  # 1=enviado, 2=recibido, 3=copia
+    usua_codi       = models.BigIntegerField(null=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'usuarios_radicado'
+
+
 # ── Base de datos documental ─────────────────────────────────
 
 

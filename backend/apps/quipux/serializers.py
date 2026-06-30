@@ -67,3 +67,45 @@ class QuipuxHistEventoSerializer(serializers.Serializer):
 
     def get_transaccion(self, obj):
         return getattr(obj, '_transaccion', '')
+
+
+TIPO_MIME = {
+    1: 'application/msword',
+    2: 'application/vnd.ms-excel',
+    3: 'application/vnd.ms-powerpoint',
+    4: 'image/tiff',
+    5: 'image/jpeg',
+    6: 'image/gif',
+    7: 'application/pdf',
+    8: 'text/plain',
+    9: 'application/zip',
+    10: 'application/rtf',
+    13: 'text/csv',
+    14: 'application/vnd.oasis.opendocument.text',
+    15: 'application/vnd.oasis.opendocument.spreadsheet',
+    17: 'image/png',
+    21: 'application/x-rar-compressed',
+}
+
+TIPO_EXT = {
+    1: 'doc', 2: 'xls', 3: 'ppt', 4: 'tif', 5: 'jpg', 6: 'gif',
+    7: 'pdf', 8: 'txt', 9: 'zip', 10: 'rtf', 13: 'csv',
+    14: 'odt', 15: 'ods', 17: 'png', 21: 'rar',
+}
+
+
+class QuipuxAnexoSerializer(serializers.Serializer):
+    anex_codigo    = serializers.CharField()
+    anex_nombre    = serializers.CharField()
+    anex_tipo      = serializers.IntegerField()
+    anex_tipo_ext  = serializers.SerializerMethodField()
+    anex_fecha     = serializers.DateTimeField()
+    anex_tamano    = serializers.DecimalField(max_digits=20, decimal_places=2)
+    arch_codi      = serializers.IntegerField()
+    tiene_archivo  = serializers.SerializerMethodField()
+
+    def get_anex_tipo_ext(self, obj):
+        return TIPO_EXT.get(obj.anex_tipo, 'bin')
+
+    def get_tiene_archivo(self, obj):
+        return obj.arch_codi and obj.arch_codi > 0
