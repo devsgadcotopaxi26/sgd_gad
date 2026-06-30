@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { bandejaService, BandejaItem } from '@/services/bandeja.service'
 import { documentosService } from '@/services/documentos.service'
@@ -10,10 +10,9 @@ import ModalEnviarEmail from '@/components/ui/ModalEnviarEmail'
 import EditorDocumento from '@/components/ui/EditorDocumento'
 import {
   Inbox, Edit3, Send, Clock, CheckSquare, Archive,
-  Folder, Printer, Search, Plus, X, Eye, Download,
+  Folder, Printer, Search, Plus, X, Download,
   ArrowRightLeft, Info, MessageSquare, Signature,
-  CheckCircle, Filter, ClipboardPlus, RefreshCw,
-  Globe2
+  CheckCircle, Filter, ClipboardPlus, RefreshCw, Globe2
 } from 'lucide-react'
 
 const BANDEJAS = [
@@ -639,11 +638,6 @@ export default function DocumentosPage() {
     if (!item.leido) marcarLeido.mutate(item.id)
   }
 
-  const dispararAccion = (action: string) => {
-    if (!selected) return
-    setPanelTrigger({ action, t: Date.now() })
-  }
-
   const items = data?.results ?? []
 
   const SECCIONES = [
@@ -739,83 +733,18 @@ export default function DocumentosPage() {
             <option value="">Todos los tipos</option>
             {['OFI','MEM','CIR','RES','INF','CON','CER','ACT'].map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          <button onClick={() => { refetch(); refetchConteos() }}
-            style={{ width: 30, height: 30, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
-            <RefreshCw size={13} />
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 14px', borderBottom: '0.5px solid #f5f6f8', background: '#fafbfc', flexShrink: 0, flexWrap: 'wrap' }}>
-          {[
-            { label: 'Reasignar', icon: ArrowRightLeft, action: 'reasignar' },
-            { label: 'Archivar',  icon: Archive,        action: 'archivar'  },
-            { label: 'Comentar',  icon: MessageSquare,  action: 'comentar'  },
-          ].map(({ label, icon: Icon, action }) => (
-            <button key={label}
-              onClick={() => dispararAccion(action)}
-              disabled={!selected}
-              title={!selected ? 'Seleccione un documento primero' : label}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb',
-                background: '#fff', color: selected ? '#374151' : '#c4c9d4',
-                cursor: selected ? 'pointer' : 'default', minWidth: 58,
-                opacity: selected ? 1 : 0.5,
-              }}>
-              <Icon size={17} />
-              <span style={{ fontSize: 9, fontWeight: 500 }}>{label}</span>
-            </button>
-          ))}
-          <div style={{ width: 0.5, height: 36, background: '#e5e7eb', margin: '0 2px' }} />
-          {[
-            { label: 'Firmar',       icon: Signature, action: 'firmar' },
-            { label: 'Enviar',       icon: Send,      action: 'enviar' },
-            { label: 'Vista previa', icon: Eye,       action: 'preview' },
-          ].map(({ label, icon: Icon, action }) => (
-            <button key={label}
-              onClick={() => dispararAccion(action)}
-              disabled={!selected}
-              title={!selected ? 'Seleccione un documento primero' : label}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb',
-                background: '#fff', color: selected ? '#374151' : '#c4c9d4',
-                cursor: selected ? 'pointer' : 'default', minWidth: 58,
-                opacity: selected ? 1 : 0.5,
-              }}>
-              <Icon size={17} />
-              <span style={{ fontSize: 9, fontWeight: 500 }}>{label}</span>
-            </button>
-          ))}
-          <div style={{ width: 0.5, height: 36, background: '#e5e7eb', margin: '0 2px' }} />
-          {[
-            { label: 'Descargar', icon: Download },
-          ].map(({ label, icon: Icon }) => (
-            <button key={label}
-              onClick={() => {
-                if (selected) documentosService.descargarPDF(selected.documento_id, selected.numero_documento || `doc_${selected.documento_id}`)
-              }}
-              disabled={!selected}
-              title={!selected ? 'Seleccione un documento primero' : 'Descargar PDF'}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-                padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb',
-                background: '#fff', color: selected ? '#374151' : '#c4c9d4',
-                cursor: selected ? 'pointer' : 'default', minWidth: 58,
-                opacity: selected ? 1 : 0.5,
-              }}>
-              <Icon size={17} />
-              <span style={{ fontSize: 9, fontWeight: 500 }}>{label}</span>
-            </button>
-          ))}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-            {['Todos','No leidos','Urgentes'].map((f, i) => (
+          <div style={{ display: 'flex', gap: 4, marginLeft: 4 }}>
+            {['Todos','No leidos'].map((f, i) => (
               <button key={f} onClick={() => setFiltroLeido(i === 1 ? 'false' : '')}
-                style={{ padding: '4px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: '0.5px solid #e5e7eb', background: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? '#002f6c' : 'transparent', color: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? '#fff' : '#9ca3af' }}>
+                style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: '0.5px solid #e5e7eb', background: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? '#002f6c' : 'transparent', color: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? '#fff' : '#9ca3af' }}>
                 {f}
               </button>
             ))}
           </div>
+          <button onClick={() => { refetch(); refetchConteos() }}
+            style={{ width: 30, height: 30, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+            <RefreshCw size={13} />
+          </button>
         </div>
 
         <div style={{ padding: '5px 14px', background: '#fafbfc', borderBottom: '0.5px solid #f5f6f8', fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>
