@@ -209,6 +209,7 @@ class TareaSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class AdjuntoSerializer(serializers.ModelSerializer):
+    nombre                   = serializers.CharField(required=False, default='')
     subido_por_nombre        = serializers.CharField(source='subido_por.nombre_completo', read_only=True)
     digitalizado_por_nombre  = serializers.CharField(source='digitalizado_por.nombre_completo', read_only=True)
     calidad_revisado_por_nombre = serializers.CharField(source='calidad_revisado_por.nombre_completo', read_only=True)

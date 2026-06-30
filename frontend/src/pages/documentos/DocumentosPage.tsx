@@ -50,7 +50,10 @@ const ESTADO_COLORS: Record<string, { bg: string; text: string; label: string }>
   firmado:     { bg: '#f0fdf4', text: '#0f6e56', label: 'Firmado' },
 }
 
-function PanelDetalle({ item, onClose, onEditar }: { item: BandejaItem; onClose: () => void; onEditar?: () => void }) {
+function PanelDetalle({ item, onClose, onEditar, trigger }: {
+  item: BandejaItem; onClose: () => void; onEditar?: () => void;
+  trigger?: { action: string; t: number } | null;
+}) {
   const qc = useQueryClient()
   const [comentario, setComentario] = useState('')
   const [tabActiva, setTab] = useState<'preview' | 'adjuntos' | 'seguimiento'>('preview')
@@ -65,6 +68,15 @@ function PanelDetalle({ item, onClose, onEditar }: { item: BandejaItem; onClose:
   const [enviarDestinatarios, setEnviarDestinatarios] = useState<number[]>([])
   const [enviarInstrucciones, setEnviarInstrucciones] = useState('')
   const [enviarUrgente, setEnviarUrgente] = useState(false)
+
+  useEffect(() => {
+    if (!trigger) return
+    if (trigger.action === 'reasignar') setMostrarReasignar(true)
+    if (trigger.action === 'firmar') setMostrarFirma(true)
+    if (trigger.action === 'enviar') setMostrarEnviar(true)
+    if (trigger.action === 'preview') setTab('preview')
+    if (trigger.action === 'comentar') setTab('preview')
+  }, [trigger?.t])
 
   const { data: docDetalle } = useQuery({
     queryKey: ['doc-detalle', item.documento_id],
@@ -594,6 +606,7 @@ export default function DocumentosPage() {
   const [selected, setSelected]       = useState<BandejaItem | null>(null)
   const [modal, setModal]             = useState(false)
   const [docEditar, setDocEditar]     = useState<any>(null)
+  const [panelTrigger, setPanelTrigger] = useState<{ action: string; t: number } | null>(null)
   const [busqueda, setBusqueda]       = useState('')
   const [filtroLeido, setFiltroLeido] = useState('')
   const [filtroTipo, setFiltroTipo]   = useState('')
@@ -624,6 +637,11 @@ export default function DocumentosPage() {
   const handleSelect = (item: BandejaItem) => {
     setSelected(item)
     if (!item.leido) marcarLeido.mutate(item.id)
+  }
+
+  const dispararAccion = (action: string) => {
+    if (!selected) return
+    setPanelTrigger({ action, t: Date.now() })
   }
 
   const items = data?.results ?? []
@@ -729,37 +747,63 @@ export default function DocumentosPage() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 14px', borderBottom: '0.5px solid #f5f6f8', background: '#fafbfc', flexShrink: 0, flexWrap: 'wrap' }}>
           {[
-            { label: 'Reasignar',   icon: ArrowRightLeft },
-            { label: 'Informar',    icon: Info },
-            { label: 'Archivar',    icon: Archive },
-            { label: 'Comentar',    icon: MessageSquare },
-            { label: 'Nueva Tarea', icon: ClipboardPlus },
-          ].map(({ label, icon: Icon }) => (
+            { label: 'Reasignar', icon: ArrowRightLeft, action: 'reasignar' },
+            { label: 'Archivar',  icon: Archive,        action: 'archivar'  },
+            { label: 'Comentar',  icon: MessageSquare,  action: 'comentar'  },
+          ].map(({ label, icon: Icon, action }) => (
             <button key={label}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', color: '#6b7280', cursor: 'pointer', minWidth: 58 }}>
+              onClick={() => dispararAccion(action)}
+              disabled={!selected}
+              title={!selected ? 'Seleccione un documento primero' : label}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb',
+                background: '#fff', color: selected ? '#374151' : '#c4c9d4',
+                cursor: selected ? 'pointer' : 'default', minWidth: 58,
+                opacity: selected ? 1 : 0.5,
+              }}>
               <Icon size={17} />
               <span style={{ fontSize: 9, fontWeight: 500 }}>{label}</span>
             </button>
           ))}
           <div style={{ width: 0.5, height: 36, background: '#e5e7eb', margin: '0 2px' }} />
           {[
-            { label: 'Firmar',       icon: Signature },
-            { label: 'Enviar',       icon: Send },
-            { label: 'Vista previa', icon: Eye },
-          ].map(({ label, icon: Icon }) => (
+            { label: 'Firmar',       icon: Signature, action: 'firmar' },
+            { label: 'Enviar',       icon: Send,      action: 'enviar' },
+            { label: 'Vista previa', icon: Eye,       action: 'preview' },
+          ].map(({ label, icon: Icon, action }) => (
             <button key={label}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', color: '#6b7280', cursor: 'pointer', minWidth: 58 }}>
+              onClick={() => dispararAccion(action)}
+              disabled={!selected}
+              title={!selected ? 'Seleccione un documento primero' : label}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb',
+                background: '#fff', color: selected ? '#374151' : '#c4c9d4',
+                cursor: selected ? 'pointer' : 'default', minWidth: 58,
+                opacity: selected ? 1 : 0.5,
+              }}>
               <Icon size={17} />
               <span style={{ fontSize: 9, fontWeight: 500 }}>{label}</span>
             </button>
           ))}
           <div style={{ width: 0.5, height: 36, background: '#e5e7eb', margin: '0 2px' }} />
           {[
-            { label: 'Imprimir',  icon: Printer },
             { label: 'Descargar', icon: Download },
           ].map(({ label, icon: Icon }) => (
             <button key={label}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', color: '#6b7280', cursor: 'pointer', minWidth: 58 }}>
+              onClick={() => {
+                if (selected) documentosService.descargarPDF(selected.documento_id, selected.numero_documento || `doc_${selected.documento_id}`)
+              }}
+              disabled={!selected}
+              title={!selected ? 'Seleccione un documento primero' : 'Descargar PDF'}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                padding: '5px 9px', borderRadius: 8, border: '0.5px solid #e5e7eb',
+                background: '#fff', color: selected ? '#374151' : '#c4c9d4',
+                cursor: selected ? 'pointer' : 'default', minWidth: 58,
+                opacity: selected ? 1 : 0.5,
+              }}>
               <Icon size={17} />
               <span style={{ fontSize: 9, fontWeight: 500 }}>{label}</span>
             </button>
@@ -847,6 +891,7 @@ export default function DocumentosPage() {
           <PanelDetalle
             item={selected}
             onClose={() => setSelected(null)}
+            trigger={panelTrigger}
             onEditar={selected.bandeja === 'en_elaboracion' ? async () => {
               const detalle = await documentosService.obtener(selected.documento_id)
               setDocEditar(detalle)
