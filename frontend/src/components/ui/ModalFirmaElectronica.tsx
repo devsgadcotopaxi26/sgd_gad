@@ -1,5 +1,4 @@
 import { useState, useRef } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { firmarPDF, leerCertificadoP12 } from '@/services/firma.service'
 import api from '@/services/api'
 import {
@@ -17,7 +16,6 @@ interface Props {
 type Paso = 'certificado' | 'confirmacion' | 'firmando' | 'exito' | 'error'
 
 export default function ModalFirmaElectronica({ documentoId, numeroDocumento, onClose, onFirmado }: Props) {
-  const qc = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [paso, setPaso]           = useState<Paso>('certificado')
   const [p12Base64, setP12Base64] = useState('')
@@ -84,7 +82,6 @@ export default function ModalFirmaElectronica({ documentoId, numeroDocumento, on
       // 4. Registrar la firma en el documento
       await api.post(`/documentos/${documentoId}/registrar_firma/`, { firma_info: info })
 
-      qc.invalidateQueries({ queryKey: ['bandeja'] })
       setPaso('exito')
       setInfoCert(info)
       setTimeout(() => { onFirmado(); onClose() }, 2500)

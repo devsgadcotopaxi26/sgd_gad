@@ -237,10 +237,10 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
         if leido == 'false':
             qs = qs.filter(leido=False)
         if search:
+            from django.db.models import Q
             qs = qs.filter(
-                documento__asunto__icontains=search
-            ) | qs.filter(
-                documento__numero_documento__icontains=search
+                Q(documento__asunto__icontains=search) |
+                Q(documento__numero_documento__icontains=search)
             )
 
         from .serializers import BandejaSerializer
@@ -408,11 +408,18 @@ class EnviarDocumentoView(viewsets.GenericViewSet):
                 cedula_ruc  = dest.get('cedula_ruc', ''),
             )
 
-        BandejaDocumento.objects.get_or_create(
-            documento = doc,
-            usuario   = request.user,
-            bandeja   = 'enviados',
-        )
+        # Mover la entrada del remitente de en_elaboracion/no_enviados → enviados
+        moved = BandejaDocumento.objects.filter(
+            documento   = doc,
+            usuario     = request.user,
+            bandeja__in = ['en_elaboracion', 'no_enviados'],
+        ).update(bandeja='enviados', accion_tomada='enviado')
+        if not moved:
+            BandejaDocumento.objects.get_or_create(
+                documento = doc,
+                usuario   = request.user,
+                bandeja   = 'enviados',
+            )
 
         SeguimientoDocumento.objects.create(
             documento   = doc,

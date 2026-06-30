@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { bandejaService, BandejaItem } from '@/services/bandeja.service'
 import { documentosService } from '@/services/documentos.service'
 import { usuariosService } from '@/services/usuarios.service'
@@ -600,7 +600,9 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
           onClose={() => setMostrarFirma(false)}
           onFirmado={() => {
             qc.invalidateQueries({ queryKey: ['bandeja'] })
+            qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
             qc.invalidateQueries({ queryKey: ['doc-detalle', item.documento_id] })
+            setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
             setMostrarFirma(false)
           }}
         />
@@ -649,6 +651,8 @@ export default function DocumentosPage() {
       ...(filtroLeido ? { leido: filtroLeido } : {}),
       ...(filtroTipo  ? { tipo: filtroTipo }   : {}),
     }),
+    placeholderData: keepPreviousData,
+    staleTime: 10000,
   })
 
   const marcarLeido = useMutation({
