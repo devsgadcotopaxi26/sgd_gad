@@ -11,8 +11,9 @@ import EditorDocumento from '@/components/ui/EditorDocumento'
 import {
   Inbox, Edit3, Send, Clock, CheckSquare, Archive,
   Folder, Printer, Search, Plus, X, Download,
-  ArrowRightLeft, Info, MessageSquare, Signature,
-  CheckCircle, Filter, ClipboardPlus, RefreshCw, Globe2
+  ArrowRightLeft, MessageSquare, Signature,
+  CheckCircle, Filter, RefreshCw, Globe2,
+  MoreVertical
 } from 'lucide-react'
 
 const BANDEJAS = [
@@ -68,6 +69,7 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const [enviarInstrucciones, setEnviarInstrucciones] = useState('')
   const [enviarUrgente, setEnviarUrgente] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
+  const [menuAbierto, setMenuAbierto] = useState(false)
 
   useEffect(() => {
     if (!trigger) return
@@ -352,93 +354,76 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               Urgente
             </span>
           )}
+          <button
+            onClick={() => setMenuAbierto(v => !v)}
+            title="Acciones"
+            style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: menuAbierto ? '#f0f0f0' : 'none', cursor: 'pointer', color: '#6b7280' }}>
+            <MoreVertical size={14} />
+          </button>
           <button onClick={onClose}
-            style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+            style={{ padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
             <X size={14} />
           </button>
         </div>
         <p style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', lineHeight: 1.3, marginBottom: 10 }}>{item.asunto}</p>
 
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {(() => {
-            const b = item.bandeja
-            const e = item.estado_documento
-            const anulado = e === 'anulado'
-            const enElab  = b === 'en_elaboracion'
-            const recibido = ['recibidos', 'tareas_recibidas'].includes(b)
+        {/* Menú contextual "⋮" — acciones según bandeja/estado */}
+        {menuAbierto && (
+          <div onClick={() => setMenuAbierto(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
+        )}
+        {menuAbierto && (() => {
+          const b = item.bandeja
+          const e = item.estado_documento
+          const anulado = e === 'anulado'
+          const enElab  = b === 'en_elaboracion'
+          const recibido = ['recibidos', 'tareas_recibidas'].includes(b)
 
-            const botones = [
-              {
-                label: 'Editar', icon: Edit3, accent: true,
-                visible: enElab && !anulado && !!onEditar,
-                action: onEditar,
-              },
-              {
-                label: 'Reasignar', icon: ArrowRightLeft,
-                visible: recibido && !anulado,
-                action: () => setMostrarReasignar(true),
-              },
-              {
-                label: 'Archivar', icon: Archive,
-                visible: (recibido || ['enviados'].includes(b)) && !anulado,
-                action: () => setMostrarVincular(true),
-              },
-              {
-                label: 'Firmar', icon: Signature,
-                visible: (enElab || b === 'no_enviados') && !['firmado','anulado'].includes(e),
-                action: () => setMostrarFirma(true),
-              },
-              {
-                label: 'Enviar', icon: Send,
-                visible: (enElab || b === 'no_enviados') && !anulado,
-                action: () => setMostrarEnviar(true),
-              },
-              {
-                label: 'Informar', icon: Info,
-                visible: !enElab && b !== 'no_enviados',
-                action: undefined,
-              },
-              {
-                label: 'Nueva Tarea', icon: ClipboardPlus,
-                visible: recibido && !anulado,
-                action: undefined,
-              },
-              {
-                label: 'Imprimir ahora', icon: Printer,
-                visible: b === 'por_imprimir',
-                action: handleImprimir,
-              },
-              {
-                label: 'Ya impreso', icon: CheckCircle,
-                visible: b === 'por_imprimir',
-                action: () => marcarImpreso.mutate(),
-              },
-              {
-                label: 'Comentar', icon: MessageSquare,
-                visible: true,
-                action: undefined,
-              },
-            ].filter(btn => btn.visible)
+          const acciones = [
+            { label: 'Editar', icon: Edit3, accent: true,
+              visible: enElab && !anulado && !!onEditar, action: onEditar },
+            { label: 'Reasignar', icon: ArrowRightLeft,
+              visible: recibido && !anulado, action: () => setMostrarReasignar(true) },
+            { label: 'Archivar', icon: Archive,
+              visible: (recibido || b === 'enviados') && !anulado, action: () => setMostrarVincular(true) },
+            { label: 'Firmar', icon: Signature,
+              visible: (enElab || b === 'no_enviados') && !['firmado','anulado'].includes(e), action: () => setMostrarFirma(true) },
+            { label: 'Enviar a destinatario', icon: Send,
+              visible: (enElab || b === 'no_enviados') && !anulado, action: () => setMostrarEnviar(true) },
+            { label: 'Imprimir ahora', icon: Printer,
+              visible: b === 'por_imprimir', action: handleImprimir },
+            { label: 'Ya impreso', icon: CheckCircle,
+              visible: b === 'por_imprimir', action: () => marcarImpreso.mutate() },
+          ].filter(a => a.visible)
 
-            return botones.map(({ label, icon: Icon, accent, action }: any) => (
-              <button key={label} onClick={action ?? undefined}
-                disabled={!action}
-                title={!action ? 'Próximamente' : undefined}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '5px 8px', borderRadius: 8,
-                  border: `0.5px solid ${accent ? 'none' : '#e5e7eb'}`,
-                  background: accent ? '#002f6c' : '#fff',
-                  color: accent ? '#fff' : action ? '#374151' : '#b0b7c3',
-                  fontSize: 11, fontWeight: accent ? 600 : 500,
-                  cursor: action ? 'pointer' : 'default',
-                  opacity: !action ? 0.7 : 1,
-                }}>
-                <Icon size={12} /> {label}
-              </button>
-            ))
-          })()}
-        </div>
+          if (acciones.length === 0) return null
+          return (
+            <div style={{
+              position: 'absolute', right: 48, top: 10,
+              background: '#fff', border: '0.5px solid #e5e7eb',
+              borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.09)',
+              padding: 4, zIndex: 20, minWidth: 190,
+            }}>
+              {acciones.map(({ label, icon: Icon, accent, action }: any) => (
+                <button key={label}
+                  onClick={() => { action?.(); setMenuAbierto(false) }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    width: '100%', padding: '7px 10px', borderRadius: 7,
+                    border: 'none', textAlign: 'left', cursor: 'pointer',
+                    background: accent ? '#002f6c' : 'transparent',
+                    color: accent ? '#fff' : '#374151',
+                    fontSize: 12, fontWeight: accent ? 600 : 400,
+                    marginBottom: 1,
+                  }}
+                  onMouseEnter={e => { if (!accent) (e.currentTarget as HTMLButtonElement).style.background = '#f5f6f8' }}
+                  onMouseLeave={e => { if (!accent) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}>
+                  <Icon size={13} style={{ flexShrink: 0 }} /> {label}
+                </button>
+              ))}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Meta */}
@@ -763,7 +748,7 @@ export default function DocumentosPage() {
                 const noLeidos = c?.no_leidos ?? 0
                 const isActive = bandejaActiva === key
                 return (
-                  <div key={key} onClick={() => { setBandeja(key); setSelected(null) }}
+                  <div key={key} onClick={() => { setBandeja(key); setSelectedId(null) }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px',
                       cursor: 'pointer', fontSize: 12,
