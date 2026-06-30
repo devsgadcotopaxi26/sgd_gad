@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { bandejaService, BandejaItem } from '@/services/bandeja.service'
 import { documentosService } from '@/services/documentos.service'
@@ -12,8 +12,7 @@ import {
   Inbox, Edit3, Send, Clock, CheckSquare, Archive,
   Folder, Printer, Search, Plus, X, Download,
   ArrowRightLeft, MessageSquare, Signature,
-  CheckCircle, Filter, RefreshCw, Globe2,
-  MoreVertical
+  CheckCircle, Filter, RefreshCw, Globe2
 } from 'lucide-react'
 
 const BANDEJAS = [
@@ -69,7 +68,9 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const [enviarInstrucciones, setEnviarInstrucciones] = useState('')
   const [enviarUrgente, setEnviarUrgente] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
-  const [menuAbierto, setMenuAbierto] = useState(false)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [pdfCargando, setPdfCargando] = useState(false)
+  const pdfDocIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!trigger) return
@@ -79,6 +80,24 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
     if (trigger.action === 'preview') setTab('preview')
     if (trigger.action === 'comentar') setTab('preview')
   }, [trigger?.t])
+
+  // Limpiar PDF al cambiar de documento
+  useEffect(() => {
+    if (pdfDocIdRef.current !== item.documento_id) {
+      setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
+      pdfDocIdRef.current = item.documento_id
+    }
+  }, [item.documento_id])
+
+  // Cargar PDF la primera vez que se activa la pestaña preview
+  useEffect(() => {
+    if (tabActiva !== 'preview' || pdfUrl || pdfCargando) return
+    setPdfCargando(true)
+    documentosService.obtenerUrlPDF(item.documento_id)
+      .then(url => setPdfUrl(url))
+      .catch(() => {})
+      .finally(() => setPdfCargando(false))
+  }, [tabActiva, item.documento_id, pdfUrl, pdfCargando])
 
   const { data: docDetalle } = useQuery({
     queryKey: ['doc-detalle', item.documento_id],
@@ -354,71 +373,52 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               Urgente
             </span>
           )}
-          <button
-            onClick={() => setMenuAbierto(v => !v)}
-            title="Acciones"
-            style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: menuAbierto ? '#f0f0f0' : 'none', cursor: 'pointer', color: '#6b7280' }}>
-            <MoreVertical size={14} />
-          </button>
           <button onClick={onClose}
-            style={{ padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+            style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
             <X size={14} />
           </button>
         </div>
         <p style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', lineHeight: 1.3, marginBottom: 10 }}>{item.asunto}</p>
 
-        {/* Menú contextual "⋮" — acciones según bandeja/estado */}
-        {menuAbierto && (
-          <div onClick={() => setMenuAbierto(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
-        )}
-        {menuAbierto && (() => {
+        {/* Botones contextuales según bandeja/estado */}
+        {(() => {
           const b = item.bandeja
           const e = item.estado_documento
           const anulado = e === 'anulado'
           const enElab  = b === 'en_elaboracion'
           const recibido = ['recibidos', 'tareas_recibidas'].includes(b)
 
-          const acciones = [
-            { label: 'Editar', icon: Edit3, accent: true,
-              visible: enElab && !anulado && !!onEditar, action: onEditar },
-            { label: 'Reasignar', icon: ArrowRightLeft,
-              visible: recibido && !anulado, action: () => setMostrarReasignar(true) },
-            { label: 'Archivar', icon: Archive,
-              visible: (recibido || b === 'enviados') && !anulado, action: () => setMostrarVincular(true) },
-            { label: 'Firmar', icon: Signature,
+          const botones = [
+            { label: 'Editar',     icon: Edit3,         accent: true,
+              visible: enElab && !anulado && !!onEditar,                              action: onEditar },
+            { label: 'Reasignar',  icon: ArrowRightLeft, accent: false,
+              visible: recibido && !anulado,                                           action: () => setMostrarReasignar(true) },
+            { label: 'Archivar',   icon: Archive,        accent: false,
+              visible: (recibido || b === 'enviados') && !anulado,                    action: () => setMostrarVincular(true) },
+            { label: 'Firmar',     icon: Signature,      accent: false,
               visible: (enElab || b === 'no_enviados') && !['firmado','anulado'].includes(e), action: () => setMostrarFirma(true) },
-            { label: 'Enviar a destinatario', icon: Send,
-              visible: (enElab || b === 'no_enviados') && !anulado, action: () => setMostrarEnviar(true) },
-            { label: 'Imprimir ahora', icon: Printer,
-              visible: b === 'por_imprimir', action: handleImprimir },
-            { label: 'Ya impreso', icon: CheckCircle,
-              visible: b === 'por_imprimir', action: () => marcarImpreso.mutate() },
-          ].filter(a => a.visible)
+            { label: 'Enviar',     icon: Send,           accent: false,
+              visible: (enElab || b === 'no_enviados') && !anulado,                  action: () => setMostrarEnviar(true) },
+            { label: 'Imprimir',   icon: Printer,        accent: false,
+              visible: b === 'por_imprimir',                                          action: handleImprimir },
+            { label: 'Ya impreso', icon: CheckCircle,    accent: false,
+              visible: b === 'por_imprimir',                                          action: () => marcarImpreso.mutate() },
+          ].filter(btn => btn.visible)
 
-          if (acciones.length === 0) return null
+          if (botones.length === 0) return null
           return (
-            <div style={{
-              position: 'absolute', right: 48, top: 10,
-              background: '#fff', border: '0.5px solid #e5e7eb',
-              borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.09)',
-              padding: 4, zIndex: 20, minWidth: 190,
-            }}>
-              {acciones.map(({ label, icon: Icon, accent, action }: any) => (
-                <button key={label}
-                  onClick={() => { action?.(); setMenuAbierto(false) }}
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 2 }}>
+              {botones.map(({ label, icon: Icon, accent, action }: any) => (
+                <button key={label} onClick={action}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    width: '100%', padding: '7px 10px', borderRadius: 7,
-                    border: 'none', textAlign: 'left', cursor: 'pointer',
-                    background: accent ? '#002f6c' : 'transparent',
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    padding: '4px 10px', borderRadius: 8, fontSize: 11,
+                    fontWeight: accent ? 700 : 500, cursor: 'pointer',
+                    border: `0.5px solid ${accent ? '#002f6c' : '#d1d5db'}`,
+                    background: accent ? '#002f6c' : '#fff',
                     color: accent ? '#fff' : '#374151',
-                    fontSize: 12, fontWeight: accent ? 600 : 400,
-                    marginBottom: 1,
-                  }}
-                  onMouseEnter={e => { if (!accent) (e.currentTarget as HTMLButtonElement).style.background = '#f5f6f8' }}
-                  onMouseLeave={e => { if (!accent) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}>
-                  <Icon size={13} style={{ flexShrink: 0 }} /> {label}
+                  }}>
+                  <Icon size={12} /> {label}
                 </button>
               ))}
             </div>
@@ -490,59 +490,29 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
       </div>
 
       {/* Tab content */}
-      <div style={{ flex: 1, padding: 14, overflowY: 'auto' }}>
+      <div style={{
+        flex: 1,
+        padding: tabActiva === 'preview' ? 0 : 14,
+        overflow: tabActiva === 'preview' ? 'hidden' : 'auto',
+        display: 'flex', flexDirection: 'column',
+      }}>
         {tabActiva === 'preview' ? (
-          <div style={{ background: '#f8faff', border: '0.5px solid #e5e7eb', borderRadius: 8, padding: 16, minHeight: 160 }}>
-            <div style={{ borderBottom: '2px solid #002f6c', paddingBottom: 8, marginBottom: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <p style={{ fontSize: 11, fontWeight: 700, color: '#002f6c', margin: 0 }}>{item.unidad_origen_nombre?.toUpperCase()}</p>
-                  <p style={{ fontSize: 9, color: '#9ca3af', margin: '1px 0 0' }}>GAD Provincia de Cotopaxi</p>
-                </div>
-                <p style={{ fontSize: 10, fontWeight: 700, color: '#002f6c', fontFamily: 'monospace', margin: 0 }}>
-                  {item.numero_documento || '(por asignar)'}
-                </p>
-              </div>
+          pdfCargando ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: '#9ca3af' }}>
+              <div style={{ width: 28, height: 28, border: '3px solid #e5e7eb', borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              <span style={{ fontSize: 12 }}>Cargando vista previa…</span>
             </div>
-
-            <p style={{ fontSize: 10, color: '#6b7280', textAlign: 'right', marginBottom: 8 }}>
-              {new Date(item.fecha_documento).toLocaleDateString('es-EC', { day: 'numeric', month: 'long', year: 'numeric' })}
-            </p>
-
-            <p style={{ fontSize: 10, color: '#374151', lineHeight: 1.7, margin: 0 }}>
-              <strong>{item.tipo_nombre} No. {item.numero_documento || '(por asignar)'}</strong>
-            </p>
-            <p style={{ fontSize: 10, color: '#374151', lineHeight: 1.7, marginTop: 4 }}>
-              <strong>ASUNTO:</strong> {item.asunto}
-            </p>
-
-            {docDetalle?.cuerpo ? (
-              <div
-                className="render-quill"
-                style={{ fontSize: 10, color: '#374151', lineHeight: 1.7, marginTop: 12, paddingTop: 10, borderTop: '0.5px solid #e5e7eb' }}
-                dangerouslySetInnerHTML={{ __html: docDetalle.cuerpo }}
-              />
-            ) : (
-              <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 10, fontStyle: 'italic' }}>
-                {docDetalle === undefined ? 'Cargando contenido...' : '— Sin contenido —'}
-              </p>
-            )}
-
-            {docDetalle?.firma_bce_info && (
-              <div style={{ marginTop: 16, paddingTop: 10, borderTop: '0.5px solid #e5e7eb' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                  <CheckCircle size={12} style={{ color: '#0f6e56' }} />
-                  <span style={{ fontSize: 10, fontWeight: 600, color: '#0f6e56' }}>Firmado electronicamente</span>
-                </div>
-                <p style={{ fontSize: 9, color: '#6b7280', margin: '2px 0 0' }}>
-                  {docDetalle.firmado_por_nombre} — {docDetalle.firma_bce_info.entidad_cert}
-                </p>
-                <p style={{ fontSize: 9, color: '#9ca3af', margin: '2px 0 0' }}>
-                  {docDetalle.firma_bce_info.fecha_firma}
-                </p>
-              </div>
-            )}
-          </div>
+          ) : pdfUrl ? (
+            <iframe
+              src={pdfUrl}
+              style={{ flex: 1, width: '100%', border: 'none', display: 'block' }}
+              title="Vista previa del documento"
+            />
+          ) : (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: 12 }}>
+              No se pudo cargar la vista previa
+            </div>
+          )
         ) : tabActiva === 'adjuntos' ? (
           <AdjuntosPanel documentoId={item.documento_id} />
         ) : (

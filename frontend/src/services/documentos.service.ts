@@ -119,6 +119,11 @@ descargarPDF: async (id: number, numero: string) => {
   URL.revokeObjectURL(link.href)
 },
 
+obtenerUrlPDF: async (id: number): Promise<string> => {
+  const response = await api.get(`/documentos/${id}/pdf/`, { responseType: 'blob' })
+  return URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+},
+
 imprimirPDF: async (id: number) => {
   const response = await api.get(`/documentos/${id}/pdf/`, { responseType: 'blob' })
   const blob = new Blob([response.data], { type: 'application/pdf' })
