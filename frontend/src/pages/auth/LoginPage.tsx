@@ -7,7 +7,7 @@ import { useAuthStore } from '@/store/authStore'
 import { Eye, EyeOff, LogIn, FileText, ClipboardList, PenTool, BarChart2, ShieldCheck, User, ArrowRight } from 'lucide-react'
 
 const schema = z.object({
-  email: z.string().email('Email inválido'),
+  username: z.string().min(1, 'Ingresa tu cédula o correo electrónico'),
   password: z.string().min(1, 'Ingresa tu contraseña'),
   remember: z.boolean().optional(),
 })
@@ -33,7 +33,7 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginForm) => {
     clearError()
     try {
-      await login(data.email, data.password)
+      await login(data.username, data.password)
       navigate('/dashboard')
     } catch { /* error en store */ }
   }
@@ -175,24 +175,24 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
               <div className="space-y-2.5">
                 <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
-                  Correo institucional
+                  Cedula o correo electronico
                 </label>
                 <div className="relative group">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-[#002f6c] transition-colors">
-                    <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                    <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                   </span>
                   <input
-                    {...register('email')}
-                    type="email"
-                    autoComplete="email"
-                    placeholder="usuario@cotopaxi.gob.ec"
+                    {...register('username')}
+                    type="text"
+                    autoComplete="username"
+                    placeholder="Ingrese su numero de cedula o email"
                     className={`w-full pl-12 pr-4 py-4 rounded-xl text-sm text-gray-900 bg-white border shadow-sm transition-all duration-300 outline-none
-                      ${errors.email 
-                        ? 'border-red-300 focus:border-[#da291c] focus:ring-4 focus:ring-red-500/10' 
+                      ${errors.username
+                        ? 'border-red-300 focus:border-[#da291c] focus:ring-4 focus:ring-red-500/10'
                         : 'border-gray-200 focus:border-[#002f6c] focus:ring-4 focus:ring-[#002f6c]/10 hover:border-gray-300'}`}
                   />
                 </div>
-                {errors.email && <p className="text-xs text-[#da291c] font-medium animate-in slide-in-from-top-1">{errors.email.message}</p>}
+                {errors.username && <p className="text-xs text-[#da291c] font-medium animate-in slide-in-from-top-1">{errors.username.message}</p>}
               </div>
 
               <div className="space-y-2.5">

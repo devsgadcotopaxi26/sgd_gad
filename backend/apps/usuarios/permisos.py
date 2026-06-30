@@ -6,7 +6,6 @@ PERMISOS_ROL = {
     'ADMIN': {
         'documentos':    ['ver', 'crear', 'editar', 'eliminar', 'firmar', 'enviar', 'archivar'],
         'tramites':      ['ver', 'crear', 'editar', 'eliminar', 'resolver', 'reasignar'],
-        'correos':       ['ver', 'crear', 'editar', 'eliminar', 'responder', 'archivar'],
         'archivo':       ['ver', 'crear', 'editar', 'eliminar', 'transferir'],
         'usuarios':      ['ver', 'crear', 'editar', 'eliminar', 'bloquear'],
         'organigrama':   ['ver', 'crear', 'editar', 'eliminar'],
@@ -16,7 +15,6 @@ PERMISOS_ROL = {
     'PREFECTO': {
         'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
         'tramites':      ['ver', 'resolver', 'reasignar'],
-        'correos':       ['ver', 'crear', 'responder', 'archivar'],
         'archivo':       ['ver'],
         'usuarios':      ['ver'],
         'organigrama':   ['ver'],
@@ -26,7 +24,6 @@ PERMISOS_ROL = {
     'SECRETARIO': {
         'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
         'tramites':      ['ver', 'crear', 'reasignar'],
-        'correos':       ['ver', 'crear', 'responder', 'archivar'],
         'archivo':       ['ver', 'crear', 'archivar'],
         'usuarios':      ['ver'],
         'organigrama':   ['ver'],
@@ -36,7 +33,6 @@ PERMISOS_ROL = {
     'DIRECTOR': {
         'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
         'tramites':      ['ver', 'crear', 'editar', 'resolver', 'reasignar'],
-        'correos':       ['ver', 'crear', 'responder', 'archivar'],
         'archivo':       ['ver', 'crear'],
         'usuarios':      ['ver'],
         'organigrama':   ['ver'],
@@ -46,7 +42,6 @@ PERMISOS_ROL = {
     'ANALISTA': {
         'documentos':    ['ver', 'crear', 'editar', 'enviar'],
         'tramites':      ['ver', 'crear', 'editar', 'resolver'],
-        'correos':       ['ver', 'crear', 'responder'],
         'archivo':       ['ver', 'crear'],
         'usuarios':      ['ver'],
         'organigrama':   ['ver'],
@@ -56,7 +51,6 @@ PERMISOS_ROL = {
     'ASISTENTE': {
         'documentos':    ['ver', 'crear', 'editar'],
         'tramites':      ['ver', 'crear'],
-        'correos':       ['ver', 'crear'],
         'archivo':       ['ver'],
         'usuarios':      ['ver'],
         'organigrama':   ['ver'],
@@ -66,7 +60,6 @@ PERMISOS_ROL = {
     'RECEPCION': {
         'documentos':    ['ver'],
         'tramites':      ['ver', 'crear'],
-        'correos':       ['ver', 'crear'],
         'archivo':       ['ver'],
         'usuarios':      [],
         'organigrama':   ['ver'],
@@ -76,7 +69,6 @@ PERMISOS_ROL = {
     'ARCHIVO': {
         'documentos':    ['ver', 'archivar'],
         'tramites':      ['ver'],
-        'correos':       ['ver'],
         'archivo':       ['ver', 'crear', 'editar', 'transferir'],
         'usuarios':      [],
         'organigrama':   ['ver'],
@@ -86,7 +78,6 @@ PERMISOS_ROL = {
     'SOLO_LECTURA': {
         'documentos':    ['ver'],
         'tramites':      ['ver'],
-        'correos':       ['ver'],
         'archivo':       ['ver'],
         'usuarios':      [],
         'organigrama':   ['ver'],

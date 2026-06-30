@@ -10,7 +10,6 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('correos', '0002_seguimientocorreo_remove_correo_tramite_and_more'),
         ('documentos', '0001_initial'),
         ('organizacion', '0001_initial'),
         ('tramites', '0001_initial'),
@@ -67,7 +66,6 @@ class Migration(migrations.Migration):
                 ('orden_foja', models.IntegerField(blank=True, null=True)),
                 ('agregado_en', models.DateTimeField(auto_now_add=True)),
                 ('agregado_por', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to=settings.AUTH_USER_MODEL)),
-                ('correo', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='correos.correo')),
                 ('documento', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='documentos.documento')),
                 ('expediente', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='documentos', to='archivo.expediente')),
                 ('tramite', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, to='tramites.tramite')),

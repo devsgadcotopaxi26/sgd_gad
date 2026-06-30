@@ -5,9 +5,9 @@ import { usePermisosStore } from '@/store/permisosStore'
 import NotificacionesPanel from '@/components/ui/NotificacionesPanel'
 
 import {
-  LayoutDashboard, FileText, ClipboardList, Mail,
+  LayoutDashboard, FileText, ClipboardList,
   Archive, Users, Settings, LogOut, ChevronRight,
-  Building2, Menu, X, Search, BarChart2, FolderTree, ArrowRight, Trash2
+  Building2, Menu, X, Search, BarChart2, FolderTree, ArrowRight, Trash2,BookOpen, Shield, ScanLine, Database
 } from 'lucide-react'
 
 const NAV = [
@@ -17,12 +17,12 @@ const NAV = [
       { to: '/dashboard',  label: 'Escritorio',  icon: LayoutDashboard, modulo: '' },
     ]
   },
-  {
+ {
     section: 'Gestión documental',
     items: [
       { to: '/documentos', label: 'Documentos',  icon: FileText,        modulo: 'documentos', badge: 12 },
       { to: '/tramites',   label: 'Trámites',    icon: ClipboardList,   modulo: 'tramites',   badge: 5  },
-      { to: '/correos',    label: 'Correos',     icon: Mail,            modulo: 'correos',    badge: 3  },
+      { to: '/quipux-historico', label: 'Quipux Historico', icon: Database, modulo: 'documentos' },
     ]
   },
   {
@@ -31,15 +31,19 @@ const NAV = [
       { to: '/archivo',    label: 'Archivo',     icon: Archive,         modulo: 'archivo'    },
       { to: '/organigrama',label: 'Organigrama', icon: Building2,       modulo: ''           },
       { to: '/usuarios',   label: 'Usuarios',    icon: Users,           modulo: 'usuarios'   },
+      { to: '/permisos', label: 'Permisos', icon: Shield, modulo: 'usuarios' },
       { to: '/archivo/cuadro-clasificacion', label: 'Cuadro de Clasificación', icon: FolderTree, modulo: 'archivo' },
       { to: '/archivo/ciclo-vital', label: 'Ciclo Vital', icon: ArrowRight, modulo: 'archivo' },
       { to: '/archivo/baja-documental', label: 'Baja Documental', icon: Trash2, modulo: 'archivo' },
+      { to: '/archivo/digitalizacion-masiva', label: 'Digitalización masiva', icon: ScanLine, modulo: 'archivo' },
+      { to: '/archivo/prestamos', label: 'Préstamos y Copias', icon: BookOpen, modulo: 'archivo' },
     ]
   },
-  {
+{
     section: 'Sistema',
     items: [
       { to: '/reportes',   label: 'Reportes',    icon: BarChart2,       modulo: 'reportes'   },
+      { to: '/auditoria',  label: 'Auditoría',   icon: Shield,          modulo: ''           },
       { to: '/ajustes',    label: 'Ajustes',     icon: Settings,        modulo: ''           },
     ]
   },

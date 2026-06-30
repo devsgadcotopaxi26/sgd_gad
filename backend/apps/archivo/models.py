@@ -178,7 +178,6 @@ class ExpedienteDocumento(models.Model):
     expediente    = models.ForeignKey(Expediente, on_delete=models.CASCADE, related_name='documentos')
     documento     = models.ForeignKey('documentos.Documento', null=True, blank=True, on_delete=models.SET_NULL)
     tramite       = models.ForeignKey('tramites.Tramite',     null=True, blank=True, on_delete=models.SET_NULL)
-    correo        = models.ForeignKey('correos.Correo',       null=True, blank=True, on_delete=models.SET_NULL)
     orden_foja    = models.IntegerField(null=True, blank=True)
     agregado_en   = models.DateTimeField(auto_now_add=True)
     agregado_por  = models.ForeignKey('usuarios.Usuario', on_delete=models.PROTECT)

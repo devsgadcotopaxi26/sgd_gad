@@ -2,6 +2,7 @@ import api from './api'
 
 export interface BandejaItem {
   id: number
+  documento_id: number
   bandeja: string
   accion_tomada: string
   leido: boolean
@@ -22,6 +23,9 @@ export interface BandejaItem {
   estado_documento: string
   fecha_documento: string
   prioridad: string
+  remitente_nombre?: string
+  remitente_email?: string
+  remitente_entidad?: string
 }
 
 export interface ConteosBandeja {

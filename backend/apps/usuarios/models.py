@@ -47,6 +47,8 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         db_column='unidad_id',
     )
     cargo               = models.CharField(max_length=200, blank=True)
+    titulo              = models.CharField(max_length=50, blank=True, help_text='Abreviatura del titulo: Sr. Ing., Sra. Mgs., etc.')
+    cargo_tipo          = models.SmallIntegerField(default=0, help_text='0=normal, 1=jefe, 2=asistente')
     fecha_ingreso       = models.DateField(null=True, blank=True)
 
     firma_electronica   = models.BooleanField(default=False)
@@ -91,7 +93,10 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     @property
     def nombre_completo(self):
-        return f'{self.nombres} {self.apellidos}'
+        nombre = f'{self.nombres} {self.apellidos}'
+        if self.titulo:
+            return f'{self.titulo} {nombre}'
+        return nombre
 
     def registrar_acceso(self):
         from django.utils import timezone

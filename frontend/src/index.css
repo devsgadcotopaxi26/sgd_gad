@@ -6,3 +6,35 @@
   * { box-sizing: border-box; }
   body { @apply text-gray-900 antialiased; }
 }
+
+/* Quill editor overrides */
+.ql-snow .ql-picker.ql-size .ql-picker-label::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item::before { content: 'Normal'; }
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="small"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="small"]::before { content: 'Pequeno'; }
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="large"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="large"]::before { content: 'Grande'; }
+.ql-snow .ql-picker.ql-size .ql-picker-label[data-value="huge"]::before,
+.ql-snow .ql-picker.ql-size .ql-picker-item[data-value="huge"]::before { content: 'Muy grande'; }
+
+.ql-editor { font-family: 'Georgia', 'Times New Roman', serif; }
+.ql-editor p { margin-bottom: 0.6em; }
+.ql-editor blockquote {
+  border-left: 3px solid #002f6c;
+  padding-left: 12px;
+  color: #4b5563;
+  margin: 8px 0;
+}
+
+/* Render quill content in previews */
+.render-quill p { margin-bottom: 0.5em; }
+.render-quill strong { font-weight: 700; }
+.render-quill em { font-style: italic; }
+.render-quill u { text-decoration: underline; }
+.render-quill ol, .render-quill ul { padding-left: 1.5em; margin-bottom: 0.5em; }
+.render-quill blockquote {
+  border-left: 3px solid #002f6c;
+  padding-left: 10px;
+  color: #4b5563;
+  margin: 6px 0;
+}

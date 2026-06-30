@@ -24,7 +24,7 @@ class TipoTramiteListSerializer(serializers.ModelSerializer):
         model  = TipoTramite
         fields = [
             'id', 'codigo', 'nombre', 'descripcion', 'dias_plazo', 'costo',
-            'requiere_inspeccion', 'en_linea', 'activo',
+            'requiere_inspeccion', 'en_linea', 'activo', 'unidad_responsable',
             'categoria_nombre', 'unidad_responsable_nombre',
             'unidad_responsable_siglas', 'num_requisitos',
         ]

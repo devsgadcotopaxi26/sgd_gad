@@ -7,6 +7,18 @@ Usuario = get_user_model()
 
 
 class LoginSerializer(TokenObtainPairSerializer):
+    # Aceptar campo genérico 'username' (puede ser cédula o email)
+    username_field = 'username'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Quitar el campo 'email' que SimpleJWT agrega por USERNAME_FIELD
+        self.fields.pop('email', None)
+        # Agregar campo 'username' para aceptar cédula o correo
+        if 'username' not in self.fields:
+            self.fields['username'] = serializers.CharField(
+                label='Cédula o correo electrónico',
+            )
 
     @classmethod
     def get_token(cls, user):
@@ -19,14 +31,37 @@ class LoginSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
-        data = super().validate(attrs)
-        user = self.user
-        if user.bloqueado:
+        # SimpleJWT espera el campo del USERNAME_FIELD del modelo (email).
+        # Mapeamos 'username' al flujo de autenticación via el backend personalizado.
+        username = attrs.get('username', '')
+        password = attrs.get('password', '')
+
+        from django.contrib.auth import authenticate
+        self.user = authenticate(
+            request=self.context.get('request'),
+            username=username,
+            password=password,
+        )
+
+        if self.user is None or not self.user.is_active:
+            raise serializers.ValidationError(
+                'Credenciales inválidas. Verifica tu cédula/correo y contraseña.'
+            )
+
+        if self.user.bloqueado:
             raise serializers.ValidationError('Cuenta bloqueada. Contacte al administrador.')
-        if not user.activo:
+        if not self.user.activo:
             raise serializers.ValidationError('Cuenta inactiva.')
-        user.registrar_acceso()
-        data['usuario'] = UsuarioResumenSerializer(user).data
+
+        # Generar tokens JWT
+        refresh = self.get_token(self.user)
+        data = {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }
+
+        self.user.registrar_acceso()
+        data['usuario'] = UsuarioResumenSerializer(self.user).data
         return data
 
 
@@ -41,7 +76,8 @@ class UsuarioResumenSerializer(serializers.ModelSerializer):
             'id', 'uuid', 'tipo', 'cedula', 'nombres', 'apellidos',
             'nombre_completo', 'email', 'email_institucional',
             'unidad_id', 'unidad_nombre', 'unidad_siglas',
-            'cargo', 'firma_electronica', 'activo', 'ultimo_acceso',
+            'cargo', 'titulo', 'cargo_tipo',
+            'firma_electronica', 'activo', 'ultimo_acceso',
         ]
 
 
@@ -55,7 +91,7 @@ class UsuarioListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'uuid', 'tipo', 'cedula', 'nombre_completo',
             'email', 'email_institucional', 'unidad_id',
-            'unidad_nombre', 'unidad_siglas', 'cargo',
+            'unidad_nombre', 'unidad_siglas', 'cargo', 'titulo', 'cargo_tipo',
             'firma_electronica', 'activo', 'bloqueado', 'creado_en',
         ]
 
@@ -73,7 +109,7 @@ class UsuarioDetalleSerializer(serializers.ModelSerializer):
             'nombre_completo', 'email', 'email_institucional',
             'telefono_movil', 'telefono_fijo',
             'unidad_id', 'unidad_nombre', 'unidad_siglas',
-            'cargo', 'fecha_ingreso', 'firma_electronica',
+            'cargo', 'titulo', 'cargo_tipo', 'fecha_ingreso', 'firma_electronica',
             'cert_bce_serial', 'cert_bce_expira',
             'activo', 'bloqueado', 'motivo_bloqueo',
             'ultimo_acceso', 'creado_en', 'roles',

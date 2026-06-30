@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from .models import BandejaDocumento, SeguimientoDocumento, Tarea, DestinatarioExterno
 from .models import TipoDocumento, Documento, FlujoAprobacion, VersionDocumento, AdjuntoDocumento
 from rest_framework.parsers import MultiPartParser, FormParser
-from django.http import HttpResponse
+from django.http import HttpResponse, FileResponse
 from apps.auditoria.reportes import generar_pdf, html_base
 from .serializers import (
     TipoDocumentoSerializer,
@@ -18,10 +18,16 @@ from .serializers import (
 )
 
 
-class TipoDocumentoViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset           = TipoDocumento.objects.filter(activo=True).order_by('orden')
+class TipoDocumentoViewSet(viewsets.ModelViewSet):
     serializer_class   = TipoDocumentoSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Desde ajustes se pide todos; desde el resto solo activos
+        todos = self.request.query_params.get('todos', 'false')
+        if todos == 'true':
+            return TipoDocumento.objects.all().order_by('orden')
+        return TipoDocumento.objects.filter(activo=True).order_by('orden')
 
 
 class DocumentoViewSet(viewsets.ModelViewSet):
@@ -40,7 +46,7 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         )
 
     def get_serializer_class(self):
-        if self.action == 'create':
+        if self.action in ('create', 'update', 'partial_update'):
             return DocumentoCrearSerializer
         if self.action == 'retrieve':
             return DocumentoDetalleSerializer
@@ -77,6 +83,93 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         doc.save()
         return Response({'detail': 'Documento anulado.'})
 
+    @action(detail=True, methods=['post'], url_path='registrar_firma')
+    def registrar_firma(self, request, pk=None):
+        doc = self.get_object()
+        info_firma = request.data.get('firma_info', {})
+        if not info_firma:
+            return Response({'detail': 'Se requiere información de firma.'}, status=400)
+        doc.firma_bce_info = {
+            'firmado_por':    info_firma.get('firmado_por', ''),
+            'cedula':         info_firma.get('cedula', ''),
+            'entidad_cert':   info_firma.get('entidad_cert', ''),
+            'fecha_firma':    info_firma.get('fecha_firma', ''),
+            'algoritmo':      info_firma.get('algoritmo', 'SHA256withRSA'),
+            'valido_hasta':   info_firma.get('valido_hasta', ''),
+        }
+        doc.estado     = 'firmado'
+        doc.fecha_firma = timezone.now()
+        doc.firmado_por = request.user
+        doc.save(update_fields=['firma_bce_info', 'estado', 'fecha_firma', 'firmado_por'])
+        return Response({
+            'detail': 'Documento firmado correctamente.',
+            'firma_bce_info': doc.firma_bce_info,
+        })
+    @action(detail=True, methods=['post'], url_path='enviar_email')
+    def enviar_email(self, request, pk=None):
+        from django.core.mail import EmailMessage
+        from .plantillas import html_documento_oficial
+        from apps.auditoria.reportes import generar_pdf
+        import io
+
+        doc = self.get_object()
+
+        destinatarios = request.data.get('destinatarios', [])
+        asunto_email  = request.data.get('asunto_email', f'{doc.tipo_documento.nombre} {doc.numero_documento or ""} — {doc.asunto}')
+        cuerpo_email  = request.data.get('cuerpo_email', '')
+        adjuntar_pdf  = request.data.get('adjuntar_pdf', True)
+
+        if not destinatarios:
+            return Response({'detail': 'Debe especificar al menos un destinatario.'}, status=400)
+
+        for email in destinatarios:
+            if '@' not in str(email):
+                return Response({'detail': f'Dirección inválida: {email}'}, status=400)
+
+        try:
+            msg = EmailMessage(
+                subject = asunto_email,
+                body    = cuerpo_email or f"""
+Estimado/a:
+
+Adjunto encontrará el {doc.tipo_documento.nombre} N.° {doc.numero_documento or '(por asignar)'}.
+
+Asunto: {doc.asunto}
+
+Atentamente,
+{doc.creado_por.nombre_completo}
+{doc.unidad_origen.nombre}
+Gobierno Autónomo Descentralizado Provincial de Cotopaxi
+                """.strip(),
+                from_email = f'SGD GAD Cotopaxi <sgd@cotopaxi.gob.ec>',
+                to         = destinatarios,
+            )
+
+            if adjuntar_pdf:
+                html     = html_documento_oficial(doc)
+                pdf_resp = generar_pdf(html, 'temp.pdf')
+                pdf_bytes = pdf_resp.content
+                filename = f'{doc.numero_documento or f"doc_{doc.id}"}.pdf'.replace('/', '-')
+                msg.attach(filename, pdf_bytes, 'application/pdf')
+
+            msg.send(fail_silently=False)
+
+            # Registrar en seguimiento
+            from .models import SeguimientoDocumento
+            SeguimientoDocumento.objects.create(
+                documento   = doc,
+                etapa       = 'enviado',
+                usuario     = request.user,
+                observacion = f'Enviado por email a: {", ".join(destinatarios)}',
+            )
+
+            return Response({
+                'detail': f'Documento enviado correctamente a {len(destinatarios)} destinatario(s).',
+                'destinatarios': destinatarios,
+            })
+
+        except Exception as e:
+            return Response({'detail': f'Error al enviar el email: {str(e)}'}, status=500)
     @action(detail=True, methods=['post'], url_path='nueva_version')
     def nueva_version(self, request, pk=None):
         doc     = self.get_object()
@@ -311,6 +404,8 @@ class DocumentoPDFView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
+        from .plantillas import html_documento_oficial
+
         try:
             doc = Documento.objects.select_related(
                 'tipo_documento', 'unidad_origen', 'unidad_destino',
@@ -319,56 +414,7 @@ class DocumentoPDFView(APIView):
         except Documento.DoesNotExist:
             return Response({'detail': 'Documento no encontrado.'}, status=404)
 
-        fecha_doc = doc.fecha_elaboracion.strftime('%d de %B de %Y') if doc.fecha_elaboracion else '—'
-        destino   = doc.unidad_destino.nombre if doc.unidad_destino else 'A quien corresponda'
-        firmado   = doc.firmado_por.nombre_completo if doc.firmado_por else doc.creado_por.nombre_completo
-
-        contenido = f"""
-        <div style="margin-bottom:20px">
-            <table style="width:100%;font-size:10pt;border:none">
-                <tr>
-                    <td style="width:50%">
-                        <strong>{doc.tipo_documento.nombre} No. {doc.numero_documento or '(por asignar)'}</strong>
-                    </td>
-                    <td style="width:50%;text-align:right;color:#666">
-                        Latacunga, {fecha_doc}
-                    </td>
-                </tr>
-            </table>
-        </div>
-
-        <div style="margin-bottom:20px;font-size:10pt">
-            <p>Señores</p>
-            <p><strong>{destino}</strong></p>
-            <p>Presente.-</p>
-        </div>
-
-        <div style="margin-bottom:10px;font-size:10pt">
-            <p><strong>ASUNTO:</strong> {doc.asunto}</p>
-        </div>
-
-        <div style="font-size:10pt;line-height:1.8;margin-bottom:40px;text-align:justify">
-            {doc.cuerpo or '<p style="color:#999;font-style:italic">[Sin contenido]</p>'}
-        </div>
-
-        <div style="margin-top:60px;font-size:10pt">
-            <p>Atentamente,</p>
-            <br><br>
-            <p><strong>{firmado}</strong></p>
-            <p>{doc.creado_por.cargo if hasattr(doc.creado_por, 'cargo') else ''}</p>
-            <p>{doc.unidad_origen.nombre}</p>
-            {'<p style="color:#0f6e56;font-size:9pt">✓ Documento firmado electrónicamente — BCE</p>' if doc.firma_bce_info else ''}
-        </div>
-
-        {'<div style="margin-top:20px;padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:8pt;color:#15803d"><strong>Firma digital verificada</strong> — ' + str(doc.firma_bce_info) + '</div>' if doc.firma_bce_info else ''}
-        """
-
-        html = html_base(
-            f'{doc.tipo_documento.nombre} — {doc.numero_documento or "Borrador"}',
-            f'{doc.unidad_origen.nombre} · {fecha_doc}',
-            contenido
-        )
-
+        html     = html_documento_oficial(doc)
         filename = f'{doc.numero_documento or f"doc_{doc.id}"}.pdf'.replace('/', '-')
         return generar_pdf(html, filename)
 
@@ -380,10 +426,8 @@ class AdjuntoViewSet(viewsets.ModelViewSet):
         qs = AdjuntoDocumento.objects.select_related('subido_por')
         doc_id     = self.request.query_params.get('documento')
         tramite_id = self.request.query_params.get('tramite')
-        correo_id  = self.request.query_params.get('correo')
         if doc_id:     qs = qs.filter(documento_id=doc_id)
         if tramite_id: qs = qs.filter(tramite_id=tramite_id)
-        if correo_id:  qs = qs.filter(correo_id=correo_id)
         return qs
 
     def get_serializer_class(self):
@@ -391,17 +435,128 @@ class AdjuntoViewSet(viewsets.ModelViewSet):
         return AdjuntoSerializer
 
     def perform_create(self, serializer):
+        import hashlib
+        import threading
+        from .ocr import procesar_adjunto
+
         archivo    = self.request.FILES.get('archivo')
         nombre     = archivo.name if archivo else 'sin nombre'
         tamanio    = archivo.size if archivo else 0
         mime_type  = archivo.content_type if archivo else ''
-        serializer.save(
-            subido_por = self.request.user,
-            nombre     = nombre,
-            tamanio    = tamanio,
-            mime_type  = mime_type,
+
+        hash_sha256 = ''
+        if archivo:
+            hasher = hashlib.sha256()
+            for chunk in archivo.chunks():
+                hasher.update(chunk)
+            hash_sha256 = hasher.hexdigest()
+            archivo.seek(0)
+
+        origen = self.request.data.get('origen_digitalizacion') or None
+        extra  = {}
+        if origen:
+            extra['origen_digitalizacion'] = origen
+            extra['resolucion_ppp']        = self.request.data.get('resolucion_ppp') or None
+            extra['formato_archivo']       = self.request.data.get('formato_archivo', '')
+            extra['fecha_digitalizacion']  = timezone.now()
+            extra['digitalizado_por']      = self.request.user
+            extra['numero_folios']         = self.request.data.get('numero_folios') or None
+            extra['hoja_testigo']          = self.request.data.get('hoja_testigo') in ('true', 'True', True)
+            extra['ubicacion_fisica']      = self.request.data.get('ubicacion_fisica', '')
+
+        adjunto = serializer.save(
+            subido_por      = self.request.user,
+            nombre          = nombre,
+            tamanio         = tamanio,
+            mime_type       = mime_type,
+            hash_integridad = hash_sha256,
+            **extra,
         )
 
+        # Procesar OCR en hilo separado para no bloquear la respuesta
+        def procesar_en_background(adjunto_id):
+            from .models import AdjuntoDocumento
+            try:
+                adj = AdjuntoDocumento.objects.get(pk=adjunto_id)
+                procesar_adjunto(adj)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f'OCR background error: {e}')
+
+        hilo = threading.Thread(
+            target=procesar_en_background,
+            args=(adjunto.id,),
+            daemon=True,
+        )
+        hilo.start()
+
+    @action(detail=True, methods=['post'], url_path='control-calidad')
+    def control_calidad(self, request, pk=None):
+        adjunto = self.get_object()
+        resultado = request.data.get('resultado')
+        if resultado not in ('aprobado', 'rechazado'):
+            return Response({'detail': 'Resultado debe ser aprobado o rechazado.'}, status=400)
+        adjunto.calidad_control        = resultado
+        adjunto.calidad_observacion    = request.data.get('observacion', '')
+        adjunto.calidad_revisado_por   = request.user
+        adjunto.calidad_revisado_en    = timezone.now()
+        adjunto.save()
+        from .serializers import AdjuntoSerializer
+        return Response(AdjuntoSerializer(adjunto).data)
+    @action(detail=False, methods=['get'], url_path='buscar')
+    def buscar(self, request):
+        from django.db import connection
+        query = request.query_params.get('q', '').strip()
+        if not query or len(query) < 3:
+            return Response({'detail': 'La búsqueda debe tener al menos 3 caracteres.'}, status=400)
+
+        documento_id = request.query_params.get('documento')
+        tramite_id   = request.query_params.get('tramite')
+
+        with connection.cursor() as cursor:
+            filtro_extra = ''
+            params = [query, query]
+            if documento_id:
+                filtro_extra += ' AND a.documento_id = %s'
+                params.append(documento_id)
+            if tramite_id:
+                filtro_extra += ' AND a.tramite_id = %s'
+                params.append(tramite_id)
+
+            cursor.execute(f"""
+                SELECT
+                    a.id,
+                    a.nombre,
+                    a.mime_type,
+                    a.tamanio,
+                    a.creado_en,
+                    a.documento_id,
+                    a.tramite_id,
+                    a.ocr_confianza,
+                    a.paginas,
+                    ts_rank(a.contenido_busqueda, plainto_tsquery('spanish', %s)) AS relevancia,
+                    ts_headline(
+                        'spanish',
+                        a.contenido_texto,
+                        plainto_tsquery('spanish', %s),
+                        'MaxWords=20, MinWords=10, StartSel=<mark>, StopSel=</mark>'
+                    ) AS fragmento
+                FROM doc_adjunto a
+                WHERE a.contenido_busqueda @@ plainto_tsquery('spanish', %s)
+                {filtro_extra}
+                ORDER BY relevancia DESC
+                LIMIT 50
+            """, [query, query] + ([documento_id] if documento_id else []) + ([tramite_id] if tramite_id else []))
+
+            columnas = [col[0] for col in cursor.description]
+            resultados = [dict(zip(columnas, fila)) for fila in cursor.fetchall()]
+
+        # Corregir: el query correcto tiene 3 params base
+        return Response({
+            'query':      query,
+            'total':      len(resultados),
+            'resultados': resultados,
+        })
     @action(detail=True, methods=['get'], url_path='descargar')
     def descargar(self, request, pk=None):
         adjunto = self.get_object()
@@ -413,3 +568,121 @@ class AdjuntoViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             return Response({'detail': 'Archivo no encontrado.'}, status=404)
+    
+class DigitalizacionMasivaView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes     = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        import hashlib
+        import threading
+        from .ocr import procesar_adjunto
+        from apps.archivo.models import Expediente, ExpedienteDocumento
+
+        archivos       = request.FILES.getlist('archivos')
+        expediente_id  = request.data.get('expediente_id')
+        serie_id       = request.data.get('serie_id')
+        anio_doc       = request.data.get('anio_documento')
+        origen         = request.data.get('origen_digitalizacion', 'institucional')
+        resolucion_ppp = request.data.get('resolucion_ppp', 300)
+
+        if not archivos:
+            return Response({'detail': 'No se enviaron archivos.'}, status=400)
+
+        if len(archivos) > 50:
+            return Response({'detail': 'Máximo 50 archivos por lote.'}, status=400)
+
+        resultados = []
+
+        for archivo in archivos:
+            try:
+                hasher = hashlib.sha256()
+                for chunk in archivo.chunks():
+                    hasher.update(chunk)
+                hash_sha256 = hasher.hexdigest()
+                archivo.seek(0)
+
+                adjunto = AdjuntoDocumento.objects.create(
+                    nombre              = archivo.name,
+                    archivo             = archivo,
+                    tipo                = 'documento',
+                    tamanio             = archivo.size,
+                    mime_type           = archivo.content_type,
+                    subido_por          = request.user,
+                    hash_integridad     = hash_sha256,
+                    origen_digitalizacion = origen,
+                    resolucion_ppp      = int(resolucion_ppp),
+                    fecha_digitalizacion = timezone.now(),
+                    digitalizado_por    = request.user,
+                    idioma_ocr          = 'spa',
+                )
+
+                # Vincular a expediente si se especificó
+                if expediente_id:
+                    try:
+                        exp = Expediente.objects.get(pk=expediente_id)
+                        ExpedienteDocumento.objects.create(
+                            expediente   = exp,
+                            agregado_por = request.user,
+                        )
+                        exp.num_fojas = exp.documentos.count()
+                        exp.save(update_fields=['num_fojas'])
+                    except Expediente.DoesNotExist:
+                        pass
+
+                resultados.append({
+                    'id':     adjunto.id,
+                    'nombre': archivo.name,
+                    'estado': 'subido',
+                    'ocr':    'pendiente',
+                })
+
+                # OCR en background
+                def ocr_background(adjunto_id):
+                    from .models import AdjuntoDocumento as Adj
+                    from .ocr import procesar_adjunto as proc
+                    try:
+                        adj = Adj.objects.get(pk=adjunto_id)
+                        proc(adj)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).error(f'OCR masivo error {adjunto_id}: {e}')
+
+                threading.Thread(
+                    target=ocr_background,
+                    args=(adjunto.id,),
+                    daemon=True,
+                ).start()
+
+            except Exception as e:
+                resultados.append({
+                    'nombre': archivo.name,
+                    'estado': 'error',
+                    'error':  str(e),
+                })
+
+        exitosos = sum(1 for r in resultados if r['estado'] == 'subido')
+        return Response({
+            'total':     len(archivos),
+            'exitosos':  exitosos,
+            'errores':   len(archivos) - exitosos,
+            'resultados': resultados,
+        }, status=201)
+
+    def get(self, request):
+        """Estado de procesamiento OCR de adjuntos pendientes."""
+        pendientes = AdjuntoDocumento.objects.filter(
+            ocr_procesado=False,
+            mime_type='application/pdf',
+        ).count()
+        procesados = AdjuntoDocumento.objects.filter(ocr_procesado=True).count()
+        sin_texto  = AdjuntoDocumento.objects.filter(
+            ocr_procesado=True,
+            contenido_texto='',
+        ).count()
+
+        return Response({
+            'pendientes': pendientes,
+            'procesados': procesados,
+            'sin_texto':  sin_texto,
+        })

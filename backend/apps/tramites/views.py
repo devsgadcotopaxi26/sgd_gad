@@ -35,25 +35,28 @@ def calcular_fecha_limite(dias_plazo: int) -> date:
     return fecha
 
 
-class CategoriaViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset           = Categoria.objects.filter(activo=True)
-    serializer_class   = CategoriaSerializer
+class CategoriaViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+    pagination_class   = None
+    queryset            = Categoria.objects.filter(activo=True)
+    serializer_class     = CategoriaSerializer
 
 
-class TipoTramiteViewSet(viewsets.ReadOnlyModelViewSet):
+class TipoTramiteViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+    pagination_class   = None
     filter_backends    = [DjangoFilterBackend, SearchFilter]
     filterset_fields   = ['categoria', 'activo', 'en_linea']
     search_fields      = ['nombre', 'codigo', 'descripcion']
 
     def get_queryset(self):
-        return TipoTramite.objects.select_related(
-            'categoria', 'unidad_responsable'
-        ).filter(activo=True)
+        qs = TipoTramite.objects.select_related('categoria', 'unidad_responsable')
+        if self.action == 'list' and self.request.query_params.get('incluir_inactivos') != '1':
+            qs = qs.filter(activo=True)
+        return qs
 
     def get_serializer_class(self):
-        if self.action == 'retrieve':
+        if self.action in ['retrieve', 'create', 'update', 'partial_update']:
             return TipoTramiteDetalleSerializer
         return TipoTramiteListSerializer
 
@@ -113,14 +116,15 @@ class TramiteViewSet(viewsets.ModelViewSet):
         return TramiteListSerializer
 
     def perform_create(self, serializer):
-        tipo    = serializer.validated_data['tipo_tramite']
-        numero  = generar_numero_tramite()
-        limite  = calcular_fecha_limite(tipo.dias_plazo)
+        tipo = serializer.validated_data['tipo_tramite']
+        numero = generar_numero_tramite()
+        limite = calcular_fecha_limite(tipo.dias_plazo)
         tramite = serializer.save(
             uuid=uuid.uuid4(),
             numero_tramite=numero,
             fecha_limite=limite,
             usuario_receptor=self.request.user,
+            tipo_resolucion=None,
         )
         Seguimiento.objects.create(
             tramite=tramite,

@@ -37,6 +37,39 @@ export interface Documento {
   creado_en: string
 }
 
+export interface SeguimientoItem {
+  id: number
+  etapa: string
+  usuario_nombre: string
+  unidad_nombre: string | null
+  unidad_siglas: string | null
+  observacion: string
+  creado_en: string
+}
+
+export interface DestinatarioItem {
+  id: number
+  usuario: number
+  usuario_nombre: string
+  unidad: number | null
+  unidad_nombre: string | null
+  unidad_siglas: string | null
+}
+
+export interface DocumentoDetalle extends Documento {
+  tipo_documento: number
+  unidad_origen: number | null
+  cuerpo: string
+  resumen: string
+  prioridad: string
+  confidencial: boolean
+  requiere_respuesta: boolean
+  firma_bce_info: Record<string, string> | null
+  seguimiento: SeguimientoItem[]
+  destinatarios: DestinatarioItem[]
+  creado_por: number
+}
+
 export interface CrearDocumento {
   tipo_documento: number
   asunto: string
@@ -49,6 +82,7 @@ export interface CrearDocumento {
   requiere_respuesta?: boolean
   fecha_limite_resp?: string
   destinatarios_ids?: number[]
+  palabras_clave?: string[] 
 }
 
 export const documentosService = {
@@ -56,7 +90,7 @@ export const documentosService = {
     api.get<{ results: Documento[]; count: number }>('/documentos/', { params }).then(r => r.data),
 
   obtener: (id: number) =>
-    api.get<Documento>(`/documentos/${id}/`).then(r => r.data),
+    api.get<DocumentoDetalle>(`/documentos/${id}/`).then(r => r.data),
 
   crear: (data: CrearDocumento) =>
     api.post<Documento>('/documentos/', data).then(r => r.data),

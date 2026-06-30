@@ -56,7 +56,6 @@ export interface Tramite {
   analista_nombre: string | null
   dias_restantes: number | null
 }
-
 export const tramitesService = {
   listar: (params?: Record<string, string>) =>
     api.get<{ results: Tramite[]; count: number }>('/tramites/', { params }).then(r => r.data),
@@ -76,12 +75,26 @@ export const tramitesService = {
   categorias: () =>
     api.get<Categoria[]>('/tramites/categorias/').then(r => r.data),
 
+  crearCategoria: (data: Partial<Categoria>) =>
+    api.post<Categoria>('/tramites/categorias/', data).then(r => r.data),
+
+  actualizarCategoria: (id: number, data: Partial<Categoria>) =>
+    api.patch<Categoria>(`/tramites/categorias/${id}/`, data).then(r => r.data),
+
   tipos: (params?: Record<string, string>) =>
-    api.get<{ results: TipoTramite[]; count: number }>('/tramites/tipos/', { params }).then(r => r.data),
+    api.get<TipoTramite[]>('/tramites/tipos/', { params }).then(r => r.data),
+
+  crearTipo: (data: Record<string, any>) =>
+    api.post<TipoTramite>('/tramites/tipos/', data).then(r => r.data),
+
+  actualizarTipo: (id: number, data: Record<string, any>) =>
+    api.patch<TipoTramite>(`/tramites/tipos/${id}/`, data).then(r => r.data),
 
   buscarPersona: (identificacion: string) =>
     api.get<Persona>('/tramites/personas/buscar/', { params: { identificacion } }).then(r => r.data),
 
   crearPersona: (data: Record<string, any>) =>
     api.post<Persona>('/tramites/personas/', data).then(r => r.data),
+  buscarPersonas: (query: string) =>
+    api.get<{ results: Persona[] }>('/tramites/personas/', { params: { search: query } }).then(r => r.data.results),
 }

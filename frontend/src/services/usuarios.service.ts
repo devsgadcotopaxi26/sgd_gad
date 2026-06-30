@@ -14,6 +14,8 @@ export interface Usuario {
   unidad_nombre: string | null
   unidad_siglas: string | null
   cargo: string
+  titulo: string
+  cargo_tipo: number
   firma_electronica: boolean
   activo: boolean
   bloqueado: boolean

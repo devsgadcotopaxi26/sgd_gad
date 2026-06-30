@@ -43,7 +43,7 @@ class Command(BaseCommand):
 
     def _check_apps(self):
         from django.apps import apps
-        apps_sgd = ['usuarios','organizacion','documentos','tramites','correos','archivo','auditoria']
+        apps_sgd = ['usuarios','organizacion','documentos','tramites','archivo','auditoria']
         for app in apps_sgd:
             apps.get_app_config(app)
         self.stdout.write(self.style.SUCCESS(f'  ✓ {len(apps_sgd)} apps cargadas OK'))

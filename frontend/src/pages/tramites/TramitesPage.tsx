@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tramitesService, Tramite } from '@/services/tramites.service'
 import { organizacionService } from '@/services/organizacion.service'
 import AdjuntosPanel from '@/components/ui/AdjuntosPanel'
+import VincularExpedienteModal from '@/components/ui/VincularExpedienteModal'
+import { useNavigate } from 'react-router-dom'
 import {
   ClipboardList, Search, Plus, X,
   Clock, CheckCircle, AlertTriangle,
-  User, Building2, Calendar, ChevronRight
+  User, Building2, Calendar, ChevronRight, Archive, Settings
 } from 'lucide-react'
 
 const ESTADOS: Record<string, { bg: string; text: string; label: string }> = {
@@ -44,6 +46,7 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
   const [formTramite, setFormTramite]     = useState<Record<string, any>>({ canal_ingreso: 'ventanilla', prioridad: 'normal' })
   const [error, setError]                 = useState('')
   const [buscando, setBuscando]           = useState(false)
+  const [sugerencias, setSugerencias]     = useState<any[]>([])
 
   const { data: categorias } = useQuery({ queryKey: ['categorias'],       queryFn: tramitesService.categorias })
   const { data: unidades }   = useQuery({ queryKey: ['unidades-select'],  queryFn: () => organizacionService.select() })
@@ -71,13 +74,38 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
     } finally { setBuscando(false) }
   }
 
+  useEffect(() => {
+    if (cedula.trim().length < 3 || persona) { setSugerencias([]); return }
+    const timeout = setTimeout(async () => {
+      try {
+        const results = await tramitesService.buscarPersonas(cedula.trim())
+        setSugerencias(results)
+      } catch {
+        setSugerencias([])
+      }
+    }, 350)
+    return () => clearTimeout(timeout)
+  }, [cedula, persona])
+
   const handleSubmit = async () => {
     setError('')
     try {
       let personaId = persona?.id
       if (personaNueva) {
-        const p = await tramitesService.crearPersona(formPersona)
-        personaId = p.id
+        try {
+          const p = await tramitesService.crearPersona(formPersona)
+          personaId = p.id
+        } catch (e: any) {
+          const yaExiste = e.response?.data?.numero_identificacion?.some((msg: string) =>
+            msg.toLowerCase().includes('ya existe')
+          )
+          if (yaExiste) {
+            const existente = await tramitesService.buscarPersona(formPersona.numero_identificacion)
+            personaId = existente.id
+          } else {
+            throw e
+          }
+        }
       }
       await crearMutation.mutateAsync({
         ...formTramite,
@@ -85,7 +113,9 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
         unidad_receptora:    formTramite.unidad_receptora,
         unidad_responsable:  formTramite.unidad_responsable,
       })
-    } catch {}
+    } catch (e: any) {
+      setError(Object.values(e.response?.data ?? {}).flat().join(' ') || 'Error al crear el trámite')
+    }
   }
 
   const cls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
@@ -142,7 +172,7 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
                 </label>
                 <div className="flex gap-2">
                   <input className={cls} placeholder="Ej: 0501234567"
-                    value={cedula} onChange={e => setCedula(e.target.value)}
+                    value={cedula} onChange={e => { setCedula(e.target.value); setPersona(null); setPersonaNueva(false) }}
                     onKeyDown={e => e.key === 'Enter' && buscarPersona()} />
                   <button onClick={buscarPersona} disabled={buscando}
                     className="px-4 py-2.5 text-sm font-bold text-white rounded-xl flex-shrink-0"
@@ -150,6 +180,20 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
                     {buscando ? '...' : 'Buscar'}
                   </button>
                 </div>
+                {sugerencias.length > 0 && !persona && (
+                  <div className="mt-2 border border-gray-100 rounded-xl overflow-hidden">
+                    {sugerencias.map(s => (
+                      <div key={s.id} onClick={() => { setPersona(s); setPersonaNueva(false); setCedula(s.numero_identificacion); setSugerencias([]) }}
+                        className="flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-gray-50 border-b border-gray-50 last:border-0">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">{s.nombre_completo}</p>
+                          <p className="text-xs text-gray-400">{s.numero_identificacion} · {s.email || 'Sin correo'}</p>
+                        </div>
+                        <span className="text-xs font-semibold text-blue-600">Usar este registro</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {persona && (
@@ -194,6 +238,16 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
                         onChange={e => setFormPersona(f => ({ ...f, telefono_movil: e.target.value }))} />
                     </div>
                   </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Género</label>
+                    <select className={cls} onChange={e => setFormPersona(f => ({ ...f, genero: e.target.value || undefined }))}>
+                      <option value="">— Prefiere no indicar —</option>
+                      <option value="masculino">Masculino</option>
+                      <option value="femenino">Femenino</option>
+                      <option value="otro">Otro</option>
+                      <option value="no_indica">No indica</option>
+                    </select>
+                  </div>
                 </div>
               )}
             </div>
@@ -214,9 +268,14 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Tipo de trámite</label>
                   <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {tipos?.results?.map(t => (
+                    {tipos?.map(t => (
                       <div key={t.id}
-                        onClick={() => setFormTramite(f => ({ ...f, tipo_tramite: t.id }))}
+                        onClick={() => setFormTramite(f => ({
+                          ...f,
+                          tipo_tramite: t.id,
+                          unidad_responsable: (t as any).unidad_responsable ?? f.unidad_responsable,
+                          unidad_receptora: f.unidad_receptora ?? (t as any).unidad_responsable,
+                        }))}
                         className="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all"
                         style={{
                           borderColor: formTramite.tipo_tramite === t.id ? '#002f6c' : '#e5e7eb',
@@ -281,10 +340,21 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Unidad receptora</label>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Unidad receptora *</label>
                 <select className={cls}
                   value={formTramite.unidad_receptora ?? ''}
-                  onChange={e => setFormTramite(f => ({ ...f, unidad_receptora: e.target.value }))}>
+                  onChange={e => setFormTramite(f => ({ ...f, unidad_receptora: Number(e.target.value) }))}>
+                  <option value="">— Selecciona —</option>
+                  {unidades?.map(u => (
+                    <option key={u.id} value={u.id}>{u.siglas ? `[${u.siglas}] ` : ''}{u.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Unidad responsable *</label>
+                <select className={cls}
+                  value={formTramite.unidad_responsable ?? ''}
+                  onChange={e => setFormTramite(f => ({ ...f, unidad_responsable: Number(e.target.value) }))}>
                   <option value="">— Selecciona —</option>
                   {unidades?.map(u => (
                     <option key={u.id} value={u.id}>{u.siglas ? `[${u.siglas}] ` : ''}{u.nombre}</option>
@@ -331,10 +401,12 @@ function ModalNuevoTramite({ onClose }: { onClose: () => void }) {
 }
 
 export default function TramitesPage() {
+  const navigate = useNavigate()
   const [busqueda, setBusqueda]               = useState('')
   const [filtroEstado, setFiltro]             = useState('')
   const [modalAbierto, setModal]              = useState(false)
   const [selectedTramite, setSelectedTramite] = useState<any>(null)
+  const [mostrarVincular, setMostrarVincular] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['tramites', busqueda, filtroEstado],
@@ -358,11 +430,17 @@ export default function TramitesPage() {
             <h1 className="text-xl font-bold text-gray-900">Trámites ciudadanos</h1>
             <p className="text-sm text-gray-400 mt-0.5">{data?.count ?? 0} trámites registrados</p>
           </div>
-          <button onClick={() => setModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold text-white rounded-xl"
-            style={{ background: '#002f6c' }}>
-            <Plus size={15} /> Nuevo trámite
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate('/tramites/configuracion')}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
+              <Settings size={15} /> Configurar
+            </button>
+            <button onClick={() => setModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold text-white rounded-xl"
+              style={{ background: '#002f6c' }}>
+              <Plus size={15} /> Nuevo trámite
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 mb-5">
@@ -494,10 +572,28 @@ export default function TramitesPage() {
             </span>
           </div>
 
+          <button onClick={() => setMostrarVincular(true)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              width: '100%', padding: '8px 10px', borderRadius: 9,
+              border: '0.5px solid #e5e7eb', background: '#fff', color: '#374151',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', marginBottom: 12,
+            }}>
+            <Archive size={13} /> Archivar en expediente
+          </button>
+
           <div style={{ borderTop: '0.5px solid #f5f6f8', paddingTop: 12 }}>
             <AdjuntosPanel tramiteId={selectedTramite.id} />
           </div>
         </div>
+      )}
+
+      {mostrarVincular && selectedTramite && (
+        <VincularExpedienteModal
+          tramiteId={selectedTramite.id}
+          onClose={() => setMostrarVincular(false)}
+          onVinculado={() => setMostrarVincular(false)}
+        />
       )}
     </div>
   )

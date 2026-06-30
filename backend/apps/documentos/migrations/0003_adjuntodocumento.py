@@ -8,7 +8,6 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('correos', '0002_seguimientocorreo_remove_correo_tramite_and_more'),
         ('documentos', '0002_destinatarioexterno_seguimientodocumento_tarea_and_more'),
         ('tramites', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
@@ -25,7 +24,6 @@ class Migration(migrations.Migration):
                 ('tamanio', models.BigIntegerField(default=0)),
                 ('mime_type', models.CharField(blank=True, max_length=100)),
                 ('creado_en', models.DateTimeField(auto_now_add=True)),
-                ('correo', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='archivos_adjuntos', to='correos.correo')),
                 ('documento', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='archivos_adjuntos', to='documentos.documento')),
                 ('subido_por', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, to=settings.AUTH_USER_MODEL)),
                 ('tramite', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='archivos_adjuntos', to='tramites.tramite')),

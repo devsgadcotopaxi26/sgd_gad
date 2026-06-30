@@ -4,14 +4,15 @@ from datetime import timedelta
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-
 from apps.tramites.models import Tramite
 from apps.documentos.models import Documento
-from apps.correos.models import Correo
 from apps.archivo.models import Expediente
 from apps.usuarios.models import Usuario
 from django.http import HttpResponse
 from .reportes import generar_pdf, reporte_tramites, reporte_documentos, reporte_kpi_unidades
+from rest_framework import generics
+from .models import LogAuditoria
+from .serializers import LogAuditoriaSerializer
 
 
 class DashboardStatsView(APIView):
@@ -37,10 +38,7 @@ class DashboardStatsView(APIView):
             fecha_resolucion__date__gte=hace_30d
         ).count()
 
-        correos_sin_atender = Correo.objects.filter(
-            respondido=False,
-            estado__in=['nuevo', 'registrado', 'asignado', 'en_proceso']
-        ).count()
+        correos_sin_atender = 0  # módulo correos eliminado, fusionado en Documentos
 
         docs_pendientes = Documento.objects.filter(
             estado__in=['borrador', 'en_revision']
@@ -291,3 +289,32 @@ class ReporteKPIUnidadesPDFView(APIView):
 
         html = reporte_kpi_unidades(unidades_data)
         return generar_pdf(html, f'reporte_kpi_{timezone.now().strftime("%Y%m%d")}.pdf')
+
+class LogAuditoriaListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class   = LogAuditoriaSerializer
+
+    def get_queryset(self):
+        qs     = LogAuditoria.objects.all()
+        params = self.request.query_params
+
+        modulo  = params.get('modulo')
+        accion  = params.get('accion')
+        tabla   = params.get('tabla')
+        usuario = params.get('usuario_id')
+        desde   = params.get('desde')
+        hasta   = params.get('hasta')
+        search  = params.get('search')
+
+        if modulo:  qs = qs.filter(modulo=modulo)
+        if accion:  qs = qs.filter(accion=accion)
+        if tabla:   qs = qs.filter(tabla=tabla)
+        if usuario: qs = qs.filter(usuario_id=usuario)
+        if desde:   qs = qs.filter(creado_en__date__gte=desde)
+        if hasta:   qs = qs.filter(creado_en__date__lte=hasta)
+        if search:  qs = qs.filter(
+            models.Q(tabla__icontains=search) |
+            models.Q(usuario_email__icontains=search) |
+            models.Q(descripcion__icontains=search)
+        )
+        return qs[:500]

@@ -1,5 +1,6 @@
 # Modelos de documentos
 import uuid
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 
@@ -45,7 +46,15 @@ class Documento(models.Model):
     asunto              = models.CharField(max_length=500)
     cuerpo              = models.TextField(blank=True)
     resumen             = models.TextField(blank=True)
-    palabras_clave      = models.JSONField(default=list, blank=True)
+    palabras_clave = ArrayField(
+        models.CharField(max_length=100), 
+        blank=True, 
+        default=list
+    )
+    etiquetas           = models.JSONField(default=list, blank=True)
+    remitente_nombre    = models.CharField(max_length=200, blank=True, help_text='Nombre de quien remite, si el documento proviene de fuera del GAD')
+    remitente_email     = models.EmailField(max_length=200, blank=True)
+    remitente_entidad   = models.CharField(max_length=200, blank=True, help_text='Institución externa remitente, ej: Contraloría General del Estado')
     unidad_origen       = models.ForeignKey(
         'organizacion.Unidad', on_delete=models.PROTECT,
         related_name='documentos_emitidos'
@@ -311,7 +320,6 @@ class DestinatarioExterno(models.Model):
 
     class Meta:
         db_table = 'doc_destinatario_externo'
-
 class AdjuntoDocumento(models.Model):
     TIPO_CHOICES = [
         ('documento', 'Documento principal'),
@@ -319,10 +327,19 @@ class AdjuntoDocumento(models.Model):
         ('respaldo',  'Respaldo'),
         ('otro',      'Otro'),
     ]
+    ORIGEN_DIGITALIZACION_CHOICES = [
+        ('institucional', 'Digitalización institucional (300 ppp)'),
+        ('quipux',         'Recibido vía Quipux (90 ppp)'),
+        ('nativo_digital', 'Nativo digital (no requiere digitalización)'),
+    ]
+    CALIDAD_CHOICES = [
+        ('pendiente',   'Pendiente de control de calidad'),
+        ('aprobado',    'Aprobado'),
+        ('rechazado',   'Rechazado — requiere nueva digitalización'),
+    ]
 
     documento     = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='archivos_adjuntos', null=True, blank=True)
     tramite       = models.ForeignKey('tramites.Tramite', on_delete=models.CASCADE, related_name='archivos_adjuntos', null=True, blank=True)
-    correo        = models.ForeignKey('correos.Correo', on_delete=models.CASCADE, related_name='archivos_adjuntos', null=True, blank=True)
     nombre        = models.CharField(max_length=255)
     archivo       = models.FileField(upload_to='adjuntos/%Y/%m/')
     tipo          = models.CharField(max_length=20, choices=TIPO_CHOICES, default='anexo')
@@ -330,6 +347,37 @@ class AdjuntoDocumento(models.Model):
     mime_type     = models.CharField(max_length=100, blank=True)
     subido_por    = models.ForeignKey('usuarios.Usuario', on_delete=models.PROTECT)
     creado_en     = models.DateTimeField(auto_now_add=True)
+
+    # --- Metadatos de digitalización formal (Regla Técnica Nacional, Art. 68-79, Tabla 13) ---
+    origen_digitalizacion = models.CharField(
+        max_length=20, choices=ORIGEN_DIGITALIZACION_CHOICES,
+        null=True, blank=True
+    )
+    resolucion_ppp        = models.PositiveSmallIntegerField(null=True, blank=True, help_text='Puntos por pulgada de la digitalización (300 institucional, 90 Quipux)')
+    formato_archivo       = models.CharField(max_length=10, blank=True, help_text='PDF/A, TIFF, JPEG, etc.')
+    fecha_digitalizacion  = models.DateTimeField(null=True, blank=True)
+    digitalizado_por      = models.ForeignKey(
+        'usuarios.Usuario', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='adjuntos_digitalizados'
+    )
+    numero_folios         = models.PositiveSmallIntegerField(null=True, blank=True)
+    hoja_testigo           = models.BooleanField(default=False, help_text='Indica si el original físico permanece en archivo con hoja testigo')
+    ubicacion_fisica       = models.CharField(max_length=200, blank=True, help_text='Caja/estante donde reposa el original físico, si aplica')
+    calidad_control        = models.CharField(max_length=20, choices=CALIDAD_CHOICES, default='pendiente')
+    calidad_observacion    = models.TextField(blank=True)
+    calidad_revisado_por   = models.ForeignKey(
+        'usuarios.Usuario', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='adjuntos_calidad_revisada'
+    )
+    calidad_revisado_en     = models.DateTimeField(null=True, blank=True)
+    hash_integridad    = models.CharField(max_length=64, blank=True)
+
+    # Búsqueda full-text
+    contenido_texto    = models.TextField(blank=True)
+    ocr_procesado      = models.BooleanField(default=False)
+    ocr_confianza      = models.FloatField(null=True, blank=True)
+    idioma_ocr         = models.CharField(max_length=10, default='spa', blank=True)
+    paginas            = models.PositiveSmallIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = 'doc_adjunto'
@@ -346,3 +394,10 @@ class AdjuntoDocumento(models.Model):
                 return f'{t:.1f} {unit}'
             t /= 1024
         return f'{t:.1f} GB'
+
+    @property
+    def cumple_norma_institucional(self):
+        '''True si la digitalización institucional cumple el mínimo de 300 ppp exigido por la norma.'''
+        if self.origen_digitalizacion != 'institucional':
+            return None
+        return bool(self.resolucion_ppp and self.resolucion_ppp >= 300)

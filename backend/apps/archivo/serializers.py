@@ -22,7 +22,6 @@ class ExpedienteDocumentoSerializer(serializers.ModelSerializer):
     documento_numero = serializers.CharField(source='documento.numero_documento', read_only=True)
     documento_asunto = serializers.CharField(source='documento.asunto',           read_only=True)
     tramite_numero   = serializers.CharField(source='tramite.numero_tramite',     read_only=True)
-    correo_numero    = serializers.CharField(source='correo.numero_registro',     read_only=True)
     agregado_por_nombre = serializers.CharField(source='agregado_por.nombre_completo', read_only=True)
 
     class Meta:

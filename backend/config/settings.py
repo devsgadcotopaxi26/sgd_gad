@@ -39,9 +39,10 @@ LOCAL_APPS = [
     'apps.organizacion',
     'apps.documentos',
     'apps.tramites',
-    'apps.correos',
     'apps.archivo',
     'apps.auditoria',
+    'apps.configuracion',
+    'apps.quipux',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -88,11 +89,33 @@ DATABASES = {
         'HOST':     config('DB_HOST',     default='host.docker.internal'),
         'PORT':     config('DB_PORT',     default='5432'),
         'OPTIONS':  { 'options': '-c search_path=public' },
-    }
+    },
+    'quipux_transaccional': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'quipux_transaccional',
+        'USER': config('DB_USER', default='postgres'),
+        'PASSWORD': config('DB_PASSWORD', default=''),
+        'HOST': config('DB_HOST', default='host.docker.internal'),
+        'PORT': config('DB_PORT', default='5432'),
+        'OPTIONS': {'options': '-c default_transaction_read_only=on'},
+    },
+    'quipux_documental': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'quipux_documental',
+        'USER': config('DB_USER', default='postgres'),
+        'PASSWORD': config('DB_PASSWORD', default=''),
+        'HOST': config('DB_HOST', default='host.docker.internal'),
+        'PORT': '5432',
+        'OPTIONS': {'options': '-c default_transaction_read_only=on'},
+    },
 }
+
+DATABASE_ROUTERS = ['apps.quipux.router.QuipuxRouter']
 
 # ── Usuario personalizado ─────────────────────────────────
 AUTH_USER_MODEL = 'usuarios.Usuario'
+
+AUTHENTICATION_BACKENDS = ['apps.usuarios.backends.CedulaEmailBackend']
 
 # ── Internacionalización ──────────────────────────────────
 LANGUAGE_CODE = 'es-ec'
