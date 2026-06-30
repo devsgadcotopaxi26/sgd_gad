@@ -26,6 +26,7 @@ class Documento(models.Model):
     ESTADO_CHOICES = [
         ('borrador',    'Borrador'),
         ('en_revision', 'En revisión'),
+        ('firmado',     'Firmado'),
         ('aprobado',    'Aprobado'),
         ('enviado',     'Enviado'),
         ('recibido',    'Recibido'),
