@@ -10,7 +10,7 @@ import mimetypes
 
 from django.db import connections
 from django.http import HttpResponse
-from django.db.models import Q
+from django.db.models import Q, Subquery, OuterRef
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -116,6 +116,13 @@ class QuipuxDocumentosView(APIView):
             qs = qs.filter(radi_fech_radi__gte=desde)
         if hasta:
             qs = qs.filter(radi_fech_radi__lte=hasta)
+
+        # Deduplicar: Quipux crea un registro por cada paso del flujo
+        # (elaboracion -> tramite -> enviado). Quedarse solo con el mas reciente.
+        latest_date = qs.filter(
+            radi_nume_text=OuterRef('radi_nume_text')
+        ).order_by('-radi_fech_radi').values('radi_fech_radi')[:1]
+        qs = qs.filter(radi_fech_radi=Subquery(latest_date))
 
         total  = qs.count()
         offset = (page - 1) * page_size
