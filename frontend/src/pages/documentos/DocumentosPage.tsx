@@ -339,38 +339,74 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
         <p style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', lineHeight: 1.3, marginBottom: 10 }}>{item.asunto}</p>
 
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {item.bandeja === 'en_elaboracion' && onEditar && (
-            <button onClick={onEditar}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                padding: '5px 10px', borderRadius: 8,
-                border: 'none', background: '#002f6c', color: '#fff',
-                fontSize: 11, fontWeight: 600, cursor: 'pointer',
-              }}>
-              <Edit3 size={12} /> Editar
-            </button>
-          )}
-          {[
-            { label: 'Reasignar',   icon: ArrowRightLeft, primary: false, action: () => setMostrarReasignar(true) },
-            { label: 'Informar',    icon: Info },
-            { label: 'Archivar',    icon: Archive, action: () => setMostrarVincular(true) },
-            { label: 'Comentar',    icon: MessageSquare },
-            { label: 'Nueva Tarea', icon: ClipboardPlus },
-            { label: 'Firmar',      icon: Signature, action: () => setMostrarFirma(true) },
-            { label: 'Enviar',      icon: Send, action: () => setMostrarEnviar(true) },
-          ].map(({ label, icon: Icon, primary, action }: any) => (
-            <button key={label} onClick={action}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                padding: '5px 8px', borderRadius: 8,
-                border: `0.5px solid ${primary ? '#002f6c' : '#e5e7eb'}`,
-                background: primary ? '#002f6c' : '#fff',
-                color: primary ? '#fff' : '#374151',
-                fontSize: 11, fontWeight: 500, cursor: 'pointer',
-              }}>
-              <Icon size={12} /> {label}
-            </button>
-          ))}
+          {(() => {
+            const b = item.bandeja
+            const e = item.estado_documento
+            const anulado = e === 'anulado'
+            const enElab  = b === 'en_elaboracion'
+            const recibido = ['recibidos', 'tareas_recibidas'].includes(b)
+
+            const botones = [
+              {
+                label: 'Editar', icon: Edit3, accent: true,
+                visible: enElab && !anulado && !!onEditar,
+                action: onEditar,
+              },
+              {
+                label: 'Reasignar', icon: ArrowRightLeft,
+                visible: recibido && !anulado,
+                action: () => setMostrarReasignar(true),
+              },
+              {
+                label: 'Archivar', icon: Archive,
+                visible: (recibido || ['enviados'].includes(b)) && !anulado,
+                action: () => setMostrarVincular(true),
+              },
+              {
+                label: 'Firmar', icon: Signature,
+                visible: (enElab || b === 'no_enviados') && !['firmado','anulado'].includes(e),
+                action: () => setMostrarFirma(true),
+              },
+              {
+                label: 'Enviar', icon: Send,
+                visible: (enElab || b === 'no_enviados') && !anulado,
+                action: () => setMostrarEnviar(true),
+              },
+              {
+                label: 'Informar', icon: Info,
+                visible: !enElab && b !== 'no_enviados',
+                action: undefined,
+              },
+              {
+                label: 'Nueva Tarea', icon: ClipboardPlus,
+                visible: recibido && !anulado,
+                action: undefined,
+              },
+              {
+                label: 'Comentar', icon: MessageSquare,
+                visible: true,
+                action: undefined,
+              },
+            ].filter(btn => btn.visible)
+
+            return botones.map(({ label, icon: Icon, accent, action }: any) => (
+              <button key={label} onClick={action ?? undefined}
+                disabled={!action}
+                title={!action ? 'Próximamente' : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  padding: '5px 8px', borderRadius: 8,
+                  border: `0.5px solid ${accent ? 'none' : '#e5e7eb'}`,
+                  background: accent ? '#002f6c' : '#fff',
+                  color: accent ? '#fff' : action ? '#374151' : '#b0b7c3',
+                  fontSize: 11, fontWeight: accent ? 600 : 500,
+                  cursor: action ? 'pointer' : 'default',
+                  opacity: !action ? 0.7 : 1,
+                }}>
+                <Icon size={12} /> {label}
+              </button>
+            ))
+          })()}
         </div>
       </div>
 
@@ -602,9 +638,10 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
 export default function DocumentosPage() {
   const qc = useQueryClient()
   const [bandejaActiva, setBandeja]   = useState('recibidos')
-  const [selected, setSelected]       = useState<BandejaItem | null>(null)
-  const [modal, setModal]             = useState(false)
-  const [docEditar, setDocEditar]     = useState<any>(null)
+  const [selectedId, setSelectedId]     = useState<number | null>(null)
+  const [selectedSnap, setSelectedSnap] = useState<BandejaItem | null>(null)
+  const [modal, setModal]               = useState(false)
+  const [docEditar, setDocEditar]       = useState<any>(null)
   const [panelTrigger, setPanelTrigger] = useState<{ action: string; t: number } | null>(null)
   const [busqueda, setBusqueda]       = useState('')
   const [filtroLeido, setFiltroLeido] = useState('')
@@ -634,11 +671,23 @@ export default function DocumentosPage() {
   })
 
   const handleSelect = (item: BandejaItem) => {
-    setSelected(item)
+    setSelectedId(item.id)
+    setSelectedSnap(item)
     if (!item.leido) marcarLeido.mutate(item.id)
   }
 
   const items = data?.results ?? []
+
+  // Mantiene el snapshot en sync con los datos frescos de la lista
+  useEffect(() => {
+    if (!selectedId) return
+    const live = items.find(i => i.id === selectedId)
+    if (live) setSelectedSnap(live)
+  }, [selectedId, items])
+
+  const selected = selectedId
+    ? (items.find(i => i.id === selectedId) ?? selectedSnap)
+    : null
 
   const SECCIONES = [
     { key: 'bandejas', label: 'Bandejas' },
@@ -819,10 +868,10 @@ export default function DocumentosPage() {
         {selected && (
           <PanelDetalle
             item={selected}
-            onClose={() => setSelected(null)}
+            onClose={() => setSelectedId(null)}
             trigger={panelTrigger}
             onEditar={selected.bandeja === 'en_elaboracion' ? async () => {
-              const detalle = await documentosService.obtener(selected.documento_id)
+              const detalle = await documentosService.obtener(selected!.documento_id)
               setDocEditar(detalle)
             } : undefined}
           />
