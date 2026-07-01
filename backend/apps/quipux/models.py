@@ -154,9 +154,8 @@ class QuipuxTransaccion(models.Model):
 
 class QuipuxAnexo(models.Model):
     """Archivos adjuntos a un radicado (Excel, PDF, Word, etc.)."""
-    usua_radi_codi  = models.BigAutoField(primary_key=True)
-    anex_radi_nume  = models.DecimalField(max_digits=20, decimal_places=0)
-    anex_codigo     = models.CharField(max_length=50)
+    anex_codigo     = models.CharField(max_length=50, primary_key=True)
+    anex_radi_nume = models.DecimalField(max_digits=20, decimal_places=0)
     anex_tipo       = models.SmallIntegerField()
     anex_desc       = models.CharField(max_length=512, blank=True)
     anex_numero     = models.DecimalField(max_digits=5, decimal_places=0)

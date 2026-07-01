@@ -726,8 +726,13 @@ import jwt as pyjwt
 import base64
 import os as _os
 
-_FIRMAEC_SISTEMA = _os.environ.get('FIRMAEC_SISTEMA', 'sgdGadCotopaxi')
-_FIRMAEC_SECRET  = _os.environ.get('FIRMAEC_SECRET',  'sgd-gad-cotopaxi-firmaec-2026-secreto')
+_FIRMAEC_SISTEMA  = _os.environ.get('FIRMAEC_SISTEMA',  'sgdGadCotopaxi')
+_FIRMAEC_SECRET   = _os.environ.get('FIRMAEC_SECRET',   'sgd-gad-cotopaxi-firmaec-2026-secreto')
+# URL pública que FirmaEC usará para bajar/subir documentos.
+# Debe ser accesible desde la PC del firmante (HTTPS recomendado para FirmaEC 5.x).
+# Ejemplo: FIRMAEC_BASE_URL=https://sgd.cotopaxi.gob.ec/api/v1/documentos/firmaec
+# Si no se configura, se usa la URL del request (funciona en localhost con HTTP).
+_FIRMAEC_BASE_URL = _os.environ.get('FIRMAEC_BASE_URL', '')
 
 
 class GenerarTokenFirmaECView(APIView):
@@ -749,7 +754,13 @@ class GenerarTokenFirmaECView(APIView):
         }
         token = pyjwt.encode(payload, _FIRMAEC_SECRET, algorithm='HS512')
 
-        api_url = request.build_absolute_uri('/api/v1/documentos/firmaec')
+        # Usar FIRMAEC_BASE_URL si está configurada; si no, construir desde el request.
+        # NO hacer quote() — FirmaEC espera la URL sin codificar (igual que Quipux).
+        if _FIRMAEC_BASE_URL:
+            api_url = _FIRMAEC_BASE_URL.rstrip('/')
+        else:
+            api_url = request.build_absolute_uri('/api/v1/documentos/firmaec')
+
         firmaec_url = (
             f"firmaec://{_FIRMAEC_SISTEMA}/firmar"
             f"?token={token}"
@@ -757,7 +768,7 @@ class GenerarTokenFirmaECView(APIView):
             f"&llx=222&lly=85&urx=422&ury=49"
             f"&url={api_url}"
         )
-        return Response({'firmaec_url': firmaec_url, 'token': token})
+        return Response({'firmaec_url': firmaec_url, 'token': token, 'api_url': api_url})
 
 
 class BajarDocumentoFirmaECView(APIView):
@@ -792,6 +803,22 @@ class BajarDocumentoFirmaECView(APIView):
         html = html_documento_oficial(doc)
         pdf_response = _generar_pdf(html, f'{doc.id}.pdf')
         pdf_bytes = pdf_response.content
+
+        # FirmaEC no puede insertar firma digital en PDFs con /ObjStm (object streams
+        # comprimidos que genera WeasyPrint). Re-escribir con pypdf produce un PDF
+        # con tabla xref clasica que FirmaEC puede procesar.
+        try:
+            import pypdf as _pypdf
+            import io as _io2
+            _reader = _pypdf.PdfReader(_io2.BytesIO(pdf_bytes))
+            _writer = _pypdf.PdfWriter()
+            for _page in _reader.pages:
+                _writer.add_page(_page)
+            _out = _io2.BytesIO()
+            _writer.write(_out)
+            pdf_bytes = _out.getvalue()
+        except Exception:
+            pass  # si falla, enviar PDF original
 
         doc_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
         return Response({

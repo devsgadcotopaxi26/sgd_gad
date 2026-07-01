@@ -97,7 +97,7 @@ function PanelDetalle({ item, onClose }: { item: QuipuxDocumento; onClose: () =>
   ] as const
 
   return (
-    <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 440, background: '#fff', borderLeft: '0.5px solid #e5e7eb', display: 'flex', flexDirection: 'column', zIndex: 5, overflow: 'hidden' }}>
+    <div style={{ width: 440, flexShrink: 0, background: '#fff', borderLeft: '0.5px solid #e5e7eb', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
       <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #f5f6f8', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -295,7 +295,7 @@ export default function QuipuxHistoricoPage() {
                 }}>
                 <Icon size={11} />
                 {b.label}
-                {cnt != null && (
+                {cnt != null && cnt > 0 && (
                   <span style={{ background: bandeja === b.id ? 'rgba(255,255,255,0.25)' : '#e5e7eb', borderRadius: 10, padding: '0 5px', fontSize: 9, fontWeight: 700, color: bandeja === b.id ? '#fff' : '#374151' }}>
                     {cnt.toLocaleString()}
                   </span>
@@ -334,85 +334,88 @@ export default function QuipuxHistoricoPage() {
         </div>
       )}
 
-      {/* Tabla */}
+      {/* Área tabla + panel lateral (flex row) */}
       {!is503 && (
-        <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-            <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 2 }}>
-              <tr>
-                {['N° Documento', 'Asunto', 'Estado', 'Área / Remitente', 'Fecha', 'PDF', 'Anexos'].map(h => (
-                  <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 12 }}>Cargando…</td></tr>
-              )}
-              {!isLoading && (!data?.results || data.results.length === 0) && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 12 }}>
-                  {bandeja !== 'todos' && !esAdmin ? 'No tienes documentos en esta bandeja.' : 'Sin resultados.'}
-                </td></tr>
-              )}
-              {data?.results?.map(item => (
-                <tr key={item.radi_nume_radi}
-                  onClick={() => setSelItem(selItem?.radi_nume_radi === item.radi_nume_radi ? null : item)}
-                  style={{ cursor: 'pointer', background: selItem?.radi_nume_radi === item.radi_nume_radi ? '#eff6ff' : undefined, borderBottom: '0.5px solid #f5f6f8' }}
-                  onMouseEnter={e => { if (selItem?.radi_nume_radi !== item.radi_nume_radi) e.currentTarget.style.background = '#f9fafb' }}
-                  onMouseLeave={e => { if (selItem?.radi_nume_radi !== item.radi_nume_radi) e.currentTarget.style.background = '' }}>
-                  <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: 10, color: '#002f6c', fontWeight: 700, whiteSpace: 'nowrap' }}>
-                    {item.radi_nume_text || item.radi_nume_radi}
-                  </td>
-                  <td style={{ padding: '7px 10px', maxWidth: 260 }}>
-                    <p style={{ margin: 0, fontWeight: 500, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {item.radi_asunto || '(Sin asunto)'}
-                    </p>
-                  </td>
-                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}><EstadoBadge codigo={item.esta_codi} /></td>
-                  <td style={{ padding: '7px 10px', maxWidth: 180 }}>
-                    <p style={{ margin: 0, fontSize: 11, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.creador_nombre}</p>
-                    <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.area_nombre}</p>
-                  </td>
-                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                    <span style={{ fontSize: 10, color: '#6b7280' }}>
-                      {new Date(item.radi_fech_radi).toLocaleDateString('es-EC')}
-                    </span>
-                  </td>
-                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-                    {item.tiene_pdf && (
-                      <button onClick={e => { e.stopPropagation(); quipuxService.descargarPDF(item.radi_nume_radi, item.radi_nume_text || item.radi_nume_radi) }}
-                        style={{ padding: '3px 8px', background: '#eff6ff', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#1d4ed8', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                        <Download size={10} /> PDF
-                      </button>
-                    )}
-                    {item.tiene_pdf_firmado && (
-                      <button onClick={e => { e.stopPropagation(); quipuxService.descargarPDF(item.radi_nume_radi, item.radi_nume_text || item.radi_nume_radi, true) }}
-                        style={{ marginLeft: 4, padding: '3px 8px', background: '#f0fdf4', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#15803d', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                        <Download size={10} /> Firmado
-                      </button>
-                    )}
-                  </td>
-                  <td style={{ padding: '7px 10px' }}>
-                    {item.tiene_anexos && (
-                      <button onClick={e => { e.stopPropagation(); setSelItem(item) }}
-                        style={{ padding: '3px 8px', background: '#faf5ff', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#7c3aed', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                        <Paperclip size={10} /> Ver
-                      </button>
-                    )}
-                  </td>
+        <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+          {/* Tabla scrollable — se encoge cuando el panel está abierto */}
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead style={{ position: 'sticky', top: 0, background: '#fff', zIndex: 2 }}>
+                <tr>
+                  {['N° Documento', 'Asunto', 'Estado', 'Área / Remitente', 'Fecha', 'PDF', 'Anexos'].map(h => (
+                    <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5, borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {isLoading && (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 12 }}>Cargando…</td></tr>
+                )}
+                {!isLoading && (!data?.results || data.results.length === 0) && (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 12 }}>
+                    {bandeja !== 'todos' && !esAdmin ? 'No tienes documentos en esta bandeja.' : 'Sin resultados.'}
+                  </td></tr>
+                )}
+                {data?.results?.map(item => (
+                  <tr key={item.radi_nume_radi}
+                    onClick={() => setSelItem(selItem?.radi_nume_radi === item.radi_nume_radi ? null : item)}
+                    style={{ cursor: 'pointer', background: selItem?.radi_nume_radi === item.radi_nume_radi ? '#eff6ff' : undefined, borderBottom: '0.5px solid #f5f6f8' }}
+                    onMouseEnter={e => { if (selItem?.radi_nume_radi !== item.radi_nume_radi) e.currentTarget.style.background = '#f9fafb' }}
+                    onMouseLeave={e => { if (selItem?.radi_nume_radi !== item.radi_nume_radi) e.currentTarget.style.background = '' }}>
+                    <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontSize: 10, color: '#002f6c', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      {item.radi_nume_text || item.radi_nume_radi}
+                    </td>
+                    <td style={{ padding: '7px 10px', maxWidth: 260 }}>
+                      <p style={{ margin: 0, fontWeight: 500, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.radi_asunto || '(Sin asunto)'}
+                      </p>
+                    </td>
+                    <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}><EstadoBadge codigo={item.esta_codi} /></td>
+                    <td style={{ padding: '7px 10px', maxWidth: 180 }}>
+                      <p style={{ margin: 0, fontSize: 11, color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.creador_nombre}</p>
+                      <p style={{ margin: 0, fontSize: 10, color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.area_nombre}</p>
+                    </td>
+                    <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 10, color: '#6b7280' }}>
+                        {new Date(item.radi_fech_radi).toLocaleDateString('es-EC')}
+                      </span>
+                    </td>
+                    <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+                      {item.tiene_pdf && (
+                        <button onClick={e => { e.stopPropagation(); quipuxService.descargarPDF(item.radi_nume_radi, item.radi_nume_text || item.radi_nume_radi) }}
+                          style={{ padding: '3px 8px', background: '#eff6ff', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#1d4ed8', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <Download size={10} /> PDF
+                        </button>
+                      )}
+                      {item.tiene_pdf_firmado && (
+                        <button onClick={e => { e.stopPropagation(); quipuxService.descargarPDF(item.radi_nume_radi, item.radi_nume_text || item.radi_nume_radi, true) }}
+                          style={{ marginLeft: 4, padding: '3px 8px', background: '#f0fdf4', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#15803d', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <Download size={10} /> Firmado
+                        </button>
+                      )}
+                    </td>
+                    <td style={{ padding: '7px 10px' }}>
+                      {item.tiene_anexos && (
+                        <button onClick={e => { e.stopPropagation(); setSelItem(item) }}
+                          style={{ padding: '3px 8px', background: '#faf5ff', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#7c3aed', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                          <Paperclip size={10} /> {item.num_anexos > 0 ? item.num_anexos : 'Ver'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-          {/* Panel detalle */}
+          {/* Panel detalle — sibling en el flex row, no overlay */}
           {selItem && (
             <PanelDetalle item={selItem} onClose={() => setSelItem(null)} />
           )}
         </div>
       )}
 
-      {/* Paginación */}
+      {/* Paginación — siempre fuera del flex row, nunca cubierta */}
       {totalPages > 1 && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#fff', borderTop: '0.5px solid #e5e7eb', fontSize: 11, color: '#6b7280' }}>
           <span>{((page - 1) * 50) + 1}–{Math.min(page * 50, total)} de {total.toLocaleString()}</span>

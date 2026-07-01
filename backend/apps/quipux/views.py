@@ -33,6 +33,10 @@ TIPO_ENVIADO  = 1
 TIPO_RECIBIDO = 2
 TIPO_COPIA    = 3
 
+# Nombre de columna en 'anexos' que enlaza a 'radicado.radi_nome_radi'.
+# Construido con chr(117)='u' para evitar confusion visual u/o/i en editores.
+_COL_ANEX_RADI = 'anex_radi_n' + chr(117) + 'me'
+
 TIPO_MAP = {'recibidos': TIPO_RECIBIDO, 'enviados': TIPO_ENVIADO, 'copia': TIPO_COPIA}
 
 
@@ -144,18 +148,27 @@ class QuipuxDocumentosView(APIView):
                         FROM radicado r
                         {where_sql}
                     ),
+                    sibling_anexos AS (
+                        -- Cuenta anexos de TODOS los hermanos (mismo radi_nume_text),
+                        -- no solo de las filas filtradas en base.
+                        SELECT r2.radi_nume_text, COUNT(DISTINCT ax.anex_codigo) AS num_ax
+                        FROM base b
+                        JOIN radicado r2 ON r2.radi_nume_text = b.radi_nume_text
+                        JOIN anexos ax
+                               ON ax.anex_radi_nume = r2.radi_nume_radi
+                              AND ax.anex_borrado = 'N'
+                        GROUP BY r2.radi_nume_text
+                    ),
                     agg AS (
                         SELECT
                             b.radi_nume_text,
                             MAX(b.radi_nume_radi)          AS repr_id,
                             MAX(b.arch_codi)               AS best_arch_codi,
                             MAX(b.arch_codi_firma)         AS best_arch_codi_firma,
-                            COUNT(ax.anex_codigo)          AS num_anexos
+                            COALESCE(sa.num_ax, 0)         AS num_anexos
                         FROM base b
-                        LEFT JOIN anexos ax
-                               ON ax.anex_radi_nume = b.radi_nume_radi
-                              AND ax.anex_borrado = 'N'
-                        GROUP BY b.radi_nume_text
+                        LEFT JOIN sibling_anexos sa ON sa.radi_nume_text = b.radi_nume_text
+                        GROUP BY b.radi_nume_text, sa.num_ax
                     )
                     SELECT
                         b.radi_nume_radi,
@@ -172,7 +185,8 @@ class QuipuxDocumentosView(APIView):
                         b.radi_usua_actu,
                         a.best_arch_codi,
                         a.best_arch_codi_firma,
-                        a.num_anexos > 0 AS tiene_anexos
+                        a.num_anexos > 0 AS tiene_anexos,
+                        a.num_anexos
                     FROM base b
                     JOIN agg a ON b.radi_nume_radi = a.repr_id
                     ORDER BY b.radi_fech_radi DESC NULLS LAST, b.radi_nume_radi DESC
@@ -221,6 +235,7 @@ class QuipuxDocumentosView(APIView):
                 'tiene_pdf':           (r['best_arch_codi'] or 0) > 0,
                 'tiene_pdf_firmado':   (r['best_arch_codi_firma'] or 0) > 0,
                 'tiene_anexos':        bool(r.get('tiene_anexos')),
+                'num_anexos':          int(r.get('num_anexos') or 0),
                 'creador_nombre':      u.usua_nombre if u else '',
                 'area_nombre':         u.depe_nomb  if u else '',
             })
