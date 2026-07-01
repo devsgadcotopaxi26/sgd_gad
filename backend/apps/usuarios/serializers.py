@@ -69,6 +69,7 @@ class UsuarioResumenSerializer(serializers.ModelSerializer):
     nombre_completo = serializers.ReadOnlyField()
     unidad_nombre   = serializers.CharField(source='unidad.nombre', read_only=True)
     unidad_siglas   = serializers.CharField(source='unidad.siglas', read_only=True)
+    is_admin        = serializers.SerializerMethodField()
 
     class Meta:
         model  = Usuario
@@ -77,8 +78,11 @@ class UsuarioResumenSerializer(serializers.ModelSerializer):
             'nombre_completo', 'email', 'email_institucional',
             'unidad_id', 'unidad_nombre', 'unidad_siglas',
             'cargo', 'titulo', 'cargo_tipo',
-            'firma_electronica', 'activo', 'ultimo_acceso',
+            'firma_electronica', 'activo', 'ultimo_acceso', 'is_admin',
         ]
+
+    def get_is_admin(self, obj):
+        return obj.is_superuser or obj.roles.filter(rol__codigo__in=['ADMIN', 'ARCHIVO'], activo=True).exists()
 
 
 class UsuarioListSerializer(serializers.ModelSerializer):

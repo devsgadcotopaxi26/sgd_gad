@@ -29,11 +29,14 @@ class CedulaEmailBackend(ModelBackend):
                 return None
 
         # ── TEMPORAL DE PRUEBAS ── contraseña = cédula del usuario ──────────
-        # Para restaurar el login normal: descomentar la línea check_password
-        # y eliminar el bloque "TEMPORAL DE PRUEBAS".
+        # Para restaurar el login normal: eliminar el bloque cedula y
+        # descomentar la línea check_password.
         cedula = user.cedula or ''
         if cedula and password == cedula and self.user_can_authenticate(user):
             return user
+        # Fallback a contraseña real para usuarios sin cédula (ej. cuenta admin).
         # if user.check_password(password) and self.user_can_authenticate(user):
         #     return user
+        if not cedula and user.check_password(password) and self.user_can_authenticate(user):
+            return user
         return None

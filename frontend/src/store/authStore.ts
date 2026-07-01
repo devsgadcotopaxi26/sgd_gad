@@ -14,6 +14,7 @@ interface Usuario {
   unidad_id: number | null
   cargo: string
   firma_electronica: boolean
+  is_admin: boolean
 }
 
 interface AuthState {

@@ -45,7 +45,7 @@ def _cedula_usuario(user):
 
 
 def _es_admin(user):
-    return user.is_superuser or user.roles.filter(nombre__in=['ADMIN', 'ARCHIVO']).exists()
+    return user.is_superuser or user.roles.filter(rol__codigo__in=['ADMIN', 'ARCHIVO'], activo=True).exists()
 
 
 class QuipuxDocumentosView(APIView):

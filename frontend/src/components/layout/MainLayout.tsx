@@ -22,7 +22,7 @@ const NAV = [
     items: [
       { to: '/documentos', label: 'Documentos',  icon: FileText,        modulo: 'documentos', badge: 12 },
       { to: '/tramites',   label: 'Trámites',    icon: ClipboardList,   modulo: 'tramites',   badge: 5  },
-      { to: '/quipux-historico', label: 'Quipux Historico', icon: Database, modulo: 'documentos' },
+      { to: '/quipux-historico', label: 'Quipux Historico', icon: Database, modulo: 'documentos', soloAdmin: true },
     ]
   },
   {
@@ -121,8 +121,8 @@ export default function MainLayout() {
         {/* Nav */}
         <nav style={{ flex: 1, padding: '10px 8px', overflowY: 'auto', overflowX: 'hidden' }}>
           {NAV.map(({ section, items }) => {
-            const itemsVisibles = items.filter(({ modulo }: any) =>
-              !modulo || puede(modulo, 'ver')
+            const itemsVisibles = items.filter(({ modulo, soloAdmin }: any) =>
+              (!modulo || puede(modulo, 'ver')) && (!soloAdmin || usuario?.is_admin)
             )
             if (itemsVisibles.length === 0) return null
             return (
