@@ -146,12 +146,16 @@ class QuipuxDocumentosView(APIView):
                     ),
                     agg AS (
                         SELECT
-                            radi_nume_text,
-                            MAX(radi_nume_radi)      AS repr_id,
-                            MAX(arch_codi)           AS best_arch_codi,
-                            MAX(arch_codi_firma)     AS best_arch_codi_firma
-                        FROM base
-                        GROUP BY radi_nume_text
+                            b.radi_nume_text,
+                            MAX(b.radi_nume_radi)          AS repr_id,
+                            MAX(b.arch_codi)               AS best_arch_codi,
+                            MAX(b.arch_codi_firma)         AS best_arch_codi_firma,
+                            COUNT(ax.anex_codigo)          AS num_anexos
+                        FROM base b
+                        LEFT JOIN anexos ax
+                               ON ax.anex_radi_nume = b.radi_nume_radi
+                              AND ax.anex_borrado = 'N'
+                        GROUP BY b.radi_nume_text
                     )
                     SELECT
                         b.radi_nume_radi,
@@ -167,7 +171,8 @@ class QuipuxDocumentosView(APIView):
                         b.radi_usua_radi,
                         b.radi_usua_actu,
                         a.best_arch_codi,
-                        a.best_arch_codi_firma
+                        a.best_arch_codi_firma,
+                        a.num_anexos > 0 AS tiene_anexos
                     FROM base b
                     JOIN agg a ON b.radi_nume_radi = a.repr_id
                     ORDER BY b.radi_fech_radi DESC NULLS LAST, b.radi_nume_radi DESC
@@ -215,6 +220,7 @@ class QuipuxDocumentosView(APIView):
                 'radi_cuentai':        r['radi_cuentai'] or '',
                 'tiene_pdf':           (r['best_arch_codi'] or 0) > 0,
                 'tiene_pdf_firmado':   (r['best_arch_codi_firma'] or 0) > 0,
+                'tiene_anexos':        bool(r.get('tiene_anexos')),
                 'creador_nombre':      u.usua_nombre if u else '',
                 'area_nombre':         u.depe_nomb  if u else '',
             })

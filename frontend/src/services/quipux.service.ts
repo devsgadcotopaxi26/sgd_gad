@@ -14,6 +14,7 @@ export interface QuipuxDocumento {
   radi_cuentai: string
   tiene_pdf: boolean
   tiene_pdf_firmado: boolean
+  tiene_anexos: boolean
   creador_nombre: string
   area_nombre: string
 }

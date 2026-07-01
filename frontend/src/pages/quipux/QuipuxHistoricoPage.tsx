@@ -393,10 +393,12 @@ export default function QuipuxHistoricoPage() {
                     )}
                   </td>
                   <td style={{ padding: '7px 10px' }}>
-                    <button onClick={e => { e.stopPropagation(); setSelItem(item) }}
-                      style={{ padding: '3px 8px', background: '#faf5ff', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#7c3aed', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                      <Paperclip size={10} /> Ver
-                    </button>
+                    {item.tiene_anexos && (
+                      <button onClick={e => { e.stopPropagation(); setSelItem(item) }}
+                        style={{ padding: '3px 8px', background: '#faf5ff', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#7c3aed', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <Paperclip size={10} /> Ver
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
