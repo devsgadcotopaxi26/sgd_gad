@@ -75,7 +75,9 @@ class QuipuxDocumentosView(APIView):
         where_parts = []
         params: list = []
 
-        if not es_admin and cedula:
+        if cedula:
+            # Siempre filtrar por cédula — incluso para admins del SGD.
+            # El rol admin solo controla el acceso a la página, no la visibilidad de docs.
             tipo_filtro = TIPO_MAP.get(bandeja)
             if tipo_filtro:
                 where_parts.append(
@@ -91,6 +93,7 @@ class QuipuxDocumentosView(APIView):
                 )
                 params.append(cedula)
         elif es_admin and bandeja and bandeja != 'todos':
+            # Cuenta sin cédula (admin sistema): filtrar solo por tipo de bandeja.
             tipo_filtro = TIPO_MAP.get(bandeja)
             if tipo_filtro:
                 where_parts.append(
