@@ -29,7 +29,7 @@ const NAV = [
     section: 'Organización',
     items: [
       { to: '/archivo',    label: 'Archivo',     icon: Archive,         modulo: 'archivo'    },
-      { to: '/organigrama',label: 'Organigrama', icon: Building2,       modulo: ''           },
+      { to: '/organigrama',label: 'Organigrama', icon: Building2,       modulo: 'organigrama'},
       { to: '/usuarios',   label: 'Usuarios',    icon: Users,           modulo: 'usuarios'   },
       { to: '/permisos', label: 'Permisos', icon: Shield, modulo: 'usuarios' },
       { to: '/archivo/cuadro-clasificacion', label: 'Cuadro de Clasificación', icon: FolderTree, modulo: 'archivo' },
@@ -43,8 +43,8 @@ const NAV = [
     section: 'Sistema',
     items: [
       { to: '/reportes',   label: 'Reportes',    icon: BarChart2,       modulo: 'reportes'   },
-      { to: '/auditoria',  label: 'Auditoría',   icon: Shield,          modulo: ''           },
-      { to: '/ajustes',    label: 'Ajustes',     icon: Settings,        modulo: ''           },
+      { to: '/auditoria',  label: 'Auditoría',   icon: Shield,          modulo: 'usuarios'   },
+      { to: '/ajustes',    label: 'Ajustes',     icon: Settings,        modulo: 'ajustes'    },
     ]
   },
 ]
