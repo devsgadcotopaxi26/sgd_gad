@@ -90,6 +90,22 @@ function PanelDetalle({ item, onClose }: { item: QuipuxDocumento; onClose: () =>
       </div>
     ) : null
 
+  // Parsea el HTML de radi_nomb_usua_firma (tabla Quipux) y extrae los datos.
+  // Estructura: <table><tr><th>Cédula<th>Nombre<th>Institución<th>Cargo<th>Fecha</tr><tr><td>...</td>...
+  function parsarFirmaHtml(html: string): { cedula: string; nombre: string; cargo: string; fecha: string } | null {
+    if (!html || !html.includes('<')) return null
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+    const tds = Array.from(doc.querySelectorAll('td'))
+    if (tds.length < 2) return null
+    return {
+      cedula: tds[0]?.textContent?.trim() ?? '',
+      nombre: tds[1]?.textContent?.trim() ?? '',
+      cargo:  tds[3]?.textContent?.trim() ?? '',
+      fecha:  tds[4]?.textContent?.trim() ?? '',
+    }
+  }
+
   const tabs = [
     { id: 'info', label: 'Información' },
     { id: 'recorrido', label: 'Recorrido' },
@@ -148,13 +164,25 @@ function PanelDetalle({ item, onClose }: { item: QuipuxDocumento; onClose: () =>
                 {labelRow('Área', doc.creador.area)}
               </>
             )}
-            {doc.radi_nomb_usua_firma && (
-              <>
-                <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#9ca3af', letterSpacing: 1 }}>Firma</div>
-                {labelRow('Firmado por', doc.radi_nomb_usua_firma)}
-                {labelRow('Fecha firma', doc.radi_fech_firma ? new Date(doc.radi_fech_firma).toLocaleDateString('es-EC') : '')}
-              </>
-            )}
+            {doc.radi_nomb_usua_firma && (() => {
+              const firma = parsarFirmaHtml(doc.radi_nomb_usua_firma)
+              return (
+                <>
+                  <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#9ca3af', letterSpacing: 1 }}>Firma</div>
+                  {firma ? (
+                    <div style={{ background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
+                      <p style={{ fontWeight: 700, color: '#0f6e56', margin: '0 0 3px' }}>✓ {firma.nombre}</p>
+                      {firma.cedula && <p style={{ color: '#374151', margin: '0 0 2px' }}>CI: {firma.cedula}</p>}
+                      {firma.cargo && <p style={{ color: '#6b7280', margin: '0 0 2px' }}>{firma.cargo}</p>}
+                      {firma.fecha && <p style={{ color: '#9ca3af', margin: 0, fontSize: 10 }}>{firma.fecha}</p>}
+                    </div>
+                  ) : (
+                    labelRow('Firmado por', doc.radi_nomb_usua_firma)
+                  )}
+                  {labelRow('Fecha firma', doc.radi_fech_firma ? new Date(doc.radi_fech_firma).toLocaleDateString('es-EC') : '')}
+                </>
+              )
+            })()}
 
             {/* Acciones PDF */}
             <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
