@@ -89,6 +89,7 @@ class UsuarioListSerializer(serializers.ModelSerializer):
     nombre_completo = serializers.ReadOnlyField()
     unidad_nombre   = serializers.CharField(source='unidad.nombre', read_only=True)
     unidad_siglas   = serializers.CharField(source='unidad.siglas', read_only=True)
+    roles           = serializers.SerializerMethodField()
 
     class Meta:
         model  = Usuario
@@ -96,7 +97,14 @@ class UsuarioListSerializer(serializers.ModelSerializer):
             'id', 'uuid', 'tipo', 'cedula', 'nombre_completo',
             'email', 'email_institucional', 'unidad_id',
             'unidad_nombre', 'unidad_siglas', 'cargo', 'titulo', 'cargo_tipo',
-            'firma_electronica', 'activo', 'bloqueado', 'creado_en',
+            'firma_electronica', 'activo', 'bloqueado', 'creado_en', 'roles',
+        ]
+
+    def get_roles(self, obj):
+        return [
+            {'id': ur.id, 'rol': ur.rol_id, 'rol_codigo': ur.rol.codigo,
+             'rol_nombre': ur.rol.nombre, 'activo': ur.activo}
+            for ur in obj.roles.filter(activo=True).select_related('rol')
         ]
 
 

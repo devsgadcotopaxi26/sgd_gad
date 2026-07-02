@@ -22,7 +22,7 @@ const NAV = [
     items: [
       { to: '/documentos', label: 'Documentos',  icon: FileText,        modulo: 'documentos', badge: 12 },
       { to: '/tramites',   label: 'Trámites',    icon: ClipboardList,   modulo: 'tramites',   badge: 5  },
-      { to: '/quipux-historico', label: 'Quipux Historico', icon: Database, modulo: 'documentos', soloAdmin: true },
+      { to: '/quipux-historico', label: 'Quipux Historico', icon: Database, modulo: 'documentos' },
     ]
   },
   {

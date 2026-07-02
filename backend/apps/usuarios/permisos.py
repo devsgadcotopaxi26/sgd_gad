@@ -104,6 +104,12 @@ def get_permisos_usuario(usuario) -> dict:
         for modulo in PERMISOS_ROL['ADMIN']:
             permisos[modulo] = set(PERMISOS_ROL['ADMIN'][modulo])
 
+    # Fallback: cualquier funcionario sin roles asignados recibe permisos
+    # minimos de SOLO_LECTURA para poder acceder al sistema (documentos, Quipux).
+    if not permisos and getattr(usuario, 'tipo', '') == 'funcionario':
+        for modulo, acciones in PERMISOS_ROL['SOLO_LECTURA'].items():
+            permisos[modulo] = set(acciones)
+
     return {modulo: list(acciones) for modulo, acciones in permisos.items()}
 
 
