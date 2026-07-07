@@ -55,6 +55,21 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(creado_por=self.request.user)
 
+    def perform_update(self, serializer):
+        serializer.save()
+        doc = serializer.instance
+        dest_nombres = getattr(doc, '_dest_nombres_actualizados', None)
+        obs = 'Documento modificado'
+        if dest_nombres:
+            obs += f' — Destinatario(s) actualizados: {", ".join(dest_nombres)}'
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'elaborado',
+            usuario     = self.request.user,
+            unidad      = getattr(self.request.user, 'unidad', None),
+            observacion = obs,
+        )
+
     @action(detail=True, methods=['post'], url_path='cambiar_estado')
     def cambiar_estado(self, request, pk=None):
         doc          = self.get_object()
@@ -69,6 +84,25 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         if nuevo_estado == 'archivado' and not doc.fecha_archivo:
             doc.fecha_archivo = timezone.now()
         doc.save()
+
+        _estado_a_etapa = {
+            'enviado':    'enviado',
+            'archivado':  'archivado',
+            'firmado':    'firmado',
+            'recibido':   'recibido',
+            'en_revision': 'elaborado',
+            'borrador':   'elaborado',
+            'aprobado':   'elaborado',
+        }
+        etapa = _estado_a_etapa.get(nuevo_estado)
+        if etapa:
+            SeguimientoDocumento.objects.create(
+                documento   = doc,
+                etapa       = etapa,
+                usuario     = request.user,
+                unidad      = getattr(request.user, 'unidad', None),
+                observacion = request.data.get('observacion', f'Estado cambiado a {nuevo_estado}'),
+            )
         return Response(DocumentoListSerializer(doc).data)
 
     @action(detail=True, methods=['post'], url_path='anular')
@@ -101,6 +135,16 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         doc.fecha_firma = timezone.now()
         doc.firmado_por = request.user
         doc.save(update_fields=['firma_bce_info', 'estado', 'fecha_firma', 'firmado_por'])
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'firmado',
+            usuario     = request.user,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = (
+                f"Firma electrónica — {info_firma.get('firmado_por', '')} "
+                f"({info_firma.get('entidad_cert', 'BCE')})"
+            ).strip(),
+        )
         return Response({
             'detail': 'Documento firmado correctamente.',
             'firma_bce_info': doc.firma_bce_info,
@@ -184,6 +228,16 @@ Gobierno Autónomo Descentralizado Provincial de Cotopaxi
         doc.cuerpo        = version.cuerpo
         doc.modificado_en = timezone.now()
         doc.save(update_fields=['cuerpo', 'modificado_en'])
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'elaborado',
+            usuario     = request.user,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = (
+                f'Versión {version.numero_version} guardada'
+                + (f' — {version.comentario}' if version.comentario else '')
+            ),
+        )
         return Response(VersionSerializer(version).data)
 
     @action(detail=True, methods=['get'], url_path='bandeja')
@@ -194,12 +248,35 @@ Gobierno Autónomo Descentralizado Provincial de Cotopaxi
         ).distinct()
         return Response(DocumentoListSerializer(docs, many=True).data)
 
+def _es_admin_bandeja(user):
+    return user.is_superuser or user.roles.filter(
+        rol__codigo__in=['ADMIN'], activo=True
+    ).exists()
+
+
+def _resolver_usuario_bandeja(request):
+    """
+    Devuelve el usuario cuya bandeja se debe mostrar.
+    Admin puede pasar ?usuario_id=N para ver la bandeja de otro usuario.
+    """
+    usuario_id = request.query_params.get('usuario_id', '').strip()
+    if usuario_id and _es_admin_bandeja(request.user):
+        from django.contrib.auth import get_user_model
+        Usuario = get_user_model()
+        try:
+            return Usuario.objects.get(id=int(usuario_id))
+        except (Usuario.DoesNotExist, ValueError):
+            pass
+    return request.user
+
+
 class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        usuario = _resolver_usuario_bandeja(self.request)
         return BandejaDocumento.objects.filter(
-            usuario=self.request.user
+            usuario=usuario
         ).select_related('documento__tipo_documento', 'documento__unidad_origen', 'unidad')
 
     def get_serializer_class(self):
@@ -208,24 +285,25 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='conteos')
     def conteos(self, request):
-        qs = BandejaDocumento.objects.filter(usuario=request.user)
-        from django.db.models import Count
+        usuario = _resolver_usuario_bandeja(request)
+        qs = BandejaDocumento.objects.filter(usuario=usuario)
         resultado = {}
         for bandeja, _ in BandejaDocumento.BANDEJA_CHOICES:
-            total   = qs.filter(bandeja=bandeja).count()
+            total     = qs.filter(bandeja=bandeja).count()
             no_leidos = qs.filter(bandeja=bandeja, leido=False).count()
             resultado[bandeja] = {'total': total, 'no_leidos': no_leidos}
         return Response(resultado)
 
     @action(detail=False, methods=['get'], url_path='por_bandeja')
     def por_bandeja(self, request):
+        usuario = _resolver_usuario_bandeja(request)
         bandeja = request.query_params.get('bandeja', 'recibidos')
         tipo    = request.query_params.get('tipo', '')
         leido   = request.query_params.get('leido', '')
         search  = request.query_params.get('search', '')
 
         qs = BandejaDocumento.objects.filter(
-            usuario=request.user, bandeja=bandeja
+            usuario=usuario, bandeja=bandeja
         ).select_related(
             'documento__tipo_documento',
             'documento__unidad_origen',
@@ -421,11 +499,24 @@ class EnviarDocumentoView(viewsets.GenericViewSet):
                 bandeja   = 'enviados',
             )
 
+        from apps.usuarios.models import Usuario as _Usuario
+        _dest_nombres = []
+        for d in destinatarios_internos:
+            try:
+                _u = _Usuario.objects.get(pk=d.get('usuario_id'))
+                _dest_nombres.append(_u.nombre_completo)
+            except Exception:
+                pass
+        _obs_envio = (
+            ('Enviado a: ' + ', '.join(_dest_nombres) if _dest_nombres else 'Enviado')
+            + (f' — {instrucciones}' if instrucciones else '')
+        )
         SeguimientoDocumento.objects.create(
             documento   = doc,
             etapa       = 'enviado',
             usuario     = request.user,
-            observacion = instrucciones,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = _obs_envio,
         )
 
         return Response({'detail': f'Documento {doc.numero_documento} enviado correctamente.'})
@@ -719,149 +810,167 @@ class DigitalizacionMasivaView(APIView):
 
 
 # ─────────────────────────────────────────────────────────
-# FirmaEC — integración con la app de firma del gobierno EC
+# FirmaEC — integración vía FirmaDigital service stack
+# ─────────────────────────────────────────────────────────
+#
+# Flujo:
+#  1. SGD llama POST /servicio/documentos → recibe JWT token
+#  2. SGD genera deep-link firmaec:// apuntando al API proxy (puerto 8089)
+#  3. FirmaEC descarga PDF vía API proxy → usuario firma con P12
+#  4. FirmaEC envía PDF firmado al API proxy → servicio llama callback
+#  5. Django FirmaECCallbackView recibe el PDF firmado y lo guarda
 # ─────────────────────────────────────────────────────────
 
-import jwt as pyjwt
 import base64
 import os as _os
+import requests as _requests
 
-_FIRMAEC_SISTEMA  = _os.environ.get('FIRMAEC_SISTEMA',  'sgdGadCotopaxi')
-_FIRMAEC_SECRET   = _os.environ.get('FIRMAEC_SECRET',   'sgd-gad-cotopaxi-firmaec-2026-secreto')
-# URL pública que FirmaEC usará para bajar/subir documentos.
-# Debe ser accesible desde la PC del firmante (HTTPS recomendado para FirmaEC 5.x).
-# Ejemplo: FIRMAEC_BASE_URL=https://sgd.cotopaxi.gob.ec/api/v1/documentos/firmaec
-# Si no se configura, se usa la URL del request (funciona en localhost con HTTP).
-_FIRMAEC_BASE_URL = _os.environ.get('FIRMAEC_BASE_URL', '')
+_FIRMAEC_SISTEMA        = _os.environ.get('FIRMAEC_SISTEMA',       'sgd-gad')
+_FIRMAEC_API_KEY        = _os.environ.get('FIRMAEC_API_KEY',       'sgd-gad-firma2026')
+_FIRMAEC_CALLBACK_KEY   = _os.environ.get('FIRMAEC_CALLBACK_KEY',  'sgd-gad-callback-2026')
+# URL interna del FirmaDigital servicio (dentro de la red Docker)
+_FIRMAEC_SERVICIO_URL   = _os.environ.get('FIRMAEC_SERVICIO_URL',  'http://firmadigital_servicio:8080/servicio')
+# URL pública del FirmaDigital API proxy — accesible desde la PC del firmante
+_FIRMAEC_API_URL        = _os.environ.get('FIRMAEC_API_URL',       'http://localhost:8089/api')
+
+
+def _pdf_limpio(pdf_bytes: bytes) -> bytes:
+    """Convierte PDF de WeasyPrint (con /ObjStm) a xref clásico que FirmaEC puede firmar."""
+    try:
+        import pypdf as _pypdf
+        import io as _io2
+        reader = _pypdf.PdfReader(_io2.BytesIO(pdf_bytes))
+        writer = _pypdf.PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
+        out = _io2.BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        return pdf_bytes
 
 
 class GenerarTokenFirmaECView(APIView):
-    """Autenticado — genera el URL firmaec:// para abrir la app FirmaEC."""
+    """
+    Autenticado — genera el URL firmaec:// para abrir la app FirmaEC.
+    POST /api/v1/documentos/{id}/firmaec/generar-token/
+    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         from django.shortcuts import get_object_or_404
-        from datetime import datetime, timedelta
+        from .plantillas import html_documento_oficial
+        from apps.auditoria.reportes import generar_pdf as _generar_pdf
 
         doc = get_object_or_404(Documento, pk=pk)
         cedula = getattr(request.user, 'cedula', '') or str(request.user.id)
 
+        # 1. Generar PDF limpio (sin /ObjStm); pre_firma=True incluye la leyenda
+        #    "Documento firmado electrónicamente" antes de que FirmaEC lo firme
+        html      = html_documento_oficial(doc, pre_firma=True)
+        pdf_bytes = _pdf_limpio(_generar_pdf(html, f'doc_{doc.id}.pdf').content)
+        pdf_b64   = base64.b64encode(pdf_bytes).decode('utf-8')
+        nombre    = f'doc_{doc.id}.pdf'
+
+        # 2. Registrar documento en FirmaDigital servicio
         payload = {
-            'cedula':  cedula,
-            'sistema': _FIRMAEC_SISTEMA,
-            'ids':     str(pk),
-            'exp':     datetime.utcnow() + timedelta(minutes=30),
+            'cedula':    cedula,
+            'sistema':   _FIRMAEC_SISTEMA,
+            'documentos': [{'nombre': nombre, 'documento': pdf_b64}],
         }
-        token = pyjwt.encode(payload, _FIRMAEC_SECRET, algorithm='HS512')
+        try:
+            resp = _requests.post(
+                f'{_FIRMAEC_SERVICIO_URL}/documentos',
+                json=payload,
+                headers={'X-API-KEY': _FIRMAEC_API_KEY},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            token = resp.text.strip()
+        except Exception as exc:
+            return Response(
+                {'error': f'No se pudo registrar documento en FirmaDigital: {exc}'},
+                status=502,
+            )
 
-        # Usar FIRMAEC_BASE_URL si está configurada; si no, construir desde el request.
-        # NO hacer quote() — FirmaEC espera la URL sin codificar (igual que Quipux).
-        if _FIRMAEC_BASE_URL:
-            api_url = _FIRMAEC_BASE_URL.rstrip('/')
-        else:
-            api_url = request.build_absolute_uri('/api/v1/documentos/firmaec')
-
+        # 3. Generar deep-link para FirmaEC
+        # iText 7 Rectangle(x, y, width, height):
+        #   llx = x origen (desde borde izq, en pts PDF)
+        #   lly = y origen (desde borde inf, en pts PDF)
+        #   urx = ANCHO del sello  (no es la coord superior-derecha)
+        #   ury = ALTO del sello
+        # A4 = 595x842 pts. Sello derecho: 175x65 pts ≈ 6.2x2.3 cm
         firmaec_url = (
-            f"firmaec://{_FIRMAEC_SISTEMA}/firmar"
-            f"?token={token}"
-            f"&tipo_certificado=2"
-            f"&llx=222&lly=85&urx=422&ury=49"
-            f"&url={api_url}"
+            f'firmaec://{_FIRMAEC_SISTEMA}/firmar'
+            f'?token={token}'
+            f'&tipo_certificado=2'
+            f'&llx=360&lly=80&urx=175&ury=65'
+            f'&url={_FIRMAEC_API_URL}'
         )
-        return Response({'firmaec_url': firmaec_url, 'token': token, 'api_url': api_url})
+        return Response({'firmaec_url': firmaec_url, 'token': token, 'api_url': _FIRMAEC_API_URL})
 
 
-class BajarDocumentoFirmaECView(APIView):
+class FirmaECCallbackView(APIView):
     """
-    Sin autenticación JWT — FirmaEC descarga el PDF a firmar.
-    GET /api/v1/documentos/firmaec/bajar_documento/?sistema=...&tokenJwt=...
-    """
-    permission_classes = []
-    authentication_classes = []
-
-    def get(self, request):
-        token = request.query_params.get('tokenJwt') or request.query_params.get('token')
-        if not token:
-            return Response({'error': 'Token requerido'}, status=400)
-        try:
-            payload = pyjwt.decode(token, _FIRMAEC_SECRET, algorithms=['HS512'])
-        except pyjwt.ExpiredSignatureError:
-            return Response({'error': 'Token expirado'}, status=401)
-        except pyjwt.InvalidTokenError:
-            return Response({'error': 'Token inválido'}, status=401)
-
-        doc_id = payload.get('ids')
-        try:
-            doc = Documento.objects.select_related(
-                'tipo_documento', 'unidad_origen', 'creado_por', 'firmado_por'
-            ).get(pk=doc_id)
-        except Documento.DoesNotExist:
-            return Response({'error': 'Documento no encontrado'}, status=404)
-
-        from .plantillas import html_documento_oficial
-        from apps.auditoria.reportes import generar_pdf as _generar_pdf
-        html = html_documento_oficial(doc)
-        pdf_response = _generar_pdf(html, f'{doc.id}.pdf')
-        pdf_bytes = pdf_response.content
-
-        # FirmaEC no puede insertar firma digital en PDFs con /ObjStm (object streams
-        # comprimidos que genera WeasyPrint). Re-escribir con pypdf produce un PDF
-        # con tabla xref clasica que FirmaEC puede procesar.
-        try:
-            import pypdf as _pypdf
-            import io as _io2
-            _reader = _pypdf.PdfReader(_io2.BytesIO(pdf_bytes))
-            _writer = _pypdf.PdfWriter()
-            for _page in _reader.pages:
-                _writer.add_page(_page)
-            _out = _io2.BytesIO()
-            _writer.write(_out)
-            pdf_bytes = _out.getvalue()
-        except Exception:
-            pass  # si falla, enviar PDF original
-
-        doc_b64 = base64.b64encode(pdf_bytes).decode('utf-8')
-        return Response({
-            'documentos_recibidos': [{
-                'id':        str(doc.id),
-                'nombre':    f'{doc.numero_documento or f"doc_{doc.id}"}.pdf',
-                'documento': doc_b64,
-            }]
-        })
-
-
-class GuardarDocumentoFirmaECView(APIView):
-    """
-    Sin autenticación JWT — FirmaEC envía el PDF firmado.
-    POST /api/v1/documentos/firmaec/guardar_documento/
-    Body JSON: { tokenJwt, sistema, documentos_firmados: [{id, nombre, documento (b64)}] }
+    Sin autenticación JWT — FirmaDigital servicio llama aquí con el PDF firmado.
+    POST /api/v1/documentos/firmaec/callback/
+    Header X-API-KEY debe coincidir con FIRMAEC_CALLBACK_KEY.
+    Body JSON: {cedula, nombreDocumento, archivo(b64), certificado:[...], firmasValidas, ...}
+    Responde "OK" o "ERROR" (texto plano, tal como espera FirmaDigital).
     """
     permission_classes = []
     authentication_classes = []
 
     def post(self, request):
-        token = request.data.get('tokenJwt') or request.data.get('token')
-        documentos_firmados = request.data.get('documentos_firmados', [])
+        from django.http import HttpResponse
+        from apps.usuarios.models import Usuario
+        from django.core.files.base import ContentFile
 
-        if not token:
-            return Response({'error': 'Token requerido'}, status=400)
+        api_key = request.headers.get('X-API-KEY', '')
+        if api_key != _FIRMAEC_CALLBACK_KEY:
+            return HttpResponse('ERROR', content_type='text/plain', status=403)
+
+        cedula           = request.data.get('cedula', '')
+        nombre_documento = request.data.get('nombreDocumento', '')
+        archivo_b64      = request.data.get('archivo', '')
+        certificados     = request.data.get('certificado', [])
+        firmas_validas   = request.data.get('firmasValidas', True)
+        integridad_doc   = request.data.get('integridadDocumento', True)
+
+        if not archivo_b64:
+            return HttpResponse('ERROR', content_type='text/plain', status=400)
+
+        # Validar integridad de la firma reportada por FirmaDigital
+        if not firmas_validas or not integridad_doc:
+            return HttpResponse('ERROR', content_type='text/plain', status=422)
+
+        # Validar que la cédula del certificado coincida con la cédula registrada
+        cert_info = certificados[0] if certificados else {}
+        cedula_cert = cert_info.get('cedula', '')
+        if cedula_cert and cedula and cedula_cert != cedula:
+            # El certificado usado no pertenece al usuario que inició la firma
+            return HttpResponse('ERROR', content_type='text/plain', status=403)
+
+        # Extraer doc_id del nombre del archivo: "doc_123.pdf" → 123
+        doc_id = None
         try:
-            payload = pyjwt.decode(token, _FIRMAEC_SECRET, algorithms=['HS512'])
-        except pyjwt.ExpiredSignatureError:
-            return Response({'error': 'Token expirado'}, status=401)
-        except pyjwt.InvalidTokenError:
-            return Response({'error': 'Token inválido'}, status=401)
+            partes = nombre_documento.replace('.pdf', '').split('_')
+            doc_id = int(partes[-1])
+        except (ValueError, IndexError):
+            pass
 
-        doc_id = payload.get('ids')
-        cedula = payload.get('cedula', '')
+        if not doc_id:
+            return HttpResponse('ERROR', content_type='text/plain', status=400)
 
         try:
             doc = Documento.objects.get(pk=doc_id)
         except Documento.DoesNotExist:
-            return Response({'error': 'Documento no encontrado'}, status=404)
+            return HttpResponse('ERROR', content_type='text/plain', status=404)
 
-        from apps.usuarios.models import Usuario
-        from django.core.files.base import ContentFile
+        try:
+            pdf_bytes = base64.b64decode(archivo_b64)
+        except Exception:
+            return HttpResponse('ERROR', content_type='text/plain', status=400)
 
         usuario = None
         if cedula:
@@ -870,35 +979,36 @@ class GuardarDocumentoFirmaECView(APIView):
             except Usuario.DoesNotExist:
                 pass
 
-        for item in documentos_firmados:
-            contenido_b64 = item.get('documento') or item.get('contenido', '')
-            if not contenido_b64:
-                continue
-            try:
-                pdf_bytes = base64.b64decode(contenido_b64)
-            except Exception:
-                continue
+        # Eliminar versiones firmadas anteriores (re-firma o reintento)
+        doc.archivos_adjuntos.filter(tipo='documento').delete()
 
-            nombre_archivo = f'{doc.numero_documento or f"doc_{doc.id}"}_firmado_firmaec.pdf'
-            adjunto = AdjuntoDocumento(
-                documento  = doc,
-                nombre     = nombre_archivo,
-                tipo       = 'documento',
-                mime_type  = 'application/pdf',
-                tamanio    = len(pdf_bytes),
-                subido_por = usuario,
-                origen_digitalizacion = 'nativo_digital',
-            )
-            adjunto.archivo.save(nombre_archivo, ContentFile(pdf_bytes))
-            adjunto.save()
+        nombre_archivo = f'{doc.numero_documento or f"doc_{doc.id}"}_firmado_firmaec.pdf'
+        adjunto = AdjuntoDocumento(
+            documento  = doc,
+            nombre     = nombre_archivo,
+            tipo       = 'documento',
+            mime_type  = 'application/pdf',
+            tamanio    = len(pdf_bytes),
+            subido_por = usuario,
+            origen_digitalizacion = 'nativo_digital',
+        )
+        adjunto.archivo.save(nombre_archivo, ContentFile(pdf_bytes))
+        adjunto.save()
 
-        doc.estado     = 'firmado'
+        doc.estado      = 'firmado'
         doc.fecha_firma = timezone.now()
         doc.firma_bce_info = {
-            'metodo':      'firmaec',
-            'cedula':      cedula,
-            'fecha_firma': timezone.now().isoformat(),
-            'firmado_por': usuario.nombre_completo if usuario else cedula,
+            'metodo':       'firmaec',
+            'cedula':       cedula,
+            'fecha_firma':  timezone.now().isoformat(),
+            'firmado_por':  usuario.nombre_completo if usuario else cedula,
+            'nombre':       cert_info.get('nombre', ''),
+            'apellido':     cert_info.get('apellido', ''),
+            'cargo':        cert_info.get('cargo', ''),
+            'institucion':  cert_info.get('institucion', ''),
+            'entidad_cert': cert_info.get('entidadCertificadora', ''),
+            'serial':       cert_info.get('serial', ''),
+            'valido_hasta': cert_info.get('validoHasta', ''),
         }
         if usuario:
             doc.firmado_por = usuario
@@ -909,9 +1019,10 @@ class GuardarDocumentoFirmaECView(APIView):
                 documento   = doc,
                 etapa       = 'firmado',
                 usuario     = usuario,
-                observacion = 'Firmado con FirmaEC',
+                observacion = 'Firmado con FirmaEC (FirmaDigital)',
             )
-        return Response({'mensaje': 'Documento firmado y guardado correctamente.'})
+
+        return HttpResponse('OK', content_type='text/plain')
 
 
 class FirmaFisicaView(APIView):

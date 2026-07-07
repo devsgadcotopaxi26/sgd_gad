@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  firmadigital-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: firmadigital-api
+    ports:
+      - "8080:8080" # Puerto HTTP del API
+    environment:
+      - TZ=America/Guayaquil
+    restart: unless-stopped

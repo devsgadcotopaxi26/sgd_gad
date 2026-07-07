@@ -9,7 +9,7 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenVerifyView,
 )
-from apps.usuarios.views import LoginView
+from apps.usuarios.views import LoginView, LogoutView
 
 API_V1 = 'api/v1/'
 
@@ -18,6 +18,7 @@ urlpatterns = [
 
     # JWT Auth
     path(API_V1 + 'auth/login/',   LoginView.as_view(),            name='token_obtain_pair'),
+    path(API_V1 + 'auth/logout/',  LogoutView.as_view(),           name='token_logout'),
     path(API_V1 + 'auth/refresh/', TokenRefreshView.as_view(),     name='token_refresh'),
     path(API_V1 + 'auth/verify/',  TokenVerifyView.as_view(),      name='token_verify'),
 

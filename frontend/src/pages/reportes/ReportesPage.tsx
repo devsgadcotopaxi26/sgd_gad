@@ -10,34 +10,40 @@ import api from '@/services/api'
 
 const REPORTES = [
   {
-    id:          'tramites',
-    titulo:      'Reporte de trámites',
-    descripcion: 'Lista completa de trámites con estados, plazos y ciudadanos',
-    icon:        ClipboardList,
-    color:       '#002f6c',
-    bg:          '#e8f1fd',
-    endpoint:    '/auditoria/reportes/tramites/',
-    filename:    'reporte_tramites.pdf',
+    id:           'tramites',
+    titulo:       'Reporte de trámites',
+    descripcion:  'Lista completa de trámites con estados, plazos y ciudadanos',
+    icon:         ClipboardList,
+    color:        '#002f6c',
+    bg:           '#e8f1fd',
+    endpoint:     '/auditoria/reportes/tramites/',
+    endpointXlsx: '/auditoria/reportes/tramites/excel/',
+    filename:     'reporte_tramites.pdf',
+    filenameXlsx: 'reporte_tramites.xlsx',
   },
   {
-    id:          'documentos',
-    titulo:      'Reporte de documentos',
-    descripcion: 'Oficios, memorandos y circulares con estados y firmas',
-    icon:        FileText,
-    color:       '#5b3a8c',
-    bg:          '#f0ebf9',
-    endpoint:    '/auditoria/reportes/documentos/',
-    filename:    'reporte_documentos.pdf',
+    id:           'documentos',
+    titulo:       'Reporte de documentos',
+    descripcion:  'Oficios, memorandos y circulares con estados y firmas',
+    icon:         FileText,
+    color:        '#5b3a8c',
+    bg:           '#f0ebf9',
+    endpoint:     '/auditoria/reportes/documentos/',
+    endpointXlsx: '/auditoria/reportes/documentos/excel/',
+    filename:     'reporte_documentos.pdf',
+    filenameXlsx: 'reporte_documentos.xlsx',
   },
   {
-    id:          'kpi',
-    titulo:      'KPIs por unidad',
-    descripcion: 'Indicadores de desempeño y cumplimiento por dirección',
-    icon:        BarChart2,
-    color:       '#0f6e56',
-    bg:          '#e1f5ee',
-    endpoint:    '/auditoria/reportes/kpi-unidades/',
-    filename:    'reporte_kpi.pdf',
+    id:           'kpi',
+    titulo:       'KPIs por unidad',
+    descripcion:  'Indicadores de desempeño y cumplimiento por dirección',
+    icon:         BarChart2,
+    color:        '#0f6e56',
+    bg:           '#e1f5ee',
+    endpoint:     '/auditoria/reportes/kpi-unidades/',
+    endpointXlsx: '/auditoria/reportes/kpi-unidades/excel/',
+    filename:     'reporte_kpi.pdf',
+    filenameXlsx: 'reporte_kpi.xlsx',
   },
 ]
 
@@ -62,6 +68,7 @@ export default function ReportesPage() {
   const [filtros, setFiltros] = useState<Record<string, string>>({})
   const [generando, setGenerando] = useState<string | null>(null)
   const [generados, setGenerados] = useState<string[]>([])
+  const [generandoXlsx, setGenerandoXlsx] = useState<string | null>(null)
 
   const { data: tipos }    = useQuery({ queryKey: ['tipos-doc'],     queryFn: documentosService.tipos })
   const { data: unidades } = useQuery({ queryKey: ['unidades-select'], queryFn: () => organizacionService.select() })
@@ -69,6 +76,24 @@ export default function ReportesPage() {
   const setFiltro = (k: string, v: string) => setFiltros(f => ({ ...f, [k]: v }))
 
   const inputCls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
+
+  const generarExcel = async (reporte: typeof REPORTES[0]) => {
+    setGenerandoXlsx(reporte.id)
+    try {
+      const params = new URLSearchParams()
+      Object.entries(filtros).forEach(([k, v]) => { if (v) params.append(k, v) })
+      const resp = await api.get(`${reporte.endpointXlsx}?${params.toString()}`, { responseType: 'blob' })
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(new Blob([resp.data]))
+      link.download = reporte.filenameXlsx
+      link.click()
+      URL.revokeObjectURL(link.href)
+    } catch (e) {
+      console.error('Error generando Excel:', e)
+    } finally {
+      setGenerandoXlsx(null)
+    }
+  }
 
   const generarPDF = async (reporte: typeof REPORTES[0]) => {
     setGenerando(reporte.id)
@@ -200,25 +225,27 @@ export default function ReportesPage() {
                 </div>
               )}
 
-              {/* Botón generar */}
-              <div className="px-5 pb-5">
+              {/* Botones generar */}
+              <div className="px-5 pb-5 flex gap-2">
                 <button
                   onClick={() => generarPDF(r)}
                   disabled={!!cargando}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white transition-all"
-                  style={{
-                    background: ok ? '#0f6e56' : cargando ? '#9ca3af' : r.color,
-                    cursor: cargando ? 'not-allowed' : 'pointer',
-                  }}>
-                  {ok ? (
-                    <><CheckCircle size={15} /> Descargado</>
-                  ) : cargando ? (
-                    <><span className="w-4 h-4 border-2 rounded-full animate-spin"
-                      style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} />
-                      Generando PDF...</>
-                  ) : (
-                    <><Download size={15} /> Generar PDF</>
-                  )}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white transition-all"
+                  style={{ background: ok ? '#0f6e56' : cargando ? '#9ca3af' : r.color, cursor: cargando ? 'not-allowed' : 'pointer' }}>
+                  {ok ? <><CheckCircle size={15} /> PDF listo</> :
+                   cargando ? <><span className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} /> PDF...</> :
+                   <><Download size={15} /> PDF</>}
+                </button>
+                <button
+                  onClick={() => generarExcel(r)}
+                  disabled={generandoXlsx === r.id}
+                  title="Exportar a Excel"
+                  className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold transition-all"
+                  style={{ background: '#e8f5e9', color: '#1b5e20', border: '1px solid #a5d6a7', cursor: generandoXlsx === r.id ? 'not-allowed' : 'pointer', opacity: generandoXlsx === r.id ? 0.7 : 1 }}>
+                  {generandoXlsx === r.id
+                    ? <span className="w-4 h-4 border-2 border-green-800/30 border-t-green-800 rounded-full animate-spin" />
+                    : <Download size={15} />}
+                  XLSX
                 </button>
               </div>
             </div>

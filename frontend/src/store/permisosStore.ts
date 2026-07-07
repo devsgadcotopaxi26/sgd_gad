@@ -32,10 +32,9 @@ export const usePermisosStore = create<PermisosState>((set, get) => ({
 
   puede: (modulo, accion) => {
     const { permisos, esAdmin, cargado } = get()
-    // Si no están cargados aún, permitir todo temporalmente
-    if (!cargado) return true
+    if (!modulo)  return true           // Escritorio y rutas sin módulo: siempre visible
+    if (!cargado) return false          // Ocultar hasta que carguen los permisos (evita flash)
     if (esAdmin)  return true
-    if (!modulo)  return true
     return (permisos[modulo] ?? []).includes(accion)
   },
 }))

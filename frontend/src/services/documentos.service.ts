@@ -65,6 +65,7 @@ export interface DocumentoDetalle extends Documento {
   confidencial: boolean
   requiere_respuesta: boolean
   firma_bce_info: Record<string, string> | null
+  pdf_firmado_url: string | null
   seguimiento: SeguimientoItem[]
   destinatarios: DestinatarioItem[]
   creado_por: number
@@ -109,12 +110,25 @@ export const documentosService = {
 
   tipos: () =>
     api.get<{ results: TipoDocumento[] }>('/documentos/tipos/').then(r => r.data.results),
+
+  tiposDocumento: () =>
+    api.get<{ results: TipoDocumento[] }>('/documentos/tipos/').then(r => r.data),
 descargarPDF: async (id: number, numero: string) => {
   const response = await api.get(`/documentos/${id}/pdf/`, { responseType: 'blob' })
   const blob     = new Blob([response.data], { type: 'application/pdf' })
   const link     = document.createElement('a')
   link.href      = URL.createObjectURL(blob)
   link.download  = `${numero || `doc_${id}`}.pdf`
+  link.click()
+  URL.revokeObjectURL(link.href)
+},
+
+descargarUrlAdjunto: async (url: string, nombre: string) => {
+  const response = await api.get(url, { responseType: 'blob' })
+  const blob     = new Blob([response.data], { type: 'application/pdf' })
+  const link     = document.createElement('a')
+  link.href      = URL.createObjectURL(blob)
+  link.download  = nombre
   link.click()
   URL.revokeObjectURL(link.href)
 },
@@ -127,6 +141,11 @@ registrarFirmaFisica: async (id: number, observacion?: string) =>
 
 obtenerUrlPDF: async (id: number): Promise<string> => {
   const response = await api.get(`/documentos/${id}/pdf/`, { responseType: 'blob' })
+  return URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+},
+
+obtenerUrlBlobAdjunto: async (url: string): Promise<string> => {
+  const response = await api.get(url, { responseType: 'blob' })
   return URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
 },
 

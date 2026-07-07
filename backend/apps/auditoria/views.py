@@ -9,7 +9,8 @@ from apps.documentos.models import Documento
 from apps.archivo.models import Expediente
 from apps.usuarios.models import Usuario
 from django.http import HttpResponse
-from .reportes import generar_pdf, reporte_tramites, reporte_documentos, reporte_kpi_unidades
+from .reportes import (generar_pdf, reporte_tramites, reporte_documentos, reporte_kpi_unidades,
+                       excel_tramites, excel_documentos, excel_kpi)
 from rest_framework import generics
 from .models import LogAuditoria
 from .serializers import LogAuditoriaSerializer
@@ -289,6 +290,60 @@ class ReporteKPIUnidadesPDFView(APIView):
 
         html = reporte_kpi_unidades(unidades_data)
         return generar_pdf(html, f'reporte_kpi_{timezone.now().strftime("%Y%m%d")}.pdf')
+
+
+class ReporteTramitesExcelView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.tramites.models import Tramite
+        qs = Tramite.objects.select_related('persona', 'tipo_tramite', 'unidad_responsable').order_by('-fecha_ingreso')
+        estado = request.query_params.get('estado', '')
+        unidad = request.query_params.get('unidad', '')
+        desde  = request.query_params.get('desde', '')
+        hasta  = request.query_params.get('hasta', '')
+        if estado: qs = qs.filter(estado=estado)
+        if unidad: qs = qs.filter(unidad_responsable_id=unidad)
+        if desde:  qs = qs.filter(fecha_ingreso__date__gte=desde)
+        if hasta:  qs = qs.filter(fecha_ingreso__date__lte=hasta)
+        return excel_tramites(list(qs[:2000]), {'periodo': f'{desde or "Inicio"} — {hasta or "Hoy"}'})
+
+
+class ReporteDocumentosExcelView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.documentos.models import Documento
+        qs = Documento.objects.select_related('tipo_documento', 'unidad_origen').order_by('-creado_en')
+        estado = request.query_params.get('estado', '')
+        tipo   = request.query_params.get('tipo', '')
+        desde  = request.query_params.get('desde', '')
+        hasta  = request.query_params.get('hasta', '')
+        if estado: qs = qs.filter(estado=estado)
+        if tipo:   qs = qs.filter(tipo_documento_id=tipo)
+        if desde:  qs = qs.filter(creado_en__date__gte=desde)
+        if hasta:  qs = qs.filter(creado_en__date__lte=hasta)
+        return excel_documentos(list(qs[:2000]), {'periodo': f'{desde or "Inicio"} — {hasta or "Hoy"}'})
+
+
+class ReporteKPIExcelView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from datetime import timedelta
+        from apps.organizacion.models import Unidad
+        from apps.tramites.models import Tramite
+        hoy      = timezone.now().date()
+        hace_30d = hoy - timedelta(days=30)
+        data = []
+        for u in Unidad.objects.filter(tipo__in=['direccion', 'secretaria'], activo=True).order_by('orden_display')[:30]:
+            total = Tramite.objects.filter(unidad_responsable=u).count()
+            pend  = Tramite.objects.filter(unidad_responsable=u, estado__in=['ingresado', 'asignado', 'en_proceso']).count()
+            res   = Tramite.objects.filter(unidad_responsable=u, estado='resuelto', fecha_resolucion__date__gte=hace_30d).count()
+            if total > 0:
+                data.append({'unidad': u.siglas or u.nombre[:30], 'total': total, 'pendientes': pend, 'resueltos': res})
+        return excel_kpi(data, hoy.strftime('%B %Y'))
+
 
 class LogAuditoriaListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]

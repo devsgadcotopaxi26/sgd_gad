@@ -1,5 +1,5 @@
 """
-Generación de reportes PDF con WeasyPrint
+Generación de reportes PDF (WeasyPrint) y Excel (openpyxl)
 """
 import io
 from datetime import datetime
@@ -254,3 +254,173 @@ def reporte_kpi_unidades(unidades_data: list) -> str:
         f'Período: {fecha}',
         tabla
     )
+
+
+# ─── Excel helpers ────────────────────────────────────────────────────────────
+
+def _wb_style(ws, headers: list[str]):
+    """Aplica cabecera azul institucional y autoajusta columnas."""
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    azul    = '002F6C'
+    rojo    = 'DA291C'
+    fill_h  = PatternFill('solid', fgColor=azul)
+    fill_z  = PatternFill('solid', fgColor='EEF2FF')
+    borde   = Border(
+        left=Side(style='thin', color='D0D0D0'),
+        right=Side(style='thin', color='D0D0D0'),
+        top=Side(style='thin', color='D0D0D0'),
+        bottom=Side(style='thin', color='D0D0D0'),
+    )
+    center  = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    left    = Alignment(horizontal='left',   vertical='center', wrap_text=True)
+
+    for col_i, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_i, value=h)
+        cell.font      = Font(bold=True, color='FFFFFF', size=10)
+        cell.fill      = fill_h
+        cell.alignment = center
+        cell.border    = borde
+
+    ws.row_dimensions[1].height = 20
+
+    for row in ws.iter_rows(min_row=2):
+        is_zebra = row[0].row % 2 == 0
+        for cell in row:
+            cell.border    = borde
+            cell.alignment = left
+            if is_zebra:
+                cell.fill = fill_z
+
+    for col_i in range(1, len(headers) + 1):
+        max_len = max(
+            (len(str(ws.cell(r, col_i).value or '')) for r in range(1, ws.max_row + 1)),
+            default=10
+        )
+        ws.column_dimensions[get_column_letter(col_i)].width = min(max_len + 4, 40)
+
+    ws.freeze_panes = 'A2'
+
+
+def _excel_response(wb, nombre: str) -> HttpResponse:
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    resp = HttpResponse(buf.read(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{nombre}"'
+    return resp
+
+
+def excel_tramites(tramites, filtros: dict) -> HttpResponse:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Trámites'
+
+    headers = ['N°', 'Número', 'Tipo', 'Ciudadano', 'Cédula', 'Estado',
+               'Unidad responsable', 'Fecha ingreso', 'Fecha límite', 'Días restantes']
+    ws.append(headers)
+
+    hoy = timezone.now().date()
+    for i, t in enumerate(tramites, 1):
+        dias = (t.fecha_limite.date() - hoy).days if t.fecha_limite else ''
+        ws.append([
+            i,
+            t.numero_tramite or '',
+            t.tipo_tramite.nombre if t.tipo_tramite else '',
+            f'{t.persona.nombres} {t.persona.apellidos}' if t.persona else '',
+            t.persona.cedula if t.persona else '',
+            t.estado,
+            t.unidad_responsable.siglas or t.unidad_responsable.nombre if t.unidad_responsable else '',
+            t.fecha_ingreso.strftime('%d/%m/%Y') if t.fecha_ingreso else '',
+            t.fecha_limite.strftime('%d/%m/%Y') if t.fecha_limite else '',
+            dias,
+        ])
+
+    _wb_style(ws, headers)
+
+    # Hoja resumen
+    ws2 = wb.create_sheet('Resumen')
+    from collections import Counter
+    conteo = Counter(t.estado for t in tramites)
+    ws2.append(['Estado', 'Cantidad'])
+    for k, v in conteo.items():
+        ws2.append([k, v])
+    ws2.append(['TOTAL', len(tramites)])
+    _wb_style(ws2, ['Estado', 'Cantidad'])
+
+    return _excel_response(wb, f'tramites_{timezone.now().strftime("%Y%m%d")}.xlsx')
+
+
+def excel_documentos(documentos, filtros: dict) -> HttpResponse:
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Documentos'
+
+    headers = ['N°', 'Número oficial', 'Tipo', 'Asunto', 'Unidad origen',
+               'Estado', 'Firmado', 'Fecha creación', 'Fecha envío']
+    ws.append(headers)
+
+    for i, d in enumerate(documentos, 1):
+        ws.append([
+            i,
+            d.numero_documento or '',
+            d.tipo_documento.nombre if d.tipo_documento else '',
+            (d.asunto or '')[:80],
+            d.unidad_origen.siglas or d.unidad_origen.nombre if d.unidad_origen else '',
+            d.estado,
+            'Sí' if d.firma_bce_info else 'No',
+            d.creado_en.strftime('%d/%m/%Y') if d.creado_en else '',
+            d.fecha_envio.strftime('%d/%m/%Y') if getattr(d, 'fecha_envio', None) else '',
+        ])
+
+    _wb_style(ws, headers)
+
+    ws2 = wb.create_sheet('Por tipo')
+    from collections import Counter
+    conteo = Counter(d.tipo_documento.nombre if d.tipo_documento else 'Sin tipo' for d in documentos)
+    ws2.append(['Tipo de documento', 'Cantidad'])
+    for k, v in sorted(conteo.items(), key=lambda x: -x[1]):
+        ws2.append([k, v])
+    _wb_style(ws2, ['Tipo de documento', 'Cantidad'])
+
+    return _excel_response(wb, f'documentos_{timezone.now().strftime("%Y%m%d")}.xlsx')
+
+
+def excel_kpi(unidades_data: list, periodo: str) -> HttpResponse:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.chart import BarChart, Reference
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'KPI por unidad'
+
+    headers = ['Unidad', 'Total trámites', 'Pendientes', 'Resueltos (30d)', '% Cumplimiento']
+    ws.append(headers)
+
+    for d in unidades_data:
+        pct = round(d['resueltos'] / d['total'] * 100, 1) if d['total'] > 0 else 0
+        ws.append([d['unidad'], d['total'], d['pendientes'], d['resueltos'], pct])
+
+    _wb_style(ws, headers)
+
+    # Gráfico de barras
+    chart = BarChart()
+    chart.type  = 'col'
+    chart.title = f'Trámites por unidad — {periodo}'
+    chart.style = 10
+    data   = Reference(ws, min_col=2, max_col=4, min_row=1, max_row=ws.max_row)
+    cats   = Reference(ws, min_col=1, min_row=2, max_row=ws.max_row)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+    chart.width  = 22
+    chart.height = 14
+    ws.add_chart(chart, 'G2')
+
+    return _excel_response(wb, f'kpi_unidades_{timezone.now().strftime("%Y%m%d")}.xlsx')

@@ -1,0 +1,19 @@
+embed-server --server-config=standalone.xml
+
+# 1. Agregar el módulo del driver
+module add --name=org.postgresql --resources=/tmp/postgresql-driver.jar --dependencies=java.sql,javax.api
+
+# 2. Registrar el driver en el subsistema
+/subsystem=datasources/jdbc-driver=postgresql:add(driver-name=postgresql,driver-module-name=org.postgresql,driver-xa-datasource-class-name=org.postgresql.xa.PGXADataSource)
+
+# 3. Crear el Data Source
+data-source add --name=FirmaDigitalDS \
+    --jndi-name=java:/FirmaDigitalDS \
+    --driver-name=postgresql \
+    --connection-url=jdbc:postgresql://db:5432/firmadigital \
+    --user-name=firmadigital \
+    --password=firmadigital \
+    --valid-connection-checker-class-name=org.jboss.jca.adapters.jdbc.extensions.postgres.PostgreSQLValidConnectionChecker \
+    --exception-sorter-class-name=org.jboss.jca.adapters.jdbc.extensions.postgres.PostgreSQLExceptionSorter
+
+stop-embedded-server

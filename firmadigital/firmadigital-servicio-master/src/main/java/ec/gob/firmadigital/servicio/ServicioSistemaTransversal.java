@@ -1,0 +1,425 @@
+/*
+ * Firma Digital: Servicio
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package ec.gob.firmadigital.servicio;
+
+import ec.gob.firmadigital.servicio.model.Sistema;
+import ec.gob.firmadigital.libreria.certificate.to.Certificado;
+import ec.gob.firmadigital.libreria.certificate.to.Documento;
+import ec.gob.firmadigital.servicio.exception.ServicioSistemaTransversalException;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import ec.gob.firmadigital.servicio.exception.ProblemaDocumentoException;
+import java.io.StringWriter;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.security.MessageDigest;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import jakarta.ejb.Stateless;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.TypedQuery;
+import jakarta.xml.bind.DatatypeConverter;
+import jakarta.xml.soap.MessageFactory;
+import jakarta.xml.soap.Name;
+import jakarta.xml.soap.SOAPBody;
+import jakarta.xml.soap.SOAPBodyElement;
+import jakarta.xml.soap.SOAPConnection;
+import jakarta.xml.soap.SOAPConnectionFactory;
+import jakarta.xml.soap.SOAPException;
+import jakarta.xml.soap.SOAPFactory;
+import jakarta.xml.soap.SOAPMessage;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import java.text.DateFormat;
+import java.util.Calendar;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.ClientBuilder;
+import jakarta.ws.rs.client.Entity;
+import jakarta.ws.rs.client.WebTarget;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+
+/**
+ * Servicio para invocar Web Services de los sistemas transaccionales, utilizado
+ * para almacenar el documento ya firmado.
+ *
+ * @author Ricardo Arguello
+ */
+@Stateless
+public class ServicioSistemaTransversal {
+
+    private static final String API_KEY_HEADER_PARAMETER = "X-API-KEY";
+
+    @PersistenceContext(unitName = "FirmaDigitalDS")
+    private EntityManager em;
+
+    private static final SimpleDateFormat sdf = new SimpleDateFormat("dd-MM-yyyy HH:mm:ss");
+
+    private static final Logger LOGGER = Logger.getLogger(ServicioSistemaTransversal.class.getName());
+
+    /**
+     * Buscar un sistema transversal.
+     *
+     * @param nombre
+     * @return
+     * @throws
+     * ec.gob.firmadigital.servicio.exception.ServicioSistemaTransversalException
+     */
+    public Sistema buscarSistema(String nombre) throws ServicioSistemaTransversalException {
+        try {
+            TypedQuery<Sistema> q = em.createQuery("SELECT s FROM Sistema s WHERE s.nombre = :nombre", Sistema.class);
+            q.setParameter("nombre", nombre);
+            return q.getSingleResult();
+        } catch (Exception e) {
+            throw new ServicioSistemaTransversalException("No se encontro el sistema " + nombre, e.getCause());
+        }
+    }
+
+    /**
+     * Obtiene el URL del Web Service de un sistema transversal, para devolver
+     * el documento firmado por el usuario.
+     *
+     * @param nombre nombre del sistema transversal
+     * @return el URL del sistema traansversal
+     * @throws
+     * ec.gob.firmadigital.servicio.exception.ServicioSistemaTransversalException
+     * @throws IllegalArgumentException si no se encuentra ese nombre de sistema
+     * transversal
+     */
+    public URL buscarUrlSistema(String nombre) throws ServicioSistemaTransversalException {
+        try {
+            Sistema sistema = buscarSistema(nombre);
+            return new URL(sistema.getURL());
+        } catch (ServicioSistemaTransversalException | MalformedURLException e) {
+            throw new ServicioSistemaTransversalException("El URL no es correcto: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Obtiene el ApiKey del Web Service de un sistema transversal, para
+     * devolver el documento firmado por el usuario.
+     *
+     * @param nombre nombre del sistema transversal
+     * @return el ApiKey del servicio REST
+     * @throws
+     * ec.gob.firmadigital.servicio.exception.ServicioSistemaTransversalException
+     */
+    public String buscarApiKey(String nombre) throws ServicioSistemaTransversalException {
+        try {
+            Sistema sistema = buscarSistema(nombre);
+            return sistema.getApiKey();
+        } catch (ServicioSistemaTransversalException e) {
+            throw new ServicioSistemaTransversalException(e);
+        }
+    }
+
+    /**
+     * Obtiene el ApiKeyRest del Web Service de un sistema transversal, para
+     * devolver el documento firmado por el usuario.
+     *
+     * @param nombre nombre del sistema transversal
+     * @return el ApiKeyRest del servicio REST
+     * @throws
+     * ec.gob.firmadigital.servicio.exception.ServicioSistemaTransversalException
+     */
+    public String buscarApiKeyRest(String nombre) throws ServicioSistemaTransversalException {
+        try {
+            Sistema sistema = buscarSistema(nombre);
+            return sistema.getApiKeyRest();
+        } catch (ServicioSistemaTransversalException e) {
+            throw new ServicioSistemaTransversalException(e);
+        }
+    }
+
+    /**
+     * Almacena el documento firmado en el sistema tranversarl, mediante la
+     * invocación de un Web Service (SOAP).
+     *
+     * @param documento
+     * @param cedula
+     * @param nombreDocumento
+     * @param archivoBase64
+     * @param url
+     * @param apiKeyRest
+     * @throws SistemaTransversalException
+     * @throws ProblemaDocumentoException
+     */
+    public void almacenarDocumentoREST(Documento documento, String cedula, String nombreDocumento, String archivoBase64, URL url, String apiKeyRest)
+            throws SistemaTransversalException, ProblemaDocumentoException {
+        JsonObject jsonDoc = new JsonObject();
+        jsonDoc.addProperty("cedula", cedula);
+        jsonDoc.addProperty("nombreDocumento", nombreDocumento);
+        jsonDoc.addProperty("archivo", archivoBase64);
+        try {
+            if (documento != null) {
+                if (documento.getError() == null) {
+                    jsonDoc.addProperty("firmasValidas", documento.getSignValidate());
+                    jsonDoc.addProperty("integridadDocumento", documento.getDocValidate());
+                    jsonDoc.addProperty("error", "null");
+                    JsonArray arrayCer = new JsonArray();
+                    for (Certificado certificado : documento.getCertificados()) {
+                        JsonObject jsonCer = new JsonObject();
+                        jsonCer.addProperty("emitidoPara", certificado.getIssuedTo());
+                        jsonCer.addProperty("emitidoPor", certificado.getIssuedBy());
+                        jsonCer.addProperty("validoDesde", calendarToString(certificado.getValidFrom()));
+                        jsonCer.addProperty("validoHasta", calendarToString(certificado.getValidTo()));
+                        jsonCer.addProperty("fechaFirma", calendarToString(certificado.getSignGenerated()));
+                        jsonCer.addProperty("fechaRevocado", certificado.getRevocated() != null ? calendarToString(certificado.getRevocated()) : "");
+                        jsonCer.addProperty("certificadoVigente", certificado.getCertificateValidated());
+                        jsonCer.addProperty("clavesUso", certificado.getKeyUsages());
+                        jsonCer.addProperty("fechaSelloTiempo", certificado.getDocTimeStamp() != null ? dateToString(certificado.getDocTimeStamp()) : "");
+                        jsonCer.addProperty("integridadFirma", certificado.getSignVerify());
+                        jsonCer.addProperty("razonFirma", certificado.getDocReason() != null ? certificado.getDocReason() : "");
+                        jsonCer.addProperty("localizacion", certificado.getDocLocation() != null ? certificado.getDocLocation() : "");
+                        jsonCer.addProperty("cedula", certificado.getDatosUsuario().getCedula());
+                        jsonCer.addProperty("nombre", certificado.getDatosUsuario().getNombre());
+                        jsonCer.addProperty("apellido", certificado.getDatosUsuario().getApellido());
+                        jsonCer.addProperty("institucion", certificado.getDatosUsuario().getInstitucion());
+                        jsonCer.addProperty("cargo", certificado.getDatosUsuario().getCargo());
+                        jsonCer.addProperty("entidadCertificadora", certificado.getIssuedBy());
+                        jsonCer.addProperty("serial", certificado.getSerial());
+                        jsonCer.addProperty("selladoTiempo", certificado.getDocValidTimeStamp());
+                        jsonCer.addProperty("certificadoDigitalValido", certificado.getDatosUsuario().isCertificadoDigitalValido());
+                        arrayCer.add(jsonCer);
+                    }
+                    jsonDoc.add("certificado", arrayCer);
+                } else {
+                    jsonDoc.addProperty("firmasValidas", false);
+                    jsonDoc.addProperty("integridadDocumento", false);
+                    jsonDoc.addProperty("error", documento.getError());
+                }
+            }
+        } catch (Exception exception) {
+            jsonDoc = new JsonObject();
+            jsonDoc.addProperty("firmasValidas", false);
+            jsonDoc.addProperty("integridadDocumento", false);
+            jsonDoc.addProperty("error", "El archivo no pudo ser validado o no es un PDF");
+        }
+        //Validación previa antes de devolver el documento PDF
+        if (nombreDocumento.toLowerCase().endsWith(".pdf")) {
+            String problemaDocumento = null;
+            if (documento != null) {
+                if (!documento.getSignValidate()) {
+                    problemaDocumento = "Problema con la integridad en la firma electrónica";
+                }
+                if (!documento.getDocValidate()) {
+                    problemaDocumento = "Problema con la integridad del documento\n" + (problemaDocumento == null ? "" : problemaDocumento);
+                }
+                if (documento.getError() != null) {
+                    problemaDocumento = "Error General: " + documento.getError() + "\n" + (problemaDocumento == null ? "" : problemaDocumento);
+                }
+                if (problemaDocumento != null) {
+                    throw new ProblemaDocumentoException("El documento " + nombreDocumento + " presenta lo siguiente:\n" + problemaDocumento + "\nvuelva a intentar");
+                }
+            }
+        }
+
+        // Usando try-with-resources para manejo automático de cierre
+        try (Client client = ClientBuilder.newClient()) {
+            WebTarget target = client.target(url.toString());
+            // Construir la entidad como un recurso autocerrable
+            try (Response response = target.request()
+                    .header(API_KEY_HEADER_PARAMETER, apiKeyRest)
+                    .header("Content-Type", MediaType.APPLICATION_JSON)
+                    .post(Entity.json(jsonDoc.toString()))) {
+                // Procesar respuesta de manera eficiente
+                String resultado = response.readEntity(String.class);
+                System.out.printf("Respuesta - Status: %d %s, Contenido: %s%n",
+                        response.getStatus(),
+                        response.getStatusInfo(),
+                        resultado);
+                switch (resultado) {
+                    case "OK" -> {
+                        return;
+                    }
+                    case "ERROR" ->
+                        throw new SistemaTransversalException(
+                                "Error del sistema transversal: " + resultado);
+                    default ->
+                        throw new SistemaTransversalException(
+                                "Resultado inválido del sistema transversal: " + resultado);
+                }
+            }
+        } catch (RuntimeException e) {
+            throw new SistemaTransversalException("Error en comunicación con sistema transversal", e);
+        }
+    }
+
+    private String calendarToString(Calendar calendar) {
+        Date date = calendar.getTime();
+        DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        return dateFormat.format(date);
+    }
+
+    private String dateToString(Date date) {
+        DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        return dateFormat.format(date);
+    }
+
+    /**
+     * Almacena el documento firmado en el sistema tranversarl, mediante la
+     * invocación de un Web Service (SOAP).
+     *
+     * @param documentoTo
+     * @param usuario
+     * @param documento
+     * @param archivo
+     * @param datosFirmante
+     * @param url
+     * @throws SistemaTransversalException
+     * @throws ProblemaDocumentoException
+     */
+    public void almacenarDocumento(Documento documentoTo, String usuario, String documento, String archivo, String datosFirmante, URL url)
+            throws SistemaTransversalException, ProblemaDocumentoException {
+        try {
+            MessageFactory factory = MessageFactory.newInstance();
+            SOAPMessage soapMessage = factory.createMessage();
+            SOAPBody body = soapMessage.getSOAPBody();
+
+            SOAPFactory soapFactory = SOAPFactory.newInstance();
+            Name bodyName = soapFactory.createName("grabar_archivos_firmados", "urn", "urn:soapapiorfeo");
+            SOAPBodyElement bodyElement = body.addBodyElement(bodyName);
+            bodyElement.addChildElement("set_var_usuario").addTextNode(usuario);
+            bodyElement.addChildElement("set_var_documento").addTextNode(documento);
+            bodyElement.addChildElement("set_var_archivo").addTextNode(archivo);
+            bodyElement.addChildElement("set_var_datos_firmante").addTextNode(datosFirmante);
+            bodyElement.addChildElement("set_var_fecha").addTextNode(sdf.format(new Date()));
+            String institucion = "";
+            String cargo = "";
+            bodyElement.addChildElement("set_var_institucion").addTextNode(institucion);
+            bodyElement.addChildElement("set_var_cargo").addTextNode(cargo);
+            //Validación previa antes de devolver el documento
+            String problemaDocumento = null;
+            if (documentoTo != null) {
+                if (!documentoTo.getSignValidate()) {
+                    problemaDocumento = "Problema con la integridad en la firma electrónica";
+                }
+                if (!documentoTo.getDocValidate()) {
+                    problemaDocumento = "Problema con la integridad del documento\n" + (problemaDocumento == null ? "" : problemaDocumento);
+                }
+                if (documentoTo.getError() != null) {
+                    problemaDocumento = "Error General: " + documentoTo.getError() + "\n" + (problemaDocumento == null ? "" : problemaDocumento);
+                }
+                if (problemaDocumento != null) {
+                    throw new ProblemaDocumentoException("El documento " + documento + " presenta lo siguiente:\n" + problemaDocumento + "\nvuelva a intentar");
+                }
+            }
+
+            SOAPConnection connection = SOAPConnectionFactory.newInstance().createConnection();
+            SOAPMessage response = connection.call(soapMessage, url);
+            connection.close();
+
+            SOAPBody soapBody = response.getSOAPBody();
+
+            NodeList nl = soapBody.getElementsByTagName("result");
+            Node node = nl.item(0);
+
+            if (node == null) {
+                LOGGER.log(Level.SEVERE, "Error al invocar el Web Service: {0}", convertToString(soapBody));
+                throw new SistemaTransversalException("Error al invocar el Web Service");
+            }
+
+            // 0 is error, 1 ok
+            String resultado = node.getTextContent();
+            LOGGER.log(Level.FINE, "Resultado enviado por el sistema transversal: {0}", resultado);
+
+            if (resultado.equals("1")) {
+                return;
+            } else if (resultado.equals("0")) {
+                throw new SistemaTransversalException("Se devuelve error del sistema transversal: " + resultado);
+            } else {
+                throw new SistemaTransversalException("Resultado invalido del sistema transversal: " + resultado);
+            }
+        } catch (SOAPException e) {
+            String mensaje = (String) e.getMessage();
+            if (mensaje != null) {
+                if (mensaje.contains("SOAP message could not be sent")) {
+                    System.out.println("Mensaje SOAP no pudo ser enviado");
+                }
+            } else {
+                System.out.println("----------");
+                LOGGER.log(Level.SEVERE, "Error al actualizar el documento en el sistema transversal", e);
+                System.out.println("----------");
+            }
+            throw new SistemaTransversalException("Error al invocar Web Service del sistema transversal", e);
+        }
+    }
+
+    public boolean verificarApiKey(String nombre, String apiKey) {
+        // Verificar si existe el Sistema
+        Sistema sistema;
+
+        try {
+            sistema = buscarSistema(nombre);
+        } catch (ServicioSistemaTransversalException e) {
+            LOGGER.log(Level.SEVERE, "No existe el sistema: {0}", nombre);
+            return false;
+        }
+
+        String apiKeySistema = sistema.getApiKey().toUpperCase();
+        LOGGER.log(Level.FINE, "apiKeySistema={0}", apiKey);
+
+        // Si no tiene API KEY
+        if (apiKeySistema == null) {
+            LOGGER.log(Level.WARNING, "API KEY is null, sistema={0}", nombre);
+            return false;
+        }
+
+        // Si no tiene problemas el API KEY
+        if (!apiKeySistema.equals(hashSha256(apiKey).toUpperCase())) {
+            LOGGER.log(Level.WARNING, "API KEY tiene problemas");
+            return false;
+        }
+        return true;
+    }
+
+    private String hashSha256(String apiKey) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            md.update(apiKey.getBytes("UTF-8"));
+            byte[] digest = md.digest();
+            return DatatypeConverter.printHexBinary(digest).toLowerCase();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private String convertToString(SOAPBody message) throws SistemaTransversalException {
+        try {
+            Document doc = message.extractContentAsDocument();
+            StringWriter sw = new StringWriter();
+            TransformerFactory tf = TransformerFactory.newInstance();
+            Transformer transformer = tf.newTransformer();
+            transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no");
+            transformer.setOutputProperty(OutputKeys.METHOD, "xml");
+            transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+            transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+            transformer.transform(new DOMSource(doc), new StreamResult(sw));
+            return sw.toString();
+        } catch (Exception e) {
+            throw new SistemaTransversalException(e.getMessage());
+        }
+    }
+}

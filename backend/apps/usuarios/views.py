@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from .permisos import get_permisos_usuario
@@ -13,10 +14,15 @@ from rest_framework.decorators import api_view, permission_classes
 from .serializers import (
     LoginSerializer, UsuarioResumenSerializer, UsuarioListSerializer,
     UsuarioDetalleSerializer, UsuarioCrearSerializer,
-    CambiarPasswordSerializer, RolSerializer, AsignarRolSerializer,
+    PerfilUpdateSerializer, CambiarPasswordSerializer, RolSerializer, AsignarRolSerializer,
 )
 
 Usuario = get_user_model()
+
+class UsuarioPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
 
 
 class LoginView(TokenObtainPairView):
@@ -38,24 +44,31 @@ class LogoutView(generics.GenericAPIView):
 
 class MiPerfilView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class   = UsuarioDetalleSerializer
 
     def get_object(self):
         return self.request.user
 
-    @action(detail=False, methods=['post'])
-    def cambiar_password(self, request):
-        serializer = CambiarPasswordSerializer(
-            data=request.data, context={'request': request}
-        )
+    def get_serializer_class(self):
+        if self.request.method in ('PUT', 'PATCH'):
+            return PerfilUpdateSerializer
+        return UsuarioDetalleSerializer
+
+
+class CambiarPasswordView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class   = CambiarPasswordSerializer
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         request.user.set_password(serializer.validated_data['password_nuevo'])
         request.user.save()
-        return Response({'detail': 'Contraseña actualizada.'})
+        return Response({'detail': 'Contraseña actualizada correctamente.'})
 
 
 class UsuarioViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+    pagination_class   = UsuarioPagination
     filter_backends    = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields   = ['tipo', 'activo', 'bloqueado', 'unidad']
     search_fields      = ['nombres', 'apellidos', 'email', 'cedula', 'cargo']
@@ -112,6 +125,33 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             rol_id=request.data.get('rol_id')
         ).update(activo=False)
         return Response({'detail': 'Rol revocado.'})
+
+    @action(detail=True, methods=['post'])
+    def activar(self, request, pk=None):
+        u = self.get_object()
+        u.activo = True
+        u.save(update_fields=['activo'])
+        return Response({'detail': f'{u.email} activado.'})
+
+    @action(detail=True, methods=['post'])
+    def desactivar(self, request, pk=None):
+        u = self.get_object()
+        u.activo = False
+        u.save(update_fields=['activo'])
+        return Response({'detail': f'{u.email} desactivado.'})
+
+    @action(detail=True, methods=['post'])
+    def reset_password(self, request, pk=None):
+        u = self.get_object()
+        nueva = request.data.get('password', '')
+        if not nueva or len(nueva) < 8:
+            return Response(
+                {'detail': 'La contraseña debe tener al menos 8 caracteres.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        u.set_password(nueva)
+        u.save()
+        return Response({'detail': f'Contraseña de {u.email} restablecida.'})
 
 
 class RolViewSet(viewsets.ReadOnlyModelViewSet):

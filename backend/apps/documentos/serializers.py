@@ -83,6 +83,13 @@ class DocumentoDetalleSerializer(serializers.ModelSerializer):
     flujo                 = FlujoSerializer(many=True, read_only=True)
     versiones             = VersionSerializer(many=True, read_only=True)
     seguimiento           = SeguimientoDocumentoSerializer(source='seguimiento_quipux', many=True, read_only=True)
+    pdf_firmado_url       = serializers.SerializerMethodField()
+
+    def get_pdf_firmado_url(self, obj):
+        adj = obj.archivos_adjuntos.filter(tipo='documento').order_by('-creado_en').first()
+        if adj:
+            return f'documentos/adjuntos/{adj.id}/descargar/'
+        return None
 
     class Meta:
         model  = Documento
@@ -119,12 +126,8 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
             usuario=doc.creado_por,
             bandeja='en_elaboracion',
         )
-        SeguimientoDocumento.objects.create(
-            documento=doc,
-            etapa='elaborado',
-            usuario=doc.creado_por,
-        )
         from apps.usuarios.models import Usuario
+        dest_nombres = []
         for uid in destinatarios_ids:
             try:
                 dest_user = Usuario.objects.select_related('unidad').get(pk=uid)
@@ -139,8 +142,19 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
                     bandeja='recibidos',
                     defaults={'es_urgente': doc.prioridad != 'normal'},
                 )
+                dest_nombres.append(dest_user.nombre_completo)
             except Usuario.DoesNotExist:
                 pass
+        obs_creacion = 'Documento creado en borrador'
+        if dest_nombres:
+            obs_creacion += f' — Destinatario(s): {", ".join(dest_nombres)}'
+        SeguimientoDocumento.objects.create(
+            documento=doc,
+            etapa='elaborado',
+            usuario=doc.creado_por,
+            unidad=getattr(doc.creado_por, 'unidad', None),
+            observacion=obs_creacion,
+        )
         return doc
 
     def update(self, instance, validated_data):
@@ -151,6 +165,7 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
         if destinatarios_ids is not None:
             from apps.usuarios.models import Usuario
             instance.destinatarios.all().delete()
+            dest_nombres = []
             for uid in destinatarios_ids:
                 try:
                     dest_user = Usuario.objects.select_related('unidad').get(pk=uid)
@@ -165,8 +180,13 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
                         bandeja='recibidos',
                         defaults={'es_urgente': instance.prioridad != 'normal'},
                     )
+                    dest_nombres.append(dest_user.nombre_completo)
                 except Usuario.DoesNotExist:
                     pass
+            if dest_nombres:
+                # perform_update registrará el seguimiento general; aquí solo anotamos
+                # el cambio de destinatarios en el mismo evento si aplica.
+                instance._dest_nombres_actualizados = dest_nombres
         return instance
 
 

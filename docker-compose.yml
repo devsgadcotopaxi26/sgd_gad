@@ -2,6 +2,26 @@ version: '3.9'
 
 services:
 
+  postgres:
+    image: postgres:16
+    container_name: sgd_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sgd_gad_cotopaxi
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: sgd2026
+    volumes:
+      - sgd_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - sgd_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sgd_gad_cotopaxi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     container_name: sgd_backend
@@ -12,7 +32,10 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - sgd_net
     command: >
@@ -67,7 +90,10 @@ services:
     volumes:
       - ./backend:/app
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - sgd_net
     command: celery -A config worker -l info
@@ -80,11 +106,89 @@ services:
     volumes:
       - ./backend:/app
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - sgd_net
     command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
+  # ── FirmaDigital — servicio de firma electrónica (FirmaEC) ─────────────────
+  firmadigital_db:
+    image: postgres:15
+    container_name: firmadigital-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: firmadigital
+      POSTGRES_USER: firmadigital
+      POSTGRES_PASSWORD: firmadigital
+    ports:
+      - "5433:5432"
+    volumes:
+      - firmadigital_db_data:/var/lib/postgresql/data
+      - ./firmadigital/firmadigital-servicio-master/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      sgd_net:
+        aliases:
+          - db
+
+  firmadigital_servicio:
+    build:
+      context: ./firmadigital
+      dockerfile: firmadigital-servicio-master/Dockerfile
+    container_name: firmadigital-servicio
+    restart: unless-stopped
+    environment:
+      TZ: America/Guayaquil
+    depends_on:
+      - firmadigital_db
+    ports:
+      - "8081:8080"
+    networks:
+      sgd_net:
+        aliases:
+          - servicio
+
+  firmadigital_api:
+    build:
+      context: ./firmadigital/firmadigital-api-master
+      dockerfile: Dockerfile
+    container_name: firmadigital-api
+    restart: unless-stopped
+    environment:
+      TZ: America/Guayaquil
+    depends_on:
+      - firmadigital_servicio
+    ports:
+      - "8089:8080"
+    command: >
+      /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0
+      -Dfirmadigital-servicio.url=http://servicio:8080/servicio
+      -Dfirmadigital-servicio-mobile.url=http://servicio:8080/servicio
+    networks:
+      - sgd_net
+
+  # ── PostgreSQL con quipux_documental (122 GB de PDFs históricos) ──────────────
+  quipux_doc_db:
+    image: postgres:16
+    container_name: sgd_quipux_doc
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: sgd2026
+    volumes:
+      - quipux_doc_data:/var/lib/postgresql/data
+    networks:
+      - sgd_net
+    # Sin puerto externo — solo acceso interno desde el backend
+
 networks:
   sgd_net:
     driver: bridge
+
+volumes:
+  sgd_postgres_data:
+  firmadigital_db_data:
+  quipux_doc_data:
+    external: true
+    name: f2538ac46f290e1fb83026d00d22bcf14a6d8c84f43ff20716e51eb5d8a9aacf

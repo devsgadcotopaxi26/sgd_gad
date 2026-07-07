@@ -8,11 +8,15 @@ export interface Unidad {
   siglas: string
   tipo: string
   activo: boolean
+  padre?: number | null
   nivel_nombre?: string
   padre_nombre?: string
   padre_siglas?: string
   email_oficial?: string
   telefono?: string
+  piso_ubicacion?: string
+  mision?: string
+  orden_display?: number
   num_hijos?: number
   hijos?: Unidad[]
   ruta?: string

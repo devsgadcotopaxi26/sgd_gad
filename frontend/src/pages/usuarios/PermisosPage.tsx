@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/services/api'
 import {
   Shield, Users, Search, Plus, X, Check,
   ChevronRight, RefreshCw, AlertCircle,
-  CheckCircle2, Lock, Unlock, Eye, Edit2,
-  UserCheck, UserX, Crown, Settings
+  CheckCircle2, Lock, Unlock, Edit2,
+  Crown, Settings, Save, User
 } from 'lucide-react'
 
 // ── Servicios ──────────────────────────────────────────────────────────
@@ -15,12 +15,16 @@ const permisosService = {
     api.get('/usuarios/', { params: search ? { search } : {} }).then(r => r.data?.results ?? r.data),
   roles: () =>
     api.get('/usuarios/roles/').then(r => r.data?.results ?? r.data),
+  unidades: () =>
+    api.get('/organizacion/unidades/').then(r => r.data?.results ?? r.data),
   asignarRol: (usuarioId: number, rolId: number) =>
     api.post(`/usuarios/${usuarioId}/asignar_rol/`, { rol: rolId }).then(r => r.data),
   revocarRol: (usuarioId: number, rolId: number) =>
     api.post(`/usuarios/${usuarioId}/revocar_rol/`, { rol_id: rolId }).then(r => r.data),
   detalle: (id: number) =>
     api.get(`/usuarios/${id}/`).then(r => r.data),
+  actualizarDatos: (id: number, data: Record<string, unknown>) =>
+    api.patch(`/usuarios/${id}/`, data).then(r => r.data),
   bloquear: (id: number, motivo: string) =>
     api.post(`/usuarios/${id}/bloquear/`, { motivo }).then(r => r.data),
   desbloquear: (id: number) =>
@@ -58,10 +62,22 @@ const ACCIONES_TODAS = ['ver', 'crear', 'editar', 'eliminar', 'firmar', 'enviar'
 
 // ── Panel de detalle de usuario ────────────────────────────────────────
 
+const INPUT_S: React.CSSProperties = {
+  width: '100%', padding: '7px 10px', fontSize: 11,
+  border: '0.5px solid #e5e7eb', borderRadius: 8,
+  background: '#fff', color: '#374151', outline: 'none',
+  boxSizing: 'border-box',
+}
+const LABEL_S: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: '#6b7280', marginBottom: 3, display: 'block' }
+
 function PanelUsuario({ usuario, onClose }: { usuario: any; onClose: () => void }) {
   const qc = useQueryClient()
   const [motivo, setMotivo] = useState('')
   const [mostrarBloqueo, setMostrarBloqueo] = useState(false)
+  const [panelTab, setPanelTab] = useState<'roles' | 'datos'>('roles')
+  const [form, setForm] = useState<Record<string, any>>({})
+  const [guardando, setGuardando] = useState(false)
+  const [savedOk, setSavedOk] = useState(false)
 
   const { data: detalle, isLoading } = useQuery({
     queryKey: ['usuario-detalle', usuario.id],
@@ -72,6 +88,29 @@ function PanelUsuario({ usuario, onClose }: { usuario: any; onClose: () => void 
     queryKey: ['roles'],
     queryFn: permisosService.roles,
   })
+
+  const { data: unidades } = useQuery({
+    queryKey: ['unidades'],
+    queryFn: permisosService.unidades,
+  })
+
+  // Sincronizar form con detalle cuando carga por primera vez
+  useEffect(() => {
+    if (detalle && !form.nombres) {
+      setForm({
+        titulo:              detalle.titulo              ?? '',
+        nombres:             detalle.nombres             ?? '',
+        apellidos:           detalle.apellidos           ?? '',
+        cargo:               detalle.cargo               ?? '',
+        cargo_tipo:          detalle.cargo_tipo          ?? 0,
+        unidad:              detalle.unidad_id           ?? '',
+        email_institucional: detalle.email_institucional ?? '',
+        telefono_movil:      detalle.telefono_movil      ?? '',
+        telefono_fijo:       detalle.telefono_fijo       ?? '',
+      })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detalle])
 
   const asignar = useMutation({
     mutationFn: (rolId: number) => permisosService.asignarRol(usuario.id, rolId),
@@ -106,16 +145,36 @@ function PanelUsuario({ usuario, onClose }: { usuario: any; onClose: () => void 
     },
   })
 
-  // Roles activos del usuario
-  const rolesActivos: number[] = (detalle?.roles ?? [])
-    .filter((r: any) => r.activo)
-    .map((r: any) => r.rol ?? r.rol_id ?? r.id)
+  const guardarDatos = async () => {
+    setGuardando(true)
+    try {
+      await permisosService.actualizarDatos(usuario.id, {
+        titulo:              form.titulo,
+        nombres:             form.nombres,
+        apellidos:           form.apellidos,
+        cargo:               form.cargo,
+        cargo_tipo:          Number(form.cargo_tipo),
+        unidad:              form.unidad || null,
+        email_institucional: form.email_institucional,
+        telefono_movil:      form.telefono_movil,
+        telefono_fijo:       form.telefono_fijo,
+      })
+      qc.invalidateQueries({ queryKey: ['usuario-detalle', usuario.id] })
+      qc.invalidateQueries({ queryKey: ['usuarios-permisos'] })
+      setSavedOk(true)
+      setTimeout(() => setSavedOk(false), 2000)
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  const setF = (k: string, v: any) => setForm((p: any) => ({ ...p, [k]: v }))
 
   // Permisos efectivos combinados
   const permisosEfectivos: Record<string, Set<string>> = {}
   const codigosRoles: string[] = (detalle?.roles ?? [])
     .filter((r: any) => r.activo)
-    .map((r: any) => r.rol_codigo ?? r.codigo ?? '')
+    .map((r: any) => r.rol_codigo ?? '')
 
   codigosRoles.forEach(codigo => {
     const perms = PERMISOS_ROL[codigo] ?? {}
@@ -201,12 +260,27 @@ function PanelUsuario({ usuario, onClose }: { usuario: any; onClose: () => void 
               </button>
             </div>
           )}
+
+          {/* Sub-tabs */}
+          <div style={{ display: 'flex', gap: 0, marginTop: 10, borderRadius: 8, overflow: 'hidden', border: '0.5px solid #e5e7eb' }}>
+            {([['roles', Shield, 'Roles y permisos'], ['datos', User, 'Datos del usuario']] as const).map(([k, Icon, lbl]) => (
+              <button key={k} onClick={() => setPanelTab(k as any)}
+                style={{
+                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                  padding: '7px 12px', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                  background: panelTab === k ? '#002f6c' : '#f9fafb',
+                  color: panelTab === k ? '#fff' : '#6b7280',
+                }}>
+                <Icon size={12} /> {lbl}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
           {isLoading ? (
             <div style={{ textAlign: 'center', padding: 32, color: '#9ca3af', fontSize: 12 }}>Cargando...</div>
-          ) : (
+          ) : panelTab === 'roles' ? (
             <>
               {/* Roles asignados */}
               <div style={{ marginBottom: 20 }}>
@@ -216,12 +290,12 @@ function PanelUsuario({ usuario, onClose }: { usuario: any; onClose: () => void 
                     <span style={{ fontSize: 11, color: '#9ca3af' }}>Sin roles asignados</span>
                   )}
                   {(detalle?.roles ?? []).filter((r: any) => r.activo).map((r: any) => {
-                    const codigo = r.rol_codigo ?? r.codigo ?? ''
+                    const codigo = r.rol_codigo ?? ''
                     const c = ROL_COLORS[codigo] ?? ROL_COLORS.SOLO_LECTURA
                     return (
-                      <div key={r.id ?? r.rol} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, background: c.bg, border: `0.5px solid ${c.border}` }}>
+                      <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, background: c.bg, border: `0.5px solid ${c.border}` }}>
                         <span style={{ fontSize: 11, fontWeight: 600, color: c.text }}>{r.rol_nombre ?? codigo}</span>
-                        <button onClick={() => revocar.mutate(r.rol ?? r.rol_id)}
+                        <button onClick={() => revocar.mutate(r.rol)}
                           style={{ border: 'none', background: 'none', cursor: 'pointer', color: c.text, padding: 1, opacity: .7, display: 'flex' }}>
                           <X size={11} />
                         </button>
@@ -233,7 +307,7 @@ function PanelUsuario({ usuario, onClose }: { usuario: any; onClose: () => void 
                 <p style={{ fontSize: 11, fontWeight: 600, color: '#9ca3af', marginBottom: 6 }}>Agregar rol:</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                   {(roles ?? []).map((rol: any) => {
-                    const yaAsignado = (detalle?.roles ?? []).filter((r: any) => r.activo).some((r: any) => (r.rol ?? r.rol_id) === rol.id)
+                    const yaAsignado = (detalle?.roles ?? []).filter((r: any) => r.activo).some((r: any) => r.rol === rol.id)
                     const c = ROL_COLORS[rol.codigo] ?? ROL_COLORS.SOLO_LECTURA
                     return (
                       <button key={rol.id}
@@ -290,6 +364,76 @@ function PanelUsuario({ usuario, onClose }: { usuario: any; onClose: () => void 
                 )}
               </div>
             </>
+          ) : (
+            /* ── Tab Datos ── */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: 10 }}>
+                <div>
+                  <label style={LABEL_S}>Título</label>
+                  <input style={INPUT_S} placeholder="Ing., Lcda., Dr." value={form.titulo ?? ''} onChange={e => setF('titulo', e.target.value)} />
+                </div>
+                <div>
+                  <label style={LABEL_S}>Nombres</label>
+                  <input style={INPUT_S} value={form.nombres ?? ''} onChange={e => setF('nombres', e.target.value)} />
+                </div>
+              </div>
+
+              <div>
+                <label style={LABEL_S}>Apellidos</label>
+                <input style={INPUT_S} value={form.apellidos ?? ''} onChange={e => setF('apellidos', e.target.value)} />
+              </div>
+
+              <div>
+                <label style={LABEL_S}>Cargo</label>
+                <input style={INPUT_S} placeholder="Director de Planificación..." value={form.cargo ?? ''} onChange={e => setF('cargo', e.target.value)} />
+              </div>
+
+              <div>
+                <label style={LABEL_S}>Tipo de cargo</label>
+                <select style={INPUT_S} value={form.cargo_tipo ?? 0} onChange={e => setF('cargo_tipo', e.target.value)}>
+                  <option value={0}>Normal</option>
+                  <option value={1}>Jefe de área</option>
+                  <option value={2}>Asistente</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={LABEL_S}>Unidad / Dependencia</label>
+                <select style={INPUT_S} value={form.unidad ?? ''} onChange={e => setF('unidad', e.target.value)}>
+                  <option value="">— Sin unidad asignada —</option>
+                  {(unidades ?? []).map((u: any) => (
+                    <option key={u.id} value={u.id}>{u.nombre} {u.siglas ? `(${u.siglas})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={LABEL_S}>Email institucional</label>
+                <input style={INPUT_S} type="email" placeholder="usuario@cotopaxi.gob.ec" value={form.email_institucional ?? ''} onChange={e => setF('email_institucional', e.target.value)} />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={LABEL_S}>Teléfono móvil</label>
+                  <input style={INPUT_S} placeholder="0999999999" value={form.telefono_movil ?? ''} onChange={e => setF('telefono_movil', e.target.value)} />
+                </div>
+                <div>
+                  <label style={LABEL_S}>Teléfono fijo</label>
+                  <input style={INPUT_S} placeholder="032800416" value={form.telefono_fijo ?? ''} onChange={e => setF('telefono_fijo', e.target.value)} />
+                </div>
+              </div>
+
+              <button onClick={guardarDatos} disabled={guardando}
+                style={{
+                  marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  padding: '9px 16px', borderRadius: 9, border: 'none', cursor: guardando ? 'default' : 'pointer',
+                  background: savedOk ? '#15803d' : '#002f6c', color: '#fff',
+                  fontSize: 12, fontWeight: 700, opacity: guardando ? .7 : 1, transition: 'background .3s',
+                }}>
+                <Save size={13} />
+                {savedOk ? '¡Guardado!' : guardando ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
           )}
         </div>
       </div>

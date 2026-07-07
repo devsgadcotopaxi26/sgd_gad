@@ -244,7 +244,7 @@ export default function AdjuntosPanel({
     abrirModalPara(validos[0])
   }
 
-  const adjuntos = data?.results ?? []
+  const adjuntos = (data?.results ?? []).filter(a => a.tipo !== 'documento')
 
   return (
     <div>

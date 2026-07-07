@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    container_name: firmadigital-db
+    environment:
+      - POSTGRES_DB=firmadigital
+      - POSTGRES_USER=firmadigital
+      - POSTGRES_PASSWORD=firmadigital
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+
+  servicio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: firmadigital-servicio
+    depends_on:
+      - db
+    ports:
+      - "8081:8080" # El servicio corre en el 8081 para no chocar con la API
+    environment:
+      - TZ=America/Guayaquil
+
+  api:
+    build:
+      context: ../firmadigital-api-master
+      dockerfile: Dockerfile
+    container_name: firmadigital-api
+    depends_on:
+      - servicio
+    ports:
+      - "8080:8080" # Tu API original en el puerto 8080
+    environment:
+      - TZ=America/Guayaquil
+    # IMPORTANTE: Reemplazamos la URL de impws por el contenedor local 'servicio'
+    command: >
+      /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 
+      -Dfirmadigital-servicio.url=http://servicio:8080/servicio
+      -Dfirmadigital-servicio-mobile.url=http://servicio:8080/servicio
+
+volumes:
+  db_data:

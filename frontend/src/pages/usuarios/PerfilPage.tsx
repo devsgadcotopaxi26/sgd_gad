@@ -2,33 +2,30 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
 import { usuariosService } from '@/services/usuarios.service'
-import { organizacionService } from '@/services/organizacion.service'
 import {
   User, Mail, Phone, Building2, Calendar,
-  Lock, Save, Shield, CheckCircle, Eye, EyeOff
+  Lock, Save, Shield, CheckCircle, Eye, EyeOff, Info
 } from 'lucide-react'
 
 export default function PerfilPage() {
   const { usuario: authUser } = useAuthStore()
   const qc = useQueryClient()
-  const [tabActiva, setTab]   = useState<'info' | 'password'>('info')
+  const [tabActiva, setTab]     = useState<'info' | 'password'>('info')
   const [guardado, setGuardado] = useState(false)
   const [showPwActual, setShowPwActual] = useState(false)
-  const [showPwNuevo, setShowPwNuevo]   = useState(false)
+  const [showPwNuevo,  setShowPwNuevo]  = useState(false)
   const [formPw, setFormPw] = useState({ password_actual: '', password_nuevo: '', confirmar: '' })
-  const [errorPw, setErrorPw] = useState('')
+  const [errorPw, setErrorPw]   = useState('')
+  const [exitoPw, setExitoPw]   = useState(false)
 
   const { data: perfil, isLoading } = useQuery({
     queryKey: ['perfil'],
     queryFn:  usuariosService.perfil,
   })
 
-  const { data: unidades } = useQuery({
-    queryKey: ['unidades-select'],
-    queryFn: () => organizacionService.select(),
-  })
-
-  const [form, setForm] = useState<Record<string, any>>({})
+  // Solo email / email_institucional / telefono_movil son editables por el propio usuario
+  const [form, setForm] = useState<Record<string, string>>({})
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   const actualizarMutation = useMutation({
     mutationFn: (data: any) => usuariosService.actualizar(authUser!.id, data),
@@ -40,14 +37,18 @@ export default function PerfilPage() {
   })
 
   const cambiarPwMutation = useMutation({
-    mutationFn: (data: any) =>
-      usuariosService.actualizar(authUser!.id, data),
+    mutationFn: usuariosService.cambiarPassword,
     onSuccess: () => {
       setFormPw({ password_actual: '', password_nuevo: '', confirmar: '' })
-      setGuardado(true)
-      setTimeout(() => setGuardado(false), 3000)
+      setErrorPw('')
+      setExitoPw(true)
+      setTimeout(() => setExitoPw(false), 4000)
     },
-    onError: (e: any) => setErrorPw(e.response?.data?.detail || 'Error al cambiar contraseña'),
+    onError: (e: any) => {
+      const data = e.response?.data
+      if (data?.password_actual) setErrorPw(Array.isArray(data.password_actual) ? data.password_actual[0] : data.password_actual)
+      else setErrorPw(data?.detail || data?.non_field_errors?.[0] || 'Error al cambiar contraseña')
+    },
   })
 
   const handleGuardar = () => {
@@ -61,16 +62,20 @@ export default function PerfilPage() {
       setErrorPw('Completa todos los campos'); return
     }
     if (formPw.password_nuevo !== formPw.confirmar) {
-      setErrorPw('Las contraseñas no coinciden'); return
+      setErrorPw('Las contraseñas nuevas no coinciden'); return
     }
     if (formPw.password_nuevo.length < 8) {
       setErrorPw('La contraseña debe tener al menos 8 caracteres'); return
     }
-    cambiarPwMutation.mutate({ password: formPw.password_nuevo })
+    cambiarPwMutation.mutate({
+      password_actual: formPw.password_actual,
+      password_nuevo:  formPw.password_nuevo,
+    })
   }
 
-  const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
-  const cls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
+  const cls      = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
+  const clsRO    = "w-full px-3 py-2.5 text-sm border border-gray-100 rounded-xl bg-gray-50 text-gray-600 cursor-default select-text"
+  const clsLabel = "block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5"
 
   const iniciales = perfil
     ? `${perfil.nombres?.[0] ?? ''}${perfil.apellidos?.[0] ?? ''}`.toUpperCase()
@@ -84,7 +89,7 @@ export default function PerfilPage() {
     <div className="max-w-2xl mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-gray-900">Mi perfil</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Administra tu información personal y credenciales</p>
+        <p className="text-sm text-gray-400 mt-0.5">Consulta tu información y actualiza tus datos de contacto</p>
       </div>
 
       {/* Card de perfil */}
@@ -97,7 +102,7 @@ export default function PerfilPage() {
           <div>
             <h2 className="text-lg font-bold text-gray-900">{perfil?.nombre_completo}</h2>
             <p className="text-sm text-gray-500 mt-0.5">{perfil?.cargo || 'Sin cargo asignado'}</p>
-            <div className="flex items-center gap-3 mt-2">
+            <div className="flex items-center gap-3 mt-2 flex-wrap">
               <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
                 style={{ background: '#e8f1fd', color: '#002f6c' }}>
                 {perfil?.tipo}
@@ -128,105 +133,93 @@ export default function PerfilPage() {
         ))}
       </div>
 
-      {/* Alerta guardado */}
-      {guardado && (
-        <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3 mb-4 text-sm text-green-700">
-          <CheckCircle size={15} /> Cambios guardados correctamente
-        </div>
-      )}
-
       {/* Tab: Información personal */}
       {tabActiva === 'info' && (
-        <div className="bg-white border border-gray-100 rounded-2xl p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-                <User size={11} className="inline mr-1" /> Nombres
-              </label>
-              <input className={cls}
-                defaultValue={perfil?.nombres}
-                onChange={e => set('nombres', e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Apellidos</label>
-              <input className={cls}
-                defaultValue={perfil?.apellidos}
-                onChange={e => set('apellidos', e.target.value)} />
-            </div>
+        <div className="bg-white border border-gray-100 rounded-2xl p-6 space-y-5">
+
+          {/* Aviso de solo lectura */}
+          <div className="flex items-start gap-2 p-3 rounded-xl text-xs"
+            style={{ background: '#fffbeb', border: '0.5px solid #fcd34d', color: '#92400e' }}>
+            <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>Los datos personales, cargo y unidad son gestionados por Administración. Solo puedes actualizar tus datos de contacto.</span>
           </div>
 
+          {/* Datos de identidad — solo lectura */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-              <Mail size={11} className="inline mr-1" /> Correo electrónico
-            </label>
-            <input className={cls} type="email"
-              defaultValue={perfil?.email}
-              onChange={e => set('email', e.target.value)} />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-              <Mail size={11} className="inline mr-1" /> Correo institucional
-            </label>
-            <input className={cls} type="email"
-              defaultValue={perfil?.email_institucional ?? ''}
-              onChange={e => set('email_institucional', e.target.value)} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-                <Phone size={11} className="inline mr-1" /> Teléfono móvil
-              </label>
-              <input className={cls}
-                defaultValue={perfil?.telefono_movil ?? ''}
-                onChange={e => set('telefono_movil', e.target.value)} />
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Datos personales</p>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className={clsLabel}><User size={11} className="inline mr-1" />Nombres</label>
+                <div className={clsRO}>{perfil?.nombres || '—'}</div>
+              </div>
+              <div>
+                <label className={clsLabel}>Apellidos</label>
+                <div className={clsRO}>{perfil?.apellidos || '—'}</div>
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Cédula</label>
-              <input className={cls}
-                defaultValue={perfil?.cedula ?? ''}
-                onChange={e => set('cedula', e.target.value)} />
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className={clsLabel}>Cédula</label>
+                <div className={clsRO}>{perfil?.cedula || '—'}</div>
+              </div>
+              <div>
+                <label className={clsLabel}><Calendar size={11} className="inline mr-1" />Fecha de ingreso</label>
+                <div className={clsRO}>{perfil?.fecha_ingreso || '—'}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className={clsLabel}><Building2 size={11} className="inline mr-1" />Unidad</label>
+                <div className={clsRO}>{perfil?.unidad_nombre || '—'}</div>
+              </div>
+              <div>
+                <label className={clsLabel}>Cargo</label>
+                <div className={clsRO}>{perfil?.cargo || '—'}</div>
+              </div>
             </div>
           </div>
 
+          <hr className="border-gray-100" />
+
+          {/* Datos de contacto — editables */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-              <Building2 size={11} className="inline mr-1" /> Unidad organizativa
-            </label>
-            <select className={cls}
-              defaultValue={perfil?.unidad_id ?? ''}
-              onChange={e => set('unidad', e.target.value ? Number(e.target.value) : null)}>
-              <option value="">— Sin asignar —</option>
-              {unidades?.map(u => (
-                <option key={u.id} value={u.id}>{u.siglas ? `[${u.siglas}] ` : ''}{u.nombre}</option>
-              ))}
-            </select>
+            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Datos de contacto <span style={{ color: '#002f6c' }}>(editables)</span></p>
+
+            {guardado && (
+              <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3 mb-4 text-sm text-green-700">
+                <CheckCircle size={15} /> Cambios guardados correctamente
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className={clsLabel}><Mail size={11} className="inline mr-1" />Correo personal</label>
+                <input className={cls} type="email"
+                  defaultValue={perfil?.email}
+                  onChange={e => set('email', e.target.value)} />
+              </div>
+              <div>
+                <label className={clsLabel}><Mail size={11} className="inline mr-1" />Correo institucional</label>
+                <input className={cls} type="email"
+                  defaultValue={perfil?.email_institucional ?? ''}
+                  onChange={e => set('email_institucional', e.target.value)} />
+              </div>
+              <div>
+                <label className={clsLabel}><Phone size={11} className="inline mr-1" />Teléfono móvil</label>
+                <input className={cls}
+                  defaultValue={perfil?.telefono_movil ?? ''}
+                  onChange={e => set('telefono_movil', e.target.value)} />
+              </div>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Cargo</label>
-            <input className={cls}
-              defaultValue={perfil?.cargo ?? ''}
-              onChange={e => set('cargo', e.target.value)} />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-              <Calendar size={11} className="inline mr-1" /> Fecha de ingreso
-            </label>
-            <input type="date" className={cls}
-              defaultValue={perfil?.fecha_ingreso ?? ''}
-              onChange={e => set('fecha_ingreso', e.target.value)} />
-          </div>
-
-          {/* Info de solo lectura */}
+          {/* Info sistema */}
           <div className="pt-2 border-t border-gray-50">
             <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Información del sistema</p>
             <div className="grid grid-cols-2 gap-3">
               {[
                 { label: 'Último acceso', value: perfil?.ultimo_acceso ? new Date(perfil.ultimo_acceso).toLocaleString('es-EC') : 'Nunca' },
-                { label: 'Cuenta creada', value: perfil?.creado_en ? new Date(perfil.creado_en).toLocaleDateString('es-EC') : '—' },
+                { label: 'Cuenta creada',  value: perfil?.creado_en    ? new Date(perfil.creado_en).toLocaleDateString('es-EC')    : '—'     },
               ].map(({ label, value }) => (
                 <div key={label} className="p-3 rounded-xl" style={{ background: '#f8faff' }}>
                   <p className="text-[10px] text-gray-400 font-medium">{label}</p>
@@ -237,9 +230,9 @@ export default function PerfilPage() {
           </div>
 
           <div className="flex justify-end pt-2">
-            <button onClick={handleGuardar} disabled={actualizarMutation.isPending}
+            <button onClick={handleGuardar} disabled={actualizarMutation.isPending || Object.keys(form).length === 0}
               className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white rounded-xl"
-              style={{ background: actualizarMutation.isPending ? '#4a90e2' : '#002f6c' }}>
+              style={{ background: Object.keys(form).length === 0 ? '#94a3b8' : actualizarMutation.isPending ? '#4a90e2' : '#002f6c', cursor: Object.keys(form).length === 0 ? 'not-allowed' : 'pointer' }}>
               {actualizarMutation.isPending
                 ? <span className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} />
                 : <Save size={15} />}
@@ -252,14 +245,18 @@ export default function PerfilPage() {
       {/* Tab: Cambiar contraseña */}
       {tabActiva === 'password' && (
         <div className="bg-white border border-gray-100 rounded-2xl p-6 space-y-4">
+
           {errorPw && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">{errorPw}</div>
           )}
+          {exitoPw && (
+            <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-sm text-green-700">
+              <CheckCircle size={15} /> Contraseña cambiada correctamente
+            </div>
+          )}
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-              <Lock size={11} className="inline mr-1" /> Contraseña actual
-            </label>
+            <label className={clsLabel}><Lock size={11} className="inline mr-1" />Contraseña actual</label>
             <div className="relative">
               <input
                 type={showPwActual ? 'text' : 'password'}
@@ -275,7 +272,7 @@ export default function PerfilPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Nueva contraseña</label>
+            <label className={clsLabel}>Nueva contraseña</label>
             <div className="relative">
               <input
                 type={showPwNuevo ? 'text' : 'password'}
@@ -291,7 +288,7 @@ export default function PerfilPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Confirmar nueva contraseña</label>
+            <label className={clsLabel}>Confirmar nueva contraseña</label>
             <input
               type="password"
               className={cls + (formPw.confirmar && formPw.confirmar !== formPw.password_nuevo ? ' border-red-300' : '')}
@@ -304,18 +301,18 @@ export default function PerfilPage() {
           </div>
 
           <div className="p-4 rounded-xl text-xs text-gray-500 space-y-1" style={{ background: '#f8faff' }}>
-            <p className="font-semibold text-gray-700 mb-2">Requisitos de seguridad:</p>
-            {[
-              ['Mínimo 8 caracteres',           formPw.password_nuevo.length >= 8],
-              ['Al menos una letra mayúscula',   /[A-Z]/.test(formPw.password_nuevo)],
-              ['Al menos un número',             /[0-9]/.test(formPw.password_nuevo)],
-            ].map(([req, ok]) => (
-              <div key={req as string} className="flex items-center gap-2">
+            <p className="font-semibold text-gray-700 mb-2">Requisitos:</p>
+            {([
+              ['Mínimo 8 caracteres',         formPw.password_nuevo.length >= 8],
+              ['Al menos una mayúscula',        /[A-Z]/.test(formPw.password_nuevo)],
+              ['Al menos un número',            /[0-9]/.test(formPw.password_nuevo)],
+            ] as [string, boolean][]).map(([req, ok]) => (
+              <div key={req} className="flex items-center gap-2">
                 <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center flex-shrink-0"
                   style={{ background: ok ? '#f0fdf4' : '#f3f4f6', border: `1px solid ${ok ? '#86efac' : '#e5e7eb'}` }}>
                   {ok && <CheckCircle size={9} style={{ color: '#15803d' }} />}
                 </div>
-                <span style={{ color: ok ? '#15803d' : '#9ca3af' }}>{req as string}</span>
+                <span style={{ color: ok ? '#15803d' : '#9ca3af' }}>{req}</span>
               </div>
             ))}
           </div>

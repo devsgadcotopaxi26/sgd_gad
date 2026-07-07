@@ -14,8 +14,13 @@ from django.utils import timezone
 _LOGOS_DIR = os.path.join(os.path.dirname(__file__), 'logos')
 
 
+def _file_uri(filename: str) -> str:
+    """Devuelve URI file:// absoluta para que WeasyPrint cargue el archivo sin red."""
+    p = os.path.join(_LOGOS_DIR, filename)
+    return f'file://{p}' if os.path.exists(p) else ''
+
+
 def _b64(path: str, mime: str) -> str:
-    """Lee un archivo local y devuelve data-URI para usar en <img src=>."""
     try:
         data = open(path, 'rb').read()
         return f'data:{mime};base64,{base64.b64encode(data).decode()}'
@@ -23,12 +28,9 @@ def _b64(path: str, mime: str) -> str:
         return ''
 
 
-ESCUDO_DATA    = _b64(os.path.join(_LOGOS_DIR, 'escudo_gad.png'),       'image/png')
-LOGO_PREF_DATA = _b64(os.path.join(_LOGOS_DIR, 'logo_prefectura.svg'),  'image/svg+xml')
-
-# Fallback: si los archivos no están, usar la URL pública (solo para escudo)
-ESCUDO_SRC    = ESCUDO_DATA    or 'https://cotopaxi.gob.ec/wp-content/uploads/2026/02/cropped-favicon-copia-192x192.png'
-LOGO_PREF_SRC = LOGO_PREF_DATA or 'https://cotopaxi.gob.ec/wp-content/uploads/2026/02/Prefectura-de-Cotopaxi-0062d2.svg'
+# WeasyPrint carga file:// sin problema; data-URI como fallback
+ESCUDO_SRC    = _file_uri('escudo_gad.png')      or _b64(os.path.join(_LOGOS_DIR, 'escudo_gad.png'), 'image/png')
+LOGO_PREF_SRC = _file_uri('logo_prefectura.svg') or _b64(os.path.join(_LOGOS_DIR, 'logo_prefectura.svg'), 'image/svg+xml')
 
 # ── Constantes de tipo de documento ───────────────────────────────────────
 ACENTO_TIPO = {
@@ -63,7 +65,7 @@ def _fecha_es(dt) -> str:
     return s
 
 
-def html_documento_oficial(doc) -> str:
+def html_documento_oficial(doc, pre_firma: bool = False) -> str:
     prefijo     = doc.tipo_documento.prefijo_numeracion or 'OFI'
     acento      = ACENTO_TIPO.get(prefijo, '#002f6c')
     nombre_tipo = NOMBRE_TIPO_LARGO.get(prefijo, doc.tipo_documento.nombre.upper())
@@ -105,24 +107,12 @@ def html_documento_oficial(doc) -> str:
           {doc.asunto}
         </div>"""
 
-    # ── Bloque firma electrónica BCE ─────────────────────────────────────
-    firma_bce = ''
-    if doc.firma_bce_info:
-        info = doc.firma_bce_info
-        firma_bce = f"""
-        <div class="sello-firma">
-          <div class="sello-check">✓</div>
-          <div>
-            <strong>Firmado electrónicamente — FirmaEC:</strong>
-            {info.get('firmado_por', firmante)}<br>
-            Entidad: {info.get('entidad_cert', '—')} &nbsp;·&nbsp;
-            Fecha: {(info.get('fecha_firma', '')[:10]) if info.get('fecha_firma') else '—'}<br>
-            <span style="font-size:7.5pt;font-style:italic;color:#4d7c0f">
-              Válido según Art. 14, Ley de Comercio Electrónico, Firmas Electrónicas y
-              Mensajes de Datos del Ecuador
-            </span>
-          </div>
-        </div>"""
+    # ── Bloque firma electrónica (estilo Quipux) ─────────────────────────
+    firma_bce_inline = ''
+    atte_margin      = 'margin-bottom:40px'   # espacio para firma física
+    if doc.firma_bce_info or pre_firma:
+        atte_margin     = 'margin-bottom:18px'
+        firma_bce_inline = """<p class="firma-electronica">Documento firmado electr&#xF3;nicamente</p>"""
 
     cuerpo_html = doc.cuerpo if doc.cuerpo else '<p style="color:#999;font-style:italic">[Sin contenido]</p>'
 
@@ -286,26 +276,14 @@ def html_documento_oficial(doc) -> str:
   .firma-nombre {{ font-weight: bold; font-family: Arial, sans-serif; font-size: 10.5pt; }}
   .firma-cargo  {{ font-size: 9.5pt; color: #555; margin-top: 2px; font-family: Arial, sans-serif; }}
 
-  /* ── SELLO BCE ── */
-  .sello-firma {{
-    margin-top: 20px;
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    background: #f0fdf4;
-    border: 1px solid #86efac;
-    border-radius: 6px;
-    padding: 10px 14px;
+  /* ── FIRMA ELECTRÓNICA (estilo Quipux) ── */
+  .firma-electronica {{
+    font-style: italic;
+    font-weight: bold;
+    color: #002f6c;
     font-family: Arial, sans-serif;
-    font-size: 8.5pt;
-    color: #14532d;
-  }}
-  .sello-check {{
-    min-width: 22px; height: 22px; border-radius: 50%;
-    background: #15803d; color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 12pt; font-weight: bold; flex-shrink: 0;
-    text-align: center; line-height: 22px;
+    font-size: 9.5pt;
+    margin-bottom: 12px;
   }}
 
   /* ── PIE DE PÁGINA (posición fija para todas las páginas) ── */
@@ -377,13 +355,12 @@ def html_documento_oficial(doc) -> str:
 
     <!-- Firma -->
     <div class="bloque-firma">
-      <p class="atte">Atentamente,</p>
+      <p class="atte" style="{atte_margin}">Atentamente,</p>
+      {firma_bce_inline}
       <p class="firma-nombre">{firmante}</p>
       {f'<p class="firma-cargo">{cargo_fir}</p>' if cargo_fir else ''}
       {f'<p class="firma-cargo">{unidad_orig}</p>' if unidad_orig else ''}
     </div>
-
-    {firma_bce}
 
   </div>
 

@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/services/api'
+import { quipuxService } from '@/services/quipux.service'
 import {
   Building2, FileText, ClipboardList, Mail,
-  Archive, Save, Plus, Edit2, X, Check,
+  Archive, Save, Plus, Edit2, Check,
   AlertCircle, CheckCircle2, Send, ToggleLeft, ToggleRight,
-  Settings, RefreshCw, ChevronRight
+  Settings, RefreshCw, ChevronRight, Link2
 } from 'lucide-react'
 
 // ── Servicios ──────────────────────────────────────────────────────────
@@ -137,6 +138,92 @@ function TabInstitucion() {
   )
 }
 
+// ── Panel de sincronización secuencial con Quipux ─────────────────────
+
+function PanelSecuencialQuipux({ tipos, onActualizado }: { tipos: any[]; onActualizado: () => void }) {
+  const [abierto, setAbierto] = useState(false)
+  const [anio, setAnio] = useState(new Date().getFullYear())
+  const [aplicando, setAplicando] = useState<number | null>(null)
+
+  const { data: secuenciales, isFetching, refetch } = useQuery({
+    queryKey: ['quipux-secuenciales', anio],
+    queryFn: () => quipuxService.secuenciales(anio),
+    enabled: abierto,
+    retry: false,
+  })
+
+  const aplicar = async (prefijo: string, ultimo: number) => {
+    const tipo = tipos.find(t => t.prefijo_numeracion === prefijo)
+    if (!tipo) return
+    setAplicando(tipo.id)
+    try {
+      await api.patch(`/documentos/tipos-documento/${tipo.id}/`, { secuencial_inicial: ultimo })
+      onActualizado()
+    } finally {
+      setAplicando(null)
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 20, border: '0.5px solid #c7d9f5', borderRadius: 12, overflow: 'hidden' }}>
+      <button onClick={() => { setAbierto(a => !a); if (!abierto) refetch() }}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', background: '#f0f5ff', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, color: '#002f6c' }}>
+        <Link2 size={14} />
+        Sincronizar secuenciales desde Quipux
+        <ChevronRight size={13} style={{ marginLeft: 'auto', transform: abierto ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }} />
+      </button>
+      {abierto && (
+        <div style={{ padding: '14px 16px', background: '#fff' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 11, color: '#6b7280' }}>Año:</span>
+            <input type="number" value={anio} onChange={e => setAnio(Number(e.target.value))}
+              style={{ width: 80, padding: '4px 8px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 6, outline: 'none' }} />
+            <button onClick={() => refetch()}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 7, border: '0.5px solid #e5e7eb', background: '#f9fafb', cursor: 'pointer', fontSize: 11, color: '#374151' }}>
+              <RefreshCw size={11} /> Consultar
+            </button>
+            <span style={{ fontSize: 10, color: '#9ca3af' }}>Muestra el último número secuencial en Quipux por prefijo</span>
+          </div>
+          {isFetching ? (
+            <p style={{ fontSize: 11, color: '#9ca3af', padding: '8px 0' }}>Consultando base Quipux...</p>
+          ) : !secuenciales ? null : secuenciales.length === 0 ? (
+            <p style={{ fontSize: 11, color: '#9ca3af' }}>No se encontraron documentos Quipux para {anio}.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {secuenciales.map(s => {
+                const tipo = tipos.find(t => t.prefijo_numeracion === s.prefijo)
+                const yaAplicado = tipo?.secuencial_inicial === s.ultimo_secuencial
+                return (
+                  <div key={`${s.prefijo}-${s.anio}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: '#f8faff', border: '0.5px solid #e8f1fd' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#002f6c', fontFamily: 'monospace', minWidth: 50 }}>{s.prefijo}</span>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>Último en Quipux {s.anio}:</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#0a1628' }}>{s.ultimo_secuencial.toLocaleString()}</span>
+                    {tipo ? (
+                      yaAplicado ? (
+                        <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 8, background: '#f0fdf4', color: '#15803d' }}>✓ Aplicado</span>
+                      ) : (
+                        <button onClick={() => aplicar(s.prefijo, s.ultimo_secuencial)} disabled={aplicando === tipo.id}
+                          style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 7, border: '0.5px solid #002f6c', background: '#002f6c', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600, opacity: aplicando === tipo.id ? .6 : 1 }}>
+                          <Check size={10} /> Aplicar a {tipo.nombre}
+                        </button>
+                      )
+                    ) : (
+                      <span style={{ marginLeft: 'auto', fontSize: 10, color: '#9ca3af' }}>Sin tipo SGD para este prefijo</span>
+                    )}
+                  </div>
+                )
+              })}
+              <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+                Al aplicar, el próximo documento SGD de ese tipo en {anio} empezará desde el número siguiente al último en Quipux.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Tab 2: Tipos de Documento ─────────────────────────────────────────
 
 function TabTiposDocumento() {
@@ -212,6 +299,10 @@ function TabTiposDocumento() {
               <label className={clsLabel}>Orden en menú</label>
               <input type="number" className={cls} value={form.orden ?? 99} onChange={e => set('orden', Number(e.target.value))} />
             </div>
+            <div>
+              <label className={clsLabel}>Secuencial inicial (migración Quipux)</label>
+              <input type="number" min={0} className={cls} placeholder="0" value={form.secuencial_inicial ?? 0} onChange={e => set('secuencial_inicial', Number(e.target.value))} />
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 20 }}>
               {[['requiere_firma', 'Requiere firma'], ['requiere_aprobacion', 'Requiere aprobación']].map(([k, l]) => (
                 <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: '#374151' }}>
@@ -247,6 +338,7 @@ function TabTiposDocumento() {
                 <p style={{ fontSize: 12, fontWeight: 600, color: t.activo ? '#0a1628' : '#9ca3af', margin: 0 }}>{t.nombre}</p>
                 <p style={{ fontSize: 10, color: '#9ca3af', margin: '2px 0 0' }}>
                   {t.dias_plazo_default} días · {t.requiere_firma ? '✓ Firma' : 'Sin firma'} · {t.requiere_aprobacion ? '✓ Aprobación' : 'Sin aprobación'} · Orden: {t.orden}
+                  {t.secuencial_inicial > 0 && ` · Inicio Quipux: ${t.secuencial_inicial}`}
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -264,6 +356,9 @@ function TabTiposDocumento() {
           ))}
         </div>
       )}
+
+      {/* ── Panel de sincronización con Quipux ── */}
+      <PanelSecuencialQuipux tipos={tipos ?? []} onActualizado={() => qc.invalidateQueries({ queryKey: ['tipos-doc-ajustes'] })} />
     </div>
   )
 }

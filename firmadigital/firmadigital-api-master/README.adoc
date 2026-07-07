@@ -1,0 +1,97 @@
+= FirmaEC: firmadigital-api
+
+Este proyecto implementa los servicios REST para la aplicación de FirmaEC.
+
+== Introducción
+
+Los siguientes pasos le permitirán obtener una copia del proyecto para correrla en la máquina local para propósitos de desarrollo y pruebas.
+
+== Prerequisitos
+
+=== Java
+
+Se necesita instalar _Java Development Kit (JDK) 17_ para compilar y correr la aplicación.
+
+En Fedora se debe instalar el paquete _java-17-openjdk-devel_:
+
+[source, bash]
+----
+$ sudo dnf -y install java-17-openjdk-devel
+----
+
+En Ubuntu se debe instalar el paquete _openjdk-17-jdk_.
+
+[source, bash]
+----
+$ sudo apt-get install openjdk-17-jdk
+----
+
+=== Maven
+
+Para compilar y empaquetar se utiliza https://maven.apache.org[Apache Maven] versión 3.8.8.
+
+En _Microsoft Windows_ se debe descargar e instalar siguiendo las instrucciones de instalación de https://maven.apache.org/install.html[Apache Maven].
+
+En _Fedora_ se debe instalar el paquete  `maven`:
+
+[source,bash]
+----
+$ sudo dnf install maven
+----
+
+En _Ubuntu_ se debe instalar el paquete `maven`:
+
+[source,bash]
+----
+$ sudo apt-get install maven
+----
+
+=== NetBeans
+
+Se utilizó como entorno de desarrollo el IDE https://netbeans.org[Netbeans].
+
+== Compilar
+
+Se debe compilar usando el siguiente comando:
+
+[source, bash]
+----
+$ mvn clean package
+----
+
+=== WildFly
+
+Se utilizó el servidor de aplicación https://www.wildfly.org/downloads/[Wildfly].
+
+== Configuración de variables globales
+
+Se establece el subdominio donde se publica el proyecto _firmadigital-servicio_, se deben configurar las variables globales desde el servidor de aplicación:
+
+[source, bash]
+----
+        <property name="firmadigital-servicio.url" value="https://impws.firmadigital.gob.ec/servicio"/>
+----
+
+== Desplegar
+
+Para desplegar el proyecto _firmadigital-api_, se debe utilizar el servidor de aplicación Wildfly desde la versión 35.
+
+Se debe copiar el archivo `target/api.war` a la carpeta `standalone/deploy` de un servidor de aplicaciones WildFly
+
+== Colaborar
+
+Para colaborar se puede enviar un _Merge Request_ utilizando la plataforma https://minka.gob.ec/mintel/ge/firmaec[Minka].
+
+== Versiones
+
+Usamos https://minka.gob.ec/mintel/ge/estandares/-/blob/master/versionamiento.md[Estandares] para versionar.
+
+== Autores
+
+* *Ricardo Arguello* - *Desarrollo* - https://www.soportelibre.com[Soporte Libre]
+* *Misael Fernández* - *Desarrollo* - misael.fernandez.correa@gmail.com
+* *Diana Pujol* - *Deeper* - deeperdigitalec@outlook.es
+
+== Licencia
+
+Esta aplicación se distribuye con una licencia https://www.gnu.org/licenses/gpl.html[GPLv3].

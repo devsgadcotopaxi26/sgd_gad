@@ -124,19 +124,15 @@ class UsuarioDetalleSerializer(serializers.ModelSerializer):
             'cargo', 'titulo', 'cargo_tipo', 'fecha_ingreso', 'firma_electronica',
             'cert_bce_serial', 'cert_bce_expira',
             'activo', 'bloqueado', 'motivo_bloqueo',
-            'ultimo_acceso', 'creado_en', 'roles',
+            'ultimo_acceso', 'creado_en', 'is_superuser', 'roles',
         ]
-        read_only_fields = ['uuid', 'ultimo_acceso', 'creado_en']
+        read_only_fields = ['uuid', 'ultimo_acceso', 'creado_en', 'is_superuser']
 
     def get_roles(self, obj):
         return [
-            {
-                'rol_id':   ur.rol.id,
-                'codigo':   ur.rol.codigo,
-                'nombre':   ur.rol.nombre,
-                'unidad_id': ur.unidad_id,
-            }
-            for ur in obj.roles.filter(activo=True).select_related('rol')
+            {'id': ur.id, 'rol': ur.rol_id, 'rol_codigo': ur.rol.codigo,
+             'rol_nombre': ur.rol.nombre, 'activo': ur.activo}
+            for ur in obj.roles.select_related('rol')
         ]
 
 
@@ -157,6 +153,13 @@ class UsuarioCrearSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         return user
+
+
+class PerfilUpdateSerializer(serializers.ModelSerializer):
+    """Solo los campos que el propio usuario puede actualizar en su perfil."""
+    class Meta:
+        model  = Usuario
+        fields = ['email', 'email_institucional', 'telefono_movil', 'telefono_fijo']
 
 
 class CambiarPasswordSerializer(serializers.Serializer):

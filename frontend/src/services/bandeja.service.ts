@@ -33,10 +33,12 @@ export interface ConteosBandeja {
 }
 
 export const bandejaService = {
-  conteos: () =>
-    api.get<ConteosBandeja>('/documentos/bandeja/conteos/').then(r => r.data),
+  conteos: (usuarioId?: number) =>
+    api.get<ConteosBandeja>('/documentos/bandeja/conteos/', {
+      params: usuarioId ? { usuario_id: usuarioId } : {},
+    }).then(r => r.data),
 
-  porBandeja: (bandeja: string, params?: Record<string, string>) =>
+  porBandeja: (bandeja: string, params?: Record<string, string | number | undefined>) =>
     api.get<{ count: number; results: BandejaItem[] }>(
       '/documentos/bandeja/por_bandeja/',
       { params: { bandeja, ...params } }

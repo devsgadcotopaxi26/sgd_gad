@@ -34,7 +34,7 @@ export default function LoginPage() {
     clearError()
     try {
       await login(data.username, data.password)
-      navigate('/dashboard')
+      navigate('/documentos')
     } catch { /* error en store */ }
   }
 

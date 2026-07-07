@@ -46,3 +46,9 @@ pdf2image==1.17.0
 
 # Post-procesamiento PDF (quitar /ObjStm para compatibilidad con FirmaEC)
 pypdf==6.14.2
+
+# HTTP client para llamar al FirmaDigital servicio
+requests==2.32.3
+
+# Exportación Excel
+openpyxl==3.1.5

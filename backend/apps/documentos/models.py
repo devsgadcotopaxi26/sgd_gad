@@ -13,6 +13,7 @@ class TipoDocumento(models.Model):
     dias_plazo_default   = models.SmallIntegerField(default=15)
     activo               = models.BooleanField(default=True)
     orden                = models.SmallIntegerField(default=99)
+    secuencial_inicial   = models.IntegerField(default=0, help_text='Secuencial desde el que inicia la numeración (para migración desde Quipux)')
 
     class Meta:
         db_table = 'doc_tipo_documento'
@@ -103,6 +104,10 @@ class Documento(models.Model):
         on_delete=models.SET_NULL, related_name='documentos_anulados'
     )
     motivo_anulacion    = models.TextField(blank=True)
+    quipux_origen       = models.CharField(
+        max_length=60, blank=True,
+        help_text='radi_nume_text del documento Quipux al que este responde'
+    )
 
     class Meta:
         db_table = 'doc_documento'
@@ -123,7 +128,9 @@ class Documento(models.Model):
         ultimo  = Documento.objects.filter(
             tipo_documento=self.tipo_documento, anio=anio
         ).count()
-        secuencial = ultimo + 1
+        # Si hay un secuencial inicial por migración Quipux, arrancar desde ahí
+        base = self.tipo_documento.secuencial_inicial or 0
+        secuencial = max(ultimo + 1, base + 1)
         siglas     = self.unidad_origen.siglas or 'GAD'
         self.numero_documento  = f'{self.tipo_documento.prefijo_numeracion}-{str(secuencial).zfill(4)}-{siglas}-{anio}'
         self.numero_secuencial = secuencial
@@ -402,3 +409,79 @@ class AdjuntoDocumento(models.Model):
         if self.origen_digitalizacion != 'institucional':
             return None
         return bool(self.resolucion_ppp and self.resolucion_ppp >= 300)
+
+
+class QuipuxBandejaSGD(models.Model):
+    """
+    Extiende las bandejas Quipux con acciones registradas en SGD.
+    Permite reasignar y comentar documentos históricos Quipux sin
+    escribir en la base de datos Quipux (que es read-only).
+    """
+    ACCION_CHOICES = [
+        ('reasignacion', 'Reasignación'),
+        ('comentario',   'Comentario'),
+        ('archivado',    'Archivado'),
+    ]
+
+    radi_nume_text = models.CharField(max_length=50, db_index=True)
+    radi_asunto    = models.CharField(max_length=350, blank=True)
+    cedula_usuario = models.CharField(max_length=20, db_index=True)
+    tipo           = models.SmallIntegerField()  # 2=recibido (reasignacion destino)
+    accion         = models.CharField(max_length=20, choices=ACCION_CHOICES)
+    observacion    = models.TextField(blank=True)
+    creado_por     = models.ForeignKey(
+        'usuarios.Usuario', on_delete=models.CASCADE,
+        related_name='quipux_derivaciones'
+    )
+    creado_en      = models.DateTimeField(auto_now_add=True)
+    leido          = models.BooleanField(default=False)
+    leido_en       = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'doc_quipux_bandeja'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f'{self.accion} — {self.radi_nume_text}'
+
+
+class QuipuxTareaAvance(models.Model):
+    """
+    Actualizaciones de avance de tareas Quipux almacenadas en SGD.
+    La tabla `tarea` de Quipux es read-only; este modelo extiende el avance.
+    """
+    tarea_codi  = models.IntegerField(db_index=True)   # PK en tarea de Quipux
+    avance      = models.SmallIntegerField()            # 0–100
+    observacion = models.TextField(blank=True)
+    creado_por  = models.ForeignKey(
+        'usuarios.Usuario', on_delete=models.CASCADE,
+        related_name='quipux_avances'
+    )
+    creado_en   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'doc_quipux_tarea_avance'
+        ordering = ['-creado_en']
+
+    def __str__(self):
+        return f'Tarea {self.tarea_codi} → {self.avance}%'
+
+
+class QuipuxContenidoPDF(models.Model):
+    """
+    Índice de texto extraído de los PDFs de Quipux para búsqueda full-text.
+    Procesado por tarea Celery; la DB documental es read-only.
+    """
+    radi_nume_text  = models.CharField(max_length=60, unique=True, db_index=True)
+    arch_codi       = models.IntegerField()           # arch_codi cuando se extrajo
+    contenido_texto = models.TextField(blank=True)
+    tiene_contenido = models.BooleanField(default=False)
+    es_escaneado    = models.BooleanField(default=False)
+    procesado_en    = models.DateTimeField(auto_now_add=True)
+    error_extraccion = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        db_table = 'doc_quipux_contenido'
+
+    def __str__(self):
+        return self.radi_nume_text

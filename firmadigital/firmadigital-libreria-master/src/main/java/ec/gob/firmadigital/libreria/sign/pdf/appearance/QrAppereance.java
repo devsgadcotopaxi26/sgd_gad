@@ -1,0 +1,153 @@
+/*
+ * Copyright (C) 2021 
+ * Authors: Ricardo Arguello
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.*
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+package ec.gob.firmadigital.libreria.sign.pdf.appearance;
+
+import java.io.IOException;
+import java.util.logging.Logger;
+
+import com.itextpdf.io.image.ImageDataFactory;
+import com.itextpdf.kernel.colors.ColorConstants;
+import com.itextpdf.kernel.font.PdfFont;
+import com.itextpdf.kernel.geom.Rectangle;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.canvas.PdfCanvas;
+import com.itextpdf.kernel.pdf.xobject.PdfFormXObject;
+import com.itextpdf.layout.Canvas;
+import com.itextpdf.layout.borders.SolidBorder;
+import com.itextpdf.layout.element.Div;
+import com.itextpdf.layout.element.Image;
+import com.itextpdf.layout.element.Paragraph;
+import com.itextpdf.layout.element.Text;
+import com.itextpdf.layout.properties.HorizontalAlignment;
+import com.itextpdf.layout.properties.VerticalAlignment;
+import com.itextpdf.signatures.PdfSignatureAppearance;
+
+import ec.gob.firmadigital.libreria.utils.QRCode;
+import static ec.gob.firmadigital.libreria.utils.Utils.loadFont;
+import java.util.logging.Level;
+
+public class QrAppereance implements CustomAppearance {
+
+    private final String nombreFirmante;
+    private final String reason;
+    private final String location;
+    private final String signTime;
+    private final String infoQR;
+
+    private static final Logger LOGGER = Logger.getLogger(QrAppereance.class.getName());
+
+    public QrAppereance(String nombreFirmante, String reason, String location, String signTime, String infoQR) {
+        this.nombreFirmante = nombreFirmante;
+        this.reason = reason;
+        this.location = location;
+        this.signTime = signTime;
+        this.infoQR = infoQR;
+    }
+
+    @Override
+    public void createCustomAppearance(PdfSignatureAppearance signatureAppearance, int pageNumber,
+            PdfDocument pdfDocument, Rectangle signaturePositionOnPage) throws IOException {
+
+        signatureAppearance.setPageRect(signaturePositionOnPage);
+        signatureAppearance.setPageNumber(pageNumber);
+
+        PdfFormXObject layer2 = signatureAppearance.getLayer2();
+        PdfCanvas canvas = new PdfCanvas(layer2, pdfDocument);
+
+        PdfFont fontCourier = loadFont("fonts/courier.ttf");
+        PdfFont fontCourierBold = loadFont("fonts/courier-bold.ttf");
+
+        // Imagen
+        byte[] byteQR = null;
+
+        // QR
+        String text = "FIRMADO POR: " + nombreFirmante.trim() + "\n";
+        text = text + "RAZON: " + reason + "\n";
+        text = text + "LOCALIZACION: " + location + "\n";
+        text = text + "FECHA: " + signTime + "\n";
+        text = text + infoQR;
+
+        try {
+            byteQR = QRCode.generateQR(text, (int) signaturePositionOnPage.getHeight(),
+                    (int) signaturePositionOnPage.getHeight());
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error al generar QR: {0}", e);
+        }
+
+        // QR
+        Rectangle dataRect = new Rectangle(0, 0, signaturePositionOnPage.getWidth(),
+                signaturePositionOnPage.getHeight());
+
+        Rectangle signatureRect = new Rectangle(signaturePositionOnPage.getWidth() / 3, 0,
+                signaturePositionOnPage.getWidth(), signaturePositionOnPage.getHeight());
+
+        Div imageDiv = new Div();
+        imageDiv.setHeight(dataRect.getHeight());
+        imageDiv.setWidth(dataRect.getWidth());
+        imageDiv.setVerticalAlignment(VerticalAlignment.MIDDLE);
+        imageDiv.setHorizontalAlignment(HorizontalAlignment.CENTER);
+
+        Image image = new Image(ImageDataFactory.create(byteQR));
+        image.setAutoScale(true);
+        imageDiv.add(image);
+
+        try (Canvas imageLayoutCanvas = new Canvas(canvas, dataRect)) {
+            imageLayoutCanvas.add(imageDiv);
+        }
+
+        Div textDiv = new Div();
+        textDiv.setHeight(signatureRect.getHeight());
+        textDiv.setWidth(signatureRect.getWidth() - signaturePositionOnPage.getWidth() / 3);
+        textDiv.setVerticalAlignment(VerticalAlignment.MIDDLE);
+        textDiv.setHorizontalAlignment(HorizontalAlignment.LEFT);
+        textDiv.setMargin(0f);
+//        textDiv.setBorder(new SolidBorder(ColorConstants.RED, 0.2f)); // Temporal para depuración
+
+        Text texto = new Text("Validar únicamente en FirmaEC.\nFirmado electrónicamente por:\n");
+        Paragraph paragraph = new Paragraph()
+                .add(texto)
+                .setFont(fontCourier)
+                .setMargin(0)
+                .setMultipliedLeading(1.0f)
+                .setFontSize(3.25f);
+//                .setBorder(new SolidBorder(ColorConstants.BLUE, 0.2f)); // Temporal para depuración
+        textDiv.add(paragraph);
+
+        Text contenido = new Text(truncarLinea((nombreFirmante), "...").trim());
+        paragraph = new Paragraph()
+                .add(contenido)
+                .setFont(fontCourierBold)
+                .setMargin(0)
+                .setMultipliedLeading(0.60f)
+                .setFontSize(6.25f);
+//                .setBorder(new SolidBorder(ColorConstants.BLACK, 0.2f)); // Temporal para depuración
+        textDiv.add(paragraph);
+
+        try (Canvas textLayoutCanvas = new Canvas(canvas, signatureRect)) {
+            textLayoutCanvas.add(textDiv);
+        }
+    }
+
+    private String truncarLinea(String linea, String sufijo) {
+        int maxCaracteres = 57;//115;//57;//19 es lo máximo por línea
+        if (linea.length() > maxCaracteres) {
+            return linea.substring(0, maxCaracteres - sufijo.length()) + sufijo;
+        }
+        return linea;
+    }
+}
