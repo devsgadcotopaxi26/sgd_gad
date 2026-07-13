@@ -72,7 +72,7 @@ auditoria/AuditoriaPage.tsx                      # Log consultable con filtros +
 auth/LoginPage.tsx
 dashboard/DashboardPage.tsx
 documentos/DocumentosPage.tsx                    # Módulo principal tipo Quipux (bandejas)
-portal/PortalPage.tsx
+portal/PortalPage.tsx                            # Portal ciudadano (consulta trámites)
 reportes/ReportesPage.tsx
 tramites/TramitesPage.tsx
 tramites/ConfiguracionTramitesPage.tsx
@@ -86,7 +86,8 @@ usuarios/UsuariosPage.tsx
 
 ```
 AdjuntosPanel.tsx           # Subida con metadatos digitalización (300ppp, OCR, control calidad)
-EditorDocumento.tsx         # Editor ReactQuill para redacción de documentos oficiales
+EditorDocumento.tsx         # Editor ReactQuill; vista previa muestra PDF real WeasyPrint en iframe
+GlassCard.tsx               # Tarjeta con efecto glassmorphism (reutilizable)
 ModalEnviarEmail.tsx        # Envío de PDF por SMTP a externos
 ModalFirmaElectronica.tsx   # Firma P12 en navegador (BCE, Security Data, UANATACA)
 VincularExpedienteModal.tsx
@@ -128,20 +129,31 @@ VincularExpedienteModal.tsx
 GET/POST  /documentos/                              Lista/crear documentos
 GET       /documentos/{id}/pdf/                     Genera PDF con membrete WeasyPrint
 POST      /documentos/{id}/cambiar_estado/          {estado: "enviado"}
+POST      /documentos/{id}/anular/                  {motivo: "..."}
 POST      /documentos/{id}/registrar_firma/         {firma_info: {...}}
+POST      /documentos/{id}/enviar/                  Envía el documento a destinatarios
+POST      /documentos/{id}/reasignar_a/             {usuario_id, unidad_id} — asigna DE
+POST      /documentos/{id}/recuperar/               Recupera doc enviado (ventana 10 min)
 POST      /documentos/{id}/enviar_email/            {destinatarios: [], asunto_email, adjuntar_pdf}
-GET       /documentos/bandeja/conteos/              No leídos por bandeja
-GET       /documentos/bandeja/por_bandeja/          ?bandeja=recibidos
+POST      /documentos/{id}/nueva_version/           {cuerpo, comentario}
+GET       /documentos/bandeja/conteos/              No leídos por bandeja (incluye reasignados)
+GET       /documentos/bandeja/por_bandeja/          ?bandeja=recibidos|reasignados|...
 POST      /documentos/bandeja/{id}/marcar_leido/
 POST      /documentos/bandeja/{id}/reasignar/
 POST      /documentos/bandeja/{id}/archivar/
 POST      /documentos/bandeja/{id}/comentar/
+POST      /documentos/bandeja/{id}/nueva_tarea/
+POST      /documentos/bandeja/{id}/agregar_imprimir/
+POST      /documentos/bandeja/{id}/marcar_impreso/
 GET/POST  /documentos/adjuntos/                     Multipart/form-data
 GET       /documentos/adjuntos/buscar/?q=texto      Búsqueda full-text en contenido PDF
 POST      /documentos/adjuntos/{id}/control-calidad/
+GET       /documentos/adjuntos/{id}/descargar/
 POST      /documentos/digitalizacion-masiva/        Batch hasta 50 PDFs
 GET       /documentos/digitalizacion-masiva/        Estado OCR (pendientes, procesados)
-GET       /documentos/tipos-documento/
+GET       /documentos/tipos/                        Lista tipos de documento
+GET/POST  /documentos/listas-distribucion/
+GET       /documentos/listas-distribucion/buscar/?q=
 ```
 
 ### Tramites
@@ -187,31 +199,43 @@ POST      /configuracion/test-email/                {email: "..."}
 
 ---
 
-## Bandejas del sistema (igual que Quipux real)
+## Bandejas del sistema
 
-`recibidos`, `en_elaboracion`, `enviados`, `no_enviados`, `tareas_recibidas`, `tareas_enviadas`, `archivados`, `carpetas`, `por_imprimir`
+`recibidos`, `en_elaboracion`, `enviados`, `no_enviados`, `reasignados` *(virtual)*, `tareas_recibidas`, `tareas_enviadas`, `archivados`, `carpetas`, `por_imprimir`
+
+**Bandeja `reasignados` es virtual:** los items NO tienen `bandeja='reasignados'` en BD. Físicamente están en `bandeja='en_elaboracion'` con `accion_tomada='reasignado'`. El endpoint `por_bandeja` y el de `conteos` la manejan como caso especial. La bandeja `en_elaboracion` excluye los `accion_tomada='reasignado'`.
 
 ---
 
 ## Roles del sistema (permisos.py)
 
-`ADMIN`, `PREFECTO`, `SECRETARIO`, `DIRECTOR`, `ANALISTA`, `ASISTENTE`, `RECEPCION`, `ARCHIVO`, `SOLO_LECTURA`
+| Código | Descripción |
+|--------|-------------|
+| `USUARIO` | Crea y gestiona documentos; sin menús de módulos extra |
+| `ARCHIVO` | Documentos + trámites + módulo archivo + reportes |
+| `ADMIN_ARCHIVO` | Como ARCHIVO pero con eliminación y gestión de usuarios (solo ver) |
+| `ADMIN_GENERAL` | Acceso completo a todos los módulos incluyendo ajustes |
+
+**IMPORTANTE:** Los códigos de rol son `ADMIN_GENERAL` y `ADMIN_ARCHIVO`. El código `ADMIN` ya **no existe**. Cualquier comparación de roles debe usar los 4 códigos de la tabla. El superusuario Django hereda automáticamente `ADMIN_GENERAL`.
 
 Módulos: `documentos`, `tramites`, `archivo`, `usuarios`, `organigrama`, `reportes`, `ajustes`
 
 ---
 
-## Membrete institucional oficial (hoja 2023-2027)
+## Membrete institucional oficial (WeasyPrint)
 
 Archivo: `backend/apps/documentos/plantillas.py` → función `html_documento_oficial(doc)`
 
-**Encabezado:**
-- Izquierda: Escudo GAD → URL: `https://cotopaxi.gob.ec/wp-content/uploads/2026/02/Prefectura-de-Cotopaxi-0062d2.svg`
+**Encabezado (CSS Running Elements):**
+- `.page-header { position: running(page-header); width: 210mm; }` — se repite en todas las páginas
+- Izquierda: Escudo GAD (archivo local `backend/apps/documentos/logos/`)
 - Derecha: Logo "Prefectura COTOPAXI — Juntos, construimos la nueva historia"
-- Línea azul (#002f6c 60%) + roja (#da291c 40%) + segunda línea delgada roja
+- Líneas separadoras: `height: 2pt`, ROJA (flex:1) | gap 3pt | AZUL (flex:1)
+- `@page { margin: 44mm 0 24mm 0 }` — 44mm top para que el contenido no tape el header
 
 **Pie de página:**
-- Mismas líneas arriba
+- `.page-footer { position: running(page-footer); width: 210mm; padding: 0 10mm 3mm; }`
+- Mismas líneas separadoras con más margen
 - `Dir: Calle Tarqui N° 507 y Quito • Telf: (03) 2800 416 - 2800 418 • Telefax: 2800 411`
 - `E-mail: documentacion@cotopaxi.gob.ec • www.cotopaxi.gob.ec • Cotopaxi - Ecuador`
 
@@ -221,11 +245,10 @@ Archivo: `backend/apps/documentos/plantillas.py` → función `html_documento_of
 - "Atentamente," con espacio suficiente abajo
 - Línea horizontal 220px centrada
 - Nombre firmante en negrita mayúsculas
-- Cargo del firmante
-- Nombre de la unidad
+- Cargo del firmante + nombre de la unidad
 - Si tiene firma BCE: sello verde ✓ con datos del certificado
 
-**Problema actual a resolver:** El logo de la Prefectura (derecha del membrete) no carga en WeasyPrint porque la URL externa falla. Solución recomendada: guardar el logo como archivo estático local en `backend/staticfiles/` y referenciar con ruta absoluta del servidor.
+**NOTA:** Los logos se referencian con rutas absolutas del sistema de archivos (no URLs externas), porque WeasyPrint no puede cargar recursos externos en el contenedor Docker.
 
 ---
 
@@ -235,7 +258,27 @@ Archivo: `backend/apps/documentos/plantillas.py` → función `html_documento_of
 - Modal `w-[90vw] max-w-5xl max-h-[92vh]` — NO fullscreen para que el sidebar sea visible
 - Plantillas predefinidas en `frontend/src/constants/plantillas.constants.ts`
 - Al guardar: si `tipo_documento.requiere_firma === true`, abre automáticamente `ModalFirmaElectronica`
-- Vista previa: actualmente muestra simulación HTML — pendiente mostrar PDF real del backend en iframe
+- **Vista previa:** si el documento ya fue guardado → muestra PDF real de WeasyPrint en `<iframe>` (blob URL). Si es borrador nuevo → simulación HTML con marca de agua `marca_agua_quipux.png`
+
+---
+
+## Flujo "Designado para Elaborar" (DE)
+
+Cuando el creador elige un DE distinto a sí mismo y hace clic en "Aceptar y Reasignar":
+- El creador: su item de bandeja queda en `en_elaboracion` con `accion_tomada='reasignado'` → aparece en su bandeja **Reasignados**
+- El DE: recibe un item en su bandeja **En elaboración** para editar y enviar el documento
+- En el panel de detalle se muestra "Firmará / Enviará: [nombre] — [cargo]" cuando el DE es distinto al creador
+- `Documento.remitente` (FK a Usuario) = el DE designado para firmar/enviar
+
+---
+
+## Recuperar documento
+
+- Botón **"Recuperar (N min)"** en naranja en el panel de detalle
+- Visible solo en bandejas **Enviados** y **Reasignados** mientras haya minutos restantes en la ventana
+- Ventana de 10 minutos desde el último `SeguimientoDocumento` con `etapa='enviado'` o `etapa='reasignado'`
+- Al recuperar: elimina el doc de todas las bandejas de destinatarios, devuelve al creador en **En elaboración**, cambia `estado='borrador'`, registra `etapa='recuperado'` en seguimiento
+- `BandejaSerializer.minutos_para_recuperar` calcula el tiempo restante; valor negativo o `null` = ventana expirada
 
 ---
 
@@ -259,19 +302,44 @@ Archivo: `backend/apps/documentos/plantillas.py` → función `html_documento_of
 
 ---
 
-## Tareas pendientes (en orden de prioridad)
+## Estado actual del proyecto (julio 2026)
 
-1. **Logo Prefectura en PDF** — el encabezado derecho del membrete no muestra el logo de la Prefectura en el PDF generado. Guardar como estático local y referenciar en `plantillas.py`
+### ✅ Implementado y funcional
 
-2. **Bloque de firma en vista previa** — la vista previa HTML del editor no tiene el bloque "Atentamente / línea / nombre / cargo / unidad" con el formato correcto
+| Módulo | Estado |
+|--------|--------|
+| Autenticación JWT + roles | ✅ Completo |
+| Módulo Documentos (bandejas, envío, seguimiento) | ✅ Completo |
+| Bandeja virtual "Reasignados" | ✅ Completo |
+| Flujo DE (Designado para Elaborar) | ✅ Completo |
+| Recuperar documento (ventana 10 min) | ✅ Completo |
+| Vista previa PDF real en EditorDocumento | ✅ Completo |
+| Membrete WeasyPrint (cabecera + pie + marca de agua) | ✅ Completo |
+| Firma electrónica P12 en navegador (BCE) | ✅ Completo |
+| Envío por email SMTP (externos) | ✅ Completo |
+| OCR y digitalización masiva | ✅ Completo |
+| Búsqueda full-text en adjuntos PDF | ✅ Completo |
+| Módulo Archivo (expedientes, préstamos, copias, baja) | ✅ Completo |
+| Módulo Trámites ciudadanos | ✅ Completo |
+| Módulo Auditoría (log + dashboard KPIs) | ✅ Completo |
+| Panel admin ve bandejas de otros usuarios | ✅ Completo |
+| Búsqueda en bandeja de otro usuario (admin) | ✅ Completo |
+| Quipux Histórico con filtro de búsqueda | ✅ Completo |
+| Listas de distribución (importadas desde Quipux) | ✅ Completo |
+| Organigrama | ✅ Completo |
+| Ajustes del sistema (SMTP, tipos doc, series) | ✅ Completo |
 
-3. **Notificaciones en tiempo real** — polling cada 30s ya existe para conteos de bandeja. Pendiente: notificaciones push cuando llega un documento nuevo (usar `refetchInterval` o Django Channels)
+### ⏳ Pendiente
 
-4. **Portal ciudadano** — página `/portal` pública para consultar trámites por número o cédula
+1. **Logo derecho del membrete en PDF** — el logo "Prefectura COTOPAXI" del lado derecho del encabezado no carga correctamente en WeasyPrint. Debe guardarse como archivo estático local en `backend/apps/documentos/logos/` y referenciarse con ruta absoluta (igual que el escudo izquierdo).
 
-5. **Reportes con Excel** — exportar a `.xlsx` usando `openpyxl`. Instalar con `pip install openpyxl --break-system-packages`
+2. **Reportes con Excel** — exportar a `.xlsx` con `openpyxl` (instalar con `pip install openpyxl --break-system-packages` en el Dockerfile). La página de reportes existe pero solo muestra datos en pantalla.
 
-6. **Flujo de revisión/aprobación** — estado `en_elaboracion` con pasos configurables antes de `enviado`
+3. **Notificaciones push en tiempo real** — el polling de conteos de bandeja está (30s). Falta notificación visual/sonora cuando llega un documento nuevo (candidato: Django Channels + WebSocket, o Server-Sent Events).
+
+4. **Portal ciudadano funcional** — la página `/portal` existe. Pendiente: búsqueda pública de trámites por número de trámite o cédula del ciudadano, sin login.
+
+5. **Flujo de revisión/aprobación configurable** — el estado `en_elaboracion` actualmente va directo a `enviado`. Falta un paso intermedio de revisión por un superior antes del envío, configurable por tipo de documento.
 
 ---
 
@@ -310,3 +378,5 @@ docker-compose up -d backend
 - OCR: idioma `spa` (español Ecuador)
 - `LogAuditoria`: `managed=False`, nunca migrar esa tabla
 - `ConfiguracionSistema`: singleton, acceder con `ConfiguracionSistema.get()`
+- Roles: comparar siempre con `['ADMIN_GENERAL', 'ADMIN_ARCHIVO']`, nunca con el antiguo `'ADMIN'`
+- WeasyPrint: los recursos (imágenes, fuentes) deben ser rutas absolutas del sistema de archivos, no URLs externas
