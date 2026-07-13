@@ -42,7 +42,7 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Documento.objects.select_related(
             'tipo_documento', 'unidad_origen', 'unidad_destino',
-            'creado_por', 'firmado_por',
+            'creado_por', 'firmado_por', 'remitente',
         )
 
     def get_serializer_class(self):
@@ -101,7 +101,7 @@ class DocumentoViewSet(viewsets.ModelViewSet):
                 etapa       = etapa,
                 usuario     = request.user,
                 unidad      = getattr(request.user, 'unidad', None),
-                observacion = request.data.get('observacion', f'Estado cambiado a {nuevo_estado}'),
+                observacion = request.data.get('observacion') or f'Estado cambiado a {nuevo_estado}',
             )
         return Response(DocumentoListSerializer(doc).data)
 
@@ -149,6 +149,152 @@ class DocumentoViewSet(viewsets.ModelViewSet):
             'detail': 'Documento firmado correctamente.',
             'firma_bce_info': doc.firma_bce_info,
         })
+
+    @action(detail=True, methods=['post'], url_path='enviar')
+    def enviar(self, request, pk=None):
+        doc = self.get_object()
+        if doc.estado == 'enviado':
+            return Response({'detail': 'El documento ya fue enviado.'}, status=400)
+        doc.estado     = 'enviado'
+        doc.fecha_envio = timezone.now()
+        doc.save(update_fields=['estado', 'fecha_envio'])
+        # Mover bandeja del titular (remitente o creador) a 'enviados'
+        titular = doc.remitente or doc.creado_por
+        BandejaDocumento.objects.filter(
+            documento=doc, usuario=titular, bandeja='en_elaboracion'
+        ).update(bandeja='enviados')
+        # Si el creador es distinto del titular, también darle visibilidad en 'enviados'
+        if doc.creado_por and doc.creado_por != titular:
+            BandejaDocumento.objects.get_or_create(
+                documento=doc,
+                usuario=doc.creado_por,
+                defaults={'bandeja': 'enviados'},
+            )
+            BandejaDocumento.objects.filter(
+                documento=doc, usuario=doc.creado_por, bandeja='en_elaboracion'
+            ).update(bandeja='enviados')
+        # Crear entradas en recibidos para cada destinatario al momento del envío
+        dest_names = []
+        for d in doc.destinatarios.select_related('usuario').all():
+            if d.usuario:
+                BandejaDocumento.objects.get_or_create(
+                    documento=doc,
+                    usuario=d.usuario,
+                    bandeja='recibidos',
+                    defaults={'es_urgente': doc.prioridad != 'normal'},
+                )
+                dest_names.append(d.usuario.nombre_completo)
+        obs = f'Enviado a: {", ".join(dest_names)}' if dest_names else 'Enviado'
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'enviado',
+            usuario     = request.user,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = obs,
+        )
+        return Response({'detail': 'Documento enviado correctamente.'})
+
+    @action(detail=True, methods=['post'], url_path='reasignar_a')
+    def reasignar_a(self, request, pk=None):
+        """
+        Reasigna el documento a un usuario diferente (el remitente/DE indicado).
+        El documento pasa a la bandeja 'en_elaboracion' del destinatario para que
+        él lo firme y envíe. El ítem del creador queda marcado como 'reasignado'.
+        """
+        doc        = self.get_object()
+        usuario_id = request.data.get('usuario_id')
+        unidad_id  = request.data.get('unidad_id')
+
+        if not usuario_id:
+            return Response({'error': 'usuario_id requerido'}, status=400)
+
+        # Marcar mi ítem como reasignado
+        my_item = BandejaDocumento.objects.filter(
+            documento=doc, usuario=request.user
+        ).first()
+        if my_item:
+            my_item.accion_tomada = 'reasignado'
+            my_item.save()
+
+        # Crear ítem en 'en_elaboracion' del remitente designado
+        BandejaDocumento.objects.get_or_create(
+            documento  = doc,
+            usuario_id = usuario_id,
+            bandeja    = 'en_elaboracion',
+            defaults={
+                'unidad_id':    unidad_id,
+                'es_urgente':   my_item.es_urgente if my_item else False,
+                'fecha_limite': my_item.fecha_limite if my_item else None,
+            },
+        )
+
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'reasignado',
+            usuario     = request.user,
+            unidad_id   = unidad_id,
+            observacion = f'Reasignado a usuario {usuario_id} para firma y envío',
+        )
+        return Response({'detail': 'Documento reasignado al remitente designado.'})
+
+    @action(detail=True, methods=['post'], url_path='recuperar')
+    def recuperar(self, request, pk=None):
+        """
+        Permite al creador o remitente recuperar un documento enviado/reasignado
+        dentro de los 10 minutos posteriores al envío.
+        Elimina el documento de las bandejas de destinatarios y lo regresa a
+        'en_elaboracion' del solicitante.
+        """
+        from django.utils import timezone
+        doc = self.get_object()
+        VENTANA_MIN = 10
+
+        # Solo creador o remitente designado pueden recuperar
+        if doc.creado_por != request.user and doc.remitente != request.user:
+            return Response({'error': 'Solo el creador o el remitente puede recuperar este documento.'}, status=403)
+
+        # Buscar el seguimiento de envío o reasignación más reciente
+        ultimo = SeguimientoDocumento.objects.filter(
+            documento=doc, etapa__in=['enviado', 'reasignado']
+        ).order_by('-creado_en').first()
+
+        if not ultimo:
+            return Response({'error': 'Este documento no fue enviado por el sistema SGD.'}, status=400)
+
+        elapsed_min = (timezone.now() - ultimo.creado_en).total_seconds() / 60
+        if elapsed_min > VENTANA_MIN:
+            return Response(
+                {'error': f'La ventana de recuperación de {VENTANA_MIN} minutos ya expiró '
+                          f'(pasaron {int(elapsed_min)} min).'},
+                status=400,
+            )
+
+        # Eliminar bandejas de destinatarios (todos excepto el solicitante)
+        BandejaDocumento.objects.filter(documento=doc).exclude(usuario=request.user).delete()
+
+        # Restaurar la bandeja del solicitante a en_elaboracion
+        mi_item = BandejaDocumento.objects.filter(documento=doc, usuario=request.user).first()
+        if mi_item:
+            mi_item.bandeja = 'en_elaboracion'
+            mi_item.accion_tomada = 'pendiente'
+            mi_item.save()
+        else:
+            BandejaDocumento.objects.create(
+                documento=doc, usuario=request.user, bandeja='en_elaboracion'
+            )
+
+        # Revertir estado del documento
+        doc.estado = 'borrador'
+        doc.fecha_envio = None
+        doc.save(update_fields=['estado', 'fecha_envio'])
+
+        SeguimientoDocumento.objects.create(
+            documento=doc, etapa='recuperado', usuario=request.user,
+            unidad=getattr(request.user, 'unidad', None),
+            observacion='Documento recuperado para corrección.',
+        )
+        return Response({'detail': 'Documento recuperado. Ya puede editarlo en "En elaboración".'})
+
     @action(detail=True, methods=['post'], url_path='enviar_email')
     def enviar_email(self, request, pk=None):
         from django.core.mail import EmailMessage
@@ -250,7 +396,7 @@ Gobierno Autónomo Descentralizado Provincial de Cotopaxi
 
 def _es_admin_bandeja(user):
     return user.is_superuser or user.roles.filter(
-        rol__codigo__in=['ADMIN'], activo=True
+        rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
     ).exists()
 
 
@@ -289,9 +435,15 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
         qs = BandejaDocumento.objects.filter(usuario=usuario)
         resultado = {}
         for bandeja, _ in BandejaDocumento.BANDEJA_CHOICES:
-            total     = qs.filter(bandeja=bandeja).count()
-            no_leidos = qs.filter(bandeja=bandeja, leido=False).count()
-            resultado[bandeja] = {'total': total, 'no_leidos': no_leidos}
+            if bandeja == 'en_elaboracion':
+                # Excluir reasignados del conteo de en_elaboracion
+                sub = qs.filter(bandeja=bandeja).exclude(accion_tomada='reasignado')
+            else:
+                sub = qs.filter(bandeja=bandeja)
+            resultado[bandeja] = {'total': sub.count(), 'no_leidos': sub.filter(leido=False).count()}
+        # Bandeja virtual reasignados
+        rea = qs.filter(accion_tomada='reasignado')
+        resultado['reasignados'] = {'total': rea.count(), 'no_leidos': rea.filter(leido=False).count()}
         return Response(resultado)
 
     @action(detail=False, methods=['get'], url_path='por_bandeja')
@@ -302,16 +454,30 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
         leido   = request.query_params.get('leido', '')
         search  = request.query_params.get('search', '')
 
-        qs = BandejaDocumento.objects.filter(
-            usuario=usuario, bandeja=bandeja
-        ).select_related(
+        # 'reasignados' es una bandeja virtual: ítems con accion_tomada=reasignado
+        if bandeja == 'reasignados':
+            qs = BandejaDocumento.objects.filter(
+                usuario=usuario, accion_tomada='reasignado'
+            )
+        else:
+            qs = BandejaDocumento.objects.filter(
+                usuario=usuario, bandeja=bandeja
+            )
+            # En elaboración excluye los ya reasignados (esos aparecen en 'reasignados')
+            if bandeja == 'en_elaboracion':
+                qs = qs.exclude(accion_tomada='reasignado')
+
+        qs = qs.select_related(
             'documento__tipo_documento',
             'documento__unidad_origen',
             'documento__creado_por',
+            'documento__remitente',
+        ).prefetch_related(
+            'documento__seguimiento_quipux',
         ).order_by('-creado_en')
 
         if tipo:
-            qs = qs.filter(documento__tipo_documento__codigo=tipo)
+            qs = qs.filter(documento__tipo_documento__prefijo_numeracion=tipo)
         if leido == 'false':
             qs = qs.filter(leido=False)
         if search:
@@ -342,14 +508,16 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
         unidad_id    = request.data.get('unidad_id')
         instrucciones = request.data.get('instrucciones', '')
 
-        nueva_bandeja = BandejaDocumento.objects.create(
-            documento     = item.documento,
-            usuario_id    = usuario_id,
-            unidad_id     = unidad_id,
-            bandeja       = 'recibidos',
-            instrucciones = instrucciones,
-            es_urgente    = item.es_urgente,
-            fecha_limite  = item.fecha_limite,
+        BandejaDocumento.objects.get_or_create(
+            documento  = item.documento,
+            usuario_id = usuario_id,
+            bandeja    = 'recibidos',
+            defaults={
+                'unidad_id':     unidad_id,
+                'instrucciones': instrucciones,
+                'es_urgente':    item.es_urgente,
+                'fecha_limite':  item.fecha_limite,
+            },
         )
 
         item.accion_tomada = 'reasignado'
@@ -406,11 +574,11 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
             prioridad      = request.data.get('prioridad', 'normal'),
             fecha_limite   = request.data.get('fecha_limite'),
         )
-        BandejaDocumento.objects.create(
+        BandejaDocumento.objects.get_or_create(
             documento    = item.documento,
             usuario_id   = request.data.get('usuario_id'),
             bandeja      = 'tareas_recibidas',
-            instrucciones = request.data.get('descripcion', ''),
+            defaults={'instrucciones': request.data.get('descripcion', '')},
         )
         BandejaDocumento.objects.get_or_create(
             documento = item.documento,
@@ -530,7 +698,9 @@ class DocumentoPDFView(APIView):
         try:
             doc = Documento.objects.select_related(
                 'tipo_documento', 'unidad_origen', 'unidad_destino',
-                'creado_por', 'firmado_por'
+                'creado_por', 'firmado_por', 'remitente',
+            ).prefetch_related(
+                'destinatarios__usuario__unidad'
             ).get(pk=pk)
         except Documento.DoesNotExist:
             return Response({'detail': 'Documento no encontrado.'}, status=404)
@@ -862,7 +1032,15 @@ class GenerarTokenFirmaECView(APIView):
         from .plantillas import html_documento_oficial
         from apps.auditoria.reportes import generar_pdf as _generar_pdf
 
-        doc = get_object_or_404(Documento, pk=pk)
+        doc = (
+            Documento.objects
+            .select_related('tipo_documento', 'unidad_origen', 'unidad_destino',
+                            'creado_por', 'firmado_por', 'remitente')
+            .prefetch_related('destinatarios__usuario__unidad')
+            .filter(pk=pk).first()
+        )
+        if not doc:
+            return Response({'error': 'Documento no encontrado.'}, status=404)
         cedula = getattr(request.user, 'cedula', '') or str(request.user.id)
 
         # 1. Generar PDF limpio (sin /ObjStm); pre_firma=True incluye la leyenda
@@ -1053,3 +1231,36 @@ class FirmaFisicaView(APIView):
             observacion = f'Firma física: {observacion}',
         )
         return Response({'detail': 'Documento registrado con firma física.'})
+
+
+class ListaDistribucionViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        from .models import ListaDistribucion
+        qs = ListaDistribucion.objects.filter(activo=True).prefetch_related(
+            'miembros__usuario__unidad'
+        )
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(nombre__icontains=search)
+        return qs
+
+    def get_serializer_class(self):
+        from .serializers import ListaDistribucionSerializer
+        return ListaDistribucionSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(creado_por=self.request.user)
+
+    @action(detail=False, methods=['get'], url_path='buscar')
+    def buscar(self, request):
+        from .models import ListaDistribucion
+        from .serializers import ListaDistribucionSerializer
+        search = request.query_params.get('q', '').strip()
+        qs = ListaDistribucion.objects.filter(activo=True).prefetch_related(
+            'miembros__usuario__unidad'
+        )
+        if search:
+            qs = qs.filter(nombre__icontains=search)
+        return Response(ListaDistribucionSerializer(qs[:20], many=True).data)

@@ -15,12 +15,12 @@ import ModalFirmaElectronica from '@/components/ui/ModalFirmaElectronica'
 import ModalEnviarEmail from '@/components/ui/ModalEnviarEmail'
 import EditorDocumento from '@/components/ui/EditorDocumento'
 import {
-  Inbox, Edit3, Send, Clock, CheckSquare, Archive,
+  Inbox, Edit3, Send, Clock, CheckSquare, Archive, ClipboardList,
   Folder, Printer, Search, Plus, X, Download,
   ArrowRightLeft, MessageSquare, Signature,
   CheckCircle, Filter, RefreshCw, Globe2, Database,
   FileText, FileSpreadsheet, FileImage, File, User,
-  Lock, BookUser, Settings, Users, BarChart2
+  Lock, BookUser, Settings, Users, BarChart2, Eye
 } from 'lucide-react'
 
 // Bandejas SGD → nombre de bandeja Quipux equivalente
@@ -35,15 +35,16 @@ const QUIPUX_BANDEJA_MAP: Record<string, string> = {
 }
 
 const BANDEJAS = [
-  { key: 'recibidos',        label: 'Recibidos',         icon: Inbox,       seccion: 'bandejas' },
-  { key: 'en_elaboracion',   label: 'En elaboracion',    icon: Edit3,       seccion: 'bandejas' },
-  { key: 'enviados',         label: 'Enviados',          icon: Send,        seccion: 'bandejas' },
-  { key: 'no_enviados',      label: 'No enviados',       icon: Clock,       seccion: 'bandejas' },
-  { key: 'tareas_recibidas', label: 'Tareas recibidas',  icon: CheckSquare, seccion: 'bandejas' },
-  { key: 'tareas_enviadas',  label: 'Tareas enviadas',   icon: CheckSquare, seccion: 'bandejas' },
-  { key: 'archivados',       label: 'Archivados',        icon: Archive,     seccion: 'otras' },
-  { key: 'carpetas',         label: 'Carpetas virtuales',icon: Folder,      seccion: 'otras' },
-  { key: 'por_imprimir',     label: 'Por imprimir',      icon: Printer,     seccion: 'otras' },
+  { key: 'recibidos',        label: 'Recibidos',         icon: Inbox,            seccion: 'bandejas' },
+  { key: 'en_elaboracion',   label: 'En elaboracion',    icon: Edit3,            seccion: 'bandejas' },
+  { key: 'enviados',         label: 'Enviados',          icon: Send,             seccion: 'bandejas' },
+  { key: 'no_enviados',      label: 'No enviados',       icon: Clock,            seccion: 'bandejas' },
+  { key: 'reasignados',      label: 'Reasignados',       icon: ArrowRightLeft,   seccion: 'bandejas' },
+  { key: 'tareas_recibidas', label: 'Tareas recibidas',  icon: CheckSquare,      seccion: 'bandejas' },
+  { key: 'tareas_enviadas',  label: 'Tareas enviadas',   icon: CheckSquare,      seccion: 'bandejas' },
+  { key: 'archivados',       label: 'Archivados',        icon: Archive,          seccion: 'otras' },
+  { key: 'carpetas',         label: 'Carpetas virtuales',icon: Folder,           seccion: 'otras' },
+  { key: 'por_imprimir',     label: 'Por imprimir',      icon: Printer,          seccion: 'otras' },
 ]
 
 const TIPO_COLORS: Record<string, { bg: string; text: string }> = {
@@ -76,7 +77,7 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const { tema } = useThemeStore()
   const T = THEMES[tema].vars
   const [comentario, setComentario] = useState('')
-  const [tabActiva, setTab] = useState<'preview' | 'adjuntos' | 'seguimiento'>('preview')
+  const [tabActiva, setTab] = useState<'preview' | 'info' | 'adjuntos' | 'seguimiento'>('preview')
   const [mostrarVincular, setMostrarVincular] = useState(false)
   const [mostrarFirma, setMostrarFirma] = useState(false)
   const [mostrarEmail, setMostrarEmail] = useState(false)
@@ -88,7 +89,9 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const [enviarDestinatarios, setEnviarDestinatarios] = useState<number[]>([])
   const [enviarInstrucciones, setEnviarInstrucciones] = useState('')
   const [enviarUrgente, setEnviarUrgente] = useState(false)
+  const [enviandoDirecto, setEnviandoDirecto] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
+  const [errorRecuperar, setErrorRecuperar] = useState('')
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [pdfCargando, setPdfCargando] = useState(false)
   const [pdfEsFirmado, setPdfEsFirmado] = useState(false)
@@ -201,6 +204,18 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
     },
   })
 
+  const recuperarDoc = useMutation({
+    mutationFn: () => documentosService.recuperar(item.documento_id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      onClose()
+    },
+    onError: (e: any) => {
+      setErrorRecuperar(e.response?.data?.error || 'No se pudo recuperar el documento.')
+    },
+  })
+
   const handleImprimir = async () => {
     setImprimiendo(true)
     try {
@@ -213,26 +228,11 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
     }
   }
 
-  const ETAPAS = [
-    { key: 'elaborado',  label: 'Elaborado' },
-    { key: 'firmado',    label: 'Firmado' },
-    { key: 'enviado',    label: 'Enviado' },
-    { key: 'recibido',   label: 'Recibido' },
-    { key: 'reasignado', label: 'Reasignado' },
-    { key: 'respondido', label: 'Respondido' },
-  ]
-
-  const etapaActual = item.estado_documento === 'enviado' ? 'enviado'
-    : item.estado_documento === 'firmado' ? 'firmado'
-    : item.estado_documento === 'borrador' ? 'elaborado'
-    : 'recibido'
-
-  const etapaIdx = ETAPAS.findIndex(e => e.key === etapaActual)
   const esExterno = !!item.remitente_entidad
 
   return (
     <div style={{
-      position: 'absolute', right: 0, top: 0, bottom: 0, width: 420,
+      position: 'absolute', right: 0, top: 0, bottom: 0, width: 680,
       background: T.ctHdrBg, borderLeft: `3px solid ${T.pnBd}`,
       display: 'flex', flexDirection: 'column', zIndex: 5, overflow: 'hidden',
       boxShadow: T.pnSh,
@@ -244,18 +244,18 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
             <ArrowRightLeft size={14} style={{ color: T.pnBd }} />
             <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Reasignar documento</span>
             <button onClick={() => setMostrarReasignar(false)}
-              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
               <X size={14} />
             </button>
           </div>
           <div style={{ padding: '10px 14px' }}>
             <div style={{ position: 'relative', marginBottom: 10 }}>
-              <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+              <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
               <input
                 placeholder="Buscar usuario por nombre..."
                 value={busquedaUsuario}
                 onChange={e => setBusquedaUsuario(e.target.value)}
-                style={{ width: '100%', padding: '7px 10px 7px 28px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', color: '#374151', background: '#f9fafb' }}
+                style={{ width: '100%', padding: '7px 10px 7px 28px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', color: T.rowTxt, background: T.rowBg }}
               />
             </div>
           </div>
@@ -265,30 +265,30 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                 onClick={() => setReasignarUsuarioId(u.id)}
                 style={{
                   padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
-                  border: `0.5px solid ${reasignarUsuarioId === u.id ? '#002f6c' : '#e5e7eb'}`,
-                  background: reasignarUsuarioId === u.id ? '#e8f1fd' : '#fff',
+                  border: `0.5px solid ${reasignarUsuarioId === u.id ? T.accentDk : T.rowBd}`,
+                  background: reasignarUsuarioId === u.id ? T.rowSel : T.rowBg,
                 }}>
-                <p style={{ fontSize: 12, fontWeight: 500, color: '#374151', margin: 0 }}>{u.nombre_completo}</p>
-                <p style={{ fontSize: 10, color: '#9ca3af', margin: '2px 0 0' }}>{u.cargo}{u.unidad_nombre ? ` · ${u.unidad_nombre}` : ''}</p>
+                <p style={{ fontSize: 12, fontWeight: 500, color: T.rowTxt, margin: 0 }}>{u.nombre_completo}</p>
+                <p style={{ fontSize: 10, color: T.rowSub, margin: '2px 0 0' }}>{u.cargo}{u.unidad_nombre ? ` · ${u.unidad_nombre}` : ''}</p>
               </div>
             ))}
             {usuarios && usuarios.results?.length === 0 && (
-              <p style={{ fontSize: 11, color: '#c4c9d4', textAlign: 'center', padding: 16 }}>No se encontraron usuarios</p>
+              <p style={{ fontSize: 11, color: T.rowSub, textAlign: 'center', padding: 16 }}>No se encontraron usuarios</p>
             )}
           </div>
           <div style={{ padding: '10px 14px' }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Instrucciones:</label>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.rowSub, display: 'block', marginBottom: 4 }}>Instrucciones:</label>
             <textarea
               value={reasignarInstrucciones}
               onChange={e => setReasignarInstrucciones(e.target.value)}
               placeholder="Indicaciones para el nuevo responsable..."
               rows={2}
-              style={{ width: '100%', padding: '8px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: '#374151', background: '#fafbfc' }}
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }}
             />
           </div>
-          <div style={{ padding: '10px 14px', borderTop: '0.5px solid #f0f0f0', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={() => setMostrarReasignar(false)}
-              style={{ padding: '7px 14px', border: '0.5px solid #e5e7eb', borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: '#fff', color: '#6b7280' }}>
+              style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
               Cancelar
             </button>
             <button
@@ -297,8 +297,8 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               style={{
                 padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
                 cursor: reasignarUsuarioId ? 'pointer' : 'not-allowed',
-                background: reasignarUsuarioId ? '#002f6c' : '#e5e7eb',
-                color: reasignarUsuarioId ? '#fff' : '#9ca3af',
+                background: reasignarUsuarioId ? '#002f6c' : T.rowBd,
+                color: reasignarUsuarioId ? '#fff' : T.rowSub,
               }}>
               {reasignar.isPending ? 'Reasignando...' : 'Reasignar'}
             </button>
@@ -308,24 +308,24 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
 
       {/* Enviar overlay */}
       {mostrarEnviar && (
-        <div style={{ position: 'absolute', inset: 0, background: '#fff', zIndex: 10, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #f5f6f8', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 14px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Send size={14} style={{ color: '#002f6c' }} />
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#0a1628' }}>Enviar documento</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Enviar documento</span>
             <button onClick={() => setMostrarEnviar(false)}
-              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
               <X size={14} />
             </button>
           </div>
           <div style={{ padding: '10px 14px' }}>
-            <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 8 }}>Selecciona los destinatarios internos:</p>
+            <p style={{ fontSize: 11, color: T.rowSub, marginBottom: 8 }}>Selecciona los destinatarios internos:</p>
             <div style={{ position: 'relative', marginBottom: 10 }}>
-              <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+              <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
               <input
                 placeholder="Buscar usuario..."
                 value={busquedaUsuario}
                 onChange={e => setBusquedaUsuario(e.target.value)}
-                style={{ width: '100%', padding: '7px 10px 7px 28px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', color: '#374151', background: '#f9fafb' }}
+                style={{ width: '100%', padding: '7px 10px 7px 28px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', color: T.rowTxt, background: T.rowBg }}
               />
             </div>
           </div>
@@ -339,20 +339,20 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                   )}
                   style={{
                     padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
-                    border: `0.5px solid ${selected ? '#0f6e56' : '#e5e7eb'}`,
-                    background: selected ? '#f0fdf4' : '#fff',
+                    border: `0.5px solid ${selected ? '#0f6e56' : T.rowBd}`,
+                    background: selected ? 'rgba(15,110,86,.12)' : T.rowBg,
                     display: 'flex', alignItems: 'center', gap: 8,
                   }}>
                   <div style={{
                     width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                    border: `1.5px solid ${selected ? '#0f6e56' : '#d1d5db'}`,
-                    background: selected ? '#0f6e56' : '#fff',
+                    border: `1.5px solid ${selected ? '#0f6e56' : T.rowBd}`,
+                    background: selected ? '#0f6e56' : T.rowBg,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     color: '#fff', fontSize: 10, fontWeight: 700,
                   }}>{selected ? '✓' : ''}</div>
                   <div>
-                    <p style={{ fontSize: 12, fontWeight: 500, color: '#374151', margin: 0 }}>{u.nombre_completo}</p>
-                    <p style={{ fontSize: 10, color: '#9ca3af', margin: '2px 0 0' }}>{u.cargo}{u.unidad_nombre ? ` · ${u.unidad_nombre}` : ''}</p>
+                    <p style={{ fontSize: 12, fontWeight: 500, color: T.rowTxt, margin: 0 }}>{u.nombre_completo}</p>
+                    <p style={{ fontSize: 10, color: T.rowSub, margin: '2px 0 0' }}>{u.cargo}{u.unidad_nombre ? ` · ${u.unidad_nombre}` : ''}</p>
                   </div>
                 </div>
               )
@@ -364,19 +364,19 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               onChange={e => setEnviarInstrucciones(e.target.value)}
               placeholder="Instrucciones para el destinatario..."
               rows={2}
-              style={{ width: '100%', padding: '8px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: '#374151', background: '#fafbfc', marginBottom: 8 }}
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg, marginBottom: 8 }}
             />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#374151', cursor: 'pointer' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: T.rowTxt, cursor: 'pointer' }}>
               <input type="checkbox" checked={enviarUrgente} onChange={e => setEnviarUrgente(e.target.checked)}
                 style={{ width: 14, height: 14, accentColor: '#da291c' }} />
               <span style={{ color: '#da291c', fontWeight: 600 }}>Marcar como urgente</span>
             </label>
           </div>
-          <div style={{ padding: '10px 14px', borderTop: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 10, color: '#9ca3af' }}>{enviarDestinatarios.length} destinatario(s)</span>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 10, color: T.rowSub }}>{enviarDestinatarios.length} destinatario(s)</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setMostrarEnviar(false)}
-                style={{ padding: '7px 14px', border: '0.5px solid #e5e7eb', borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: '#fff', color: '#6b7280' }}>
+                style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
                 Cancelar
               </button>
               <button
@@ -385,8 +385,8 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                 style={{
                   padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
                   cursor: enviarDestinatarios.length > 0 ? 'pointer' : 'not-allowed',
-                  background: enviarDestinatarios.length > 0 ? '#002f6c' : '#e5e7eb',
-                  color: enviarDestinatarios.length > 0 ? '#fff' : '#9ca3af',
+                  background: enviarDestinatarios.length > 0 ? '#002f6c' : T.rowBd,
+                  color: enviarDestinatarios.length > 0 ? '#fff' : T.rowSub,
                   display: 'flex', alignItems: 'center', gap: 5,
                 }}>
                 <Send size={12} /> {enviarDoc.isPending ? 'Enviando...' : 'Enviar'}
@@ -430,40 +430,66 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
           const enElab  = b === 'en_elaboracion'
           const recibido = ['recibidos', 'tareas_recibidas'].includes(b)
 
+          const minRec = (item as any).minutos_para_recuperar as number | null | undefined
+          const puedeRecuperar = minRec != null && minRec > 0
+
           const botones = [
-            { label: 'Editar',     icon: Edit3,         accent: true,
+            { label: 'Editar',     icon: Edit3,         accent: true,  warn: false,
               visible: enElab && !anulado && !!onEditar,                              action: onEditar },
-            { label: 'Reasignar',  icon: ArrowRightLeft, accent: false,
+            { label: 'Reasignar',  icon: ArrowRightLeft, accent: false, warn: false,
               visible: recibido && !anulado,                                           action: () => setMostrarReasignar(true) },
-            { label: 'Archivar',   icon: Archive,        accent: false,
+            { label: 'Archivar',   icon: Archive,        accent: false, warn: false,
               visible: (recibido || b === 'enviados') && !anulado,                    action: () => setMostrarVincular(true) },
-            { label: 'Firmar',     icon: Signature,      accent: false,
+            { label: 'Firmar',     icon: Signature,      accent: false, warn: false,
               visible: (enElab || b === 'no_enviados') && !['firmado','anulado'].includes(e), action: () => setMostrarFirma(true) },
-            { label: 'Enviar',     icon: Send,           accent: false,
-              visible: (enElab || b === 'no_enviados') && !anulado,                  action: () => setMostrarEnviar(true) },
-            { label: 'Imprimir',   icon: Printer,        accent: false,
+            { label: enviandoDirecto ? 'Enviando…' : 'Enviar', icon: Send, accent: false, warn: false,
+              visible: (enElab || b === 'no_enviados') && !anulado,
+              action: async () => {
+                if (enviandoDirecto) return
+                setEnviandoDirecto(true)
+                try {
+                  await documentosService.enviar(item.documento_id)
+                  qc.invalidateQueries({ queryKey: ['bandeja'] })
+                  qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+                  onClose()
+                } catch { setEnviandoDirecto(false) }
+              } },
+            { label: 'Distribuir', icon: Send,           accent: false, warn: false,
+              visible: ['recibidos', 'enviados'].includes(b) && !anulado,             action: () => setMostrarEnviar(true) },
+            { label: puedeRecuperar ? `Recuperar (${Math.ceil(minRec!)} min)` : 'Recuperar',
+              icon: ArrowRightLeft, accent: false, warn: true,
+              visible: (b === 'enviados' || b === 'reasignados') && puedeRecuperar,
+              action: () => { setErrorRecuperar(''); recuperarDoc.mutate() } },
+            { label: 'Imprimir',   icon: Printer,        accent: false, warn: false,
               visible: b === 'por_imprimir',                                          action: handleImprimir },
-            { label: 'Ya impreso', icon: CheckCircle,    accent: false,
+            { label: 'Ya impreso', icon: CheckCircle,    accent: false, warn: false,
               visible: b === 'por_imprimir',                                          action: () => marcarImpreso.mutate() },
           ].filter(btn => btn.visible)
 
           if (botones.length === 0) return null
           return (
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 2 }}>
-              {botones.map(({ label, icon: Icon, accent, action }: any) => (
-                <button key={label} onClick={action}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 4,
-                    padding: '5px 12px', borderRadius: 8, fontSize: 11,
-                    fontWeight: 600, cursor: 'pointer',
-                    border: `1px solid ${accent ? '#ffd166' : 'rgba(255,255,255,.35)'}`,
-                    background: accent ? '#ffd166' : 'rgba(255,255,255,.15)',
-                    color: accent ? '#002f6c' : '#fff',
-                  }}>
-                  <Icon size={12} /> {label}
-                </button>
-              ))}
-            </div>
+            <>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 2 }}>
+                {botones.map(({ label, icon: Icon, accent, warn, action }: any) => (
+                  <button key={label} onClick={action}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      padding: '5px 12px', borderRadius: 8, fontSize: 11,
+                      fontWeight: 600, cursor: 'pointer',
+                      border: `1px solid ${accent ? '#ffd166' : warn ? '#f97316' : 'rgba(255,255,255,.35)'}`,
+                      background: accent ? '#ffd166' : warn ? 'rgba(249,115,22,.2)' : 'rgba(255,255,255,.15)',
+                      color: accent ? '#002f6c' : warn ? '#fb923c' : '#fff',
+                    }}>
+                    <Icon size={12} /> {label}
+                  </button>
+                ))}
+              </div>
+              {errorRecuperar && (
+                <div style={{ marginTop: 6, padding: '5px 10px', borderRadius: 6, background: 'rgba(218,41,28,.15)', color: '#fca5a5', fontSize: 11 }}>
+                  {errorRecuperar}
+                </div>
+              )}
+            </>
           )
         })()}
       </div>
@@ -474,62 +500,33 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
           { label: 'De:',            value: item.unidad_origen_siglas || item.unidad_origen_nombre },
           ...(esExterno ? [{ label: 'Remitente:', value: item.remitente_entidad }] : []),
           { label: 'Elaborado por:', value: item.creado_por_nombre },
+          ...((item as any).firmante_nombre ? [{ label: 'Firmará / Enviará:', value: `${(item as any).firmante_nombre}${(item as any).firmante_cargo ? ` — ${(item as any).firmante_cargo}` : ''}` }] : []),
           { label: 'Fecha:',         value: new Date(item.fecha_documento).toLocaleString('es-EC') },
           ...(item.fecha_limite ? [{ label: 'Vence:', value: new Date(item.fecha_limite).toLocaleDateString('es-EC'), danger: true }] : []),
         ].map(({ label, value, danger }: any) => (
           <div key={label} style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 11 }}>
-            <span style={{ color: '#9ca3af', minWidth: 80, flexShrink: 0 }}>{label}</span>
-            <span style={{ fontWeight: 500, color: danger ? '#da291c' : '#374151' }}>{value}</span>
+            <span style={{ color: T.rowSub, minWidth: 80, flexShrink: 0 }}>{label}</span>
+            <span style={{ fontWeight: 500, color: danger ? '#da291c' : T.rowTxt }}>{value}</span>
           </div>
         ))}
       </div>
 
-      {/* Timeline */}
-      <div style={{ padding: '10px 14px', borderBottom: '0.5px solid #f5f6f8' }}>
-        <p style={{ fontSize: 11, fontWeight: 500, color: '#374151', marginBottom: 8 }}>Seguimiento</p>
-        <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-          {ETAPAS.map((etapa, i) => {
-            const done   = i <= etapaIdx
-            const active = i === etapaIdx + 1
-            const isLast = i === ETAPAS.length - 1
-            return (
-              <div key={etapa.key} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
-                {!isLast && (
-                  <div style={{ position: 'absolute', top: 10, left: '50%', width: '100%', height: 1.5, background: done ? '#0f6e56' : '#e5e7eb', zIndex: 0 }} />
-                )}
-                <div style={{
-                  width: 20, height: 20, borderRadius: '50%', zIndex: 1, position: 'relative',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10,
-                  background: done ? '#0f6e56' : active ? '#002f6c' : '#fff',
-                  border: `1.5px solid ${done ? '#0f6e56' : active ? '#002f6c' : '#e5e7eb'}`,
-                  color: done || active ? '#fff' : '#d1d5db',
-                }}>
-                  {done ? '✓' : i + 1}
-                </div>
-                <p style={{ fontSize: 9, marginTop: 3, textAlign: 'center', color: done ? '#0f6e56' : active ? '#002f6c' : '#9ca3af', fontWeight: done || active ? 600 : 400 }}>
-                  {etapa.label}
-                </p>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
       {/* Tabs — segmented control */}
-      <div style={{ padding: '8px 12px', borderBottom: '0.5px solid #eef0f5', flexShrink: 0, background: '#f8faff' }}>
-        <div style={{ display: 'flex', background: '#eef1f7', borderRadius: 10, padding: 3, gap: 2 }}>
+      <div style={{ padding: '8px 12px', borderBottom: `0.5px solid ${T.pnMetaBd}`, flexShrink: 0, background: T.pnMeta }}>
+        <div style={{ display: 'flex', background: T.statsBg, borderRadius: 10, padding: 3, gap: 2 }}>
           {([
             ['preview',     'Vista previa', FileText],
+            ['info',        'Información',  Eye],
+            ['seguimiento', 'Recorrido',    Clock],
             ['adjuntos',    'Adjuntos',     Folder],
-            ['seguimiento', 'Historial',    Clock],
           ] as [string, string, any][]).map(([k, l, TabIcon]) => (
             <button key={k} onClick={() => setTab(k as any)}
               style={{
                 flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
                 padding: '6px 4px', borderRadius: 8, fontSize: 11, fontWeight: tabActiva === k ? 700 : 500,
                 border: 'none', cursor: 'pointer', transition: 'all .15s',
-                background: tabActiva === k ? '#fff' : 'transparent',
-                color: tabActiva === k ? '#002f6c' : '#6b7280',
+                background: tabActiva === k ? T.ctHdrBg : 'transparent',
+                color: tabActiva === k ? T.accentDk : T.rowSub,
                 boxShadow: tabActiva === k ? '0 1px 4px rgba(0,47,108,.12)' : 'none',
               }}>
               <TabIcon size={12} />
@@ -548,8 +545,8 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
       }}>
         {tabActiva === 'preview' ? (
           pdfCargando ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: '#9ca3af' }}>
-              <div style={{ width: 28, height: 28, border: '3px solid #e5e7eb', borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: T.rowSub }}>
+              <div style={{ width: 28, height: 28, border: `3px solid ${T.rowBd}`, borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
               <span style={{ fontSize: 12 }}>Cargando vista previa…</span>
             </div>
           ) : pdfUrl ? (
@@ -559,10 +556,68 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               title="Vista previa del documento"
             />
           ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: 12 }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.rowSub, fontSize: 12 }}>
               No se pudo cargar la vista previa
             </div>
           )
+        ) : tabActiva === 'info' ? (
+          <div>
+            {(() => {
+              const lR = (l: string, v?: string | null) => v ? (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
+                  <span style={{ fontSize: 10, color: T.rowSub, width: 110, flexShrink: 0 }}>{l}</span>
+                  <span style={{ fontSize: 11, color: T.rowTxt, fontWeight: 500 }}>{v}</span>
+                </div>
+              ) : null
+              const d = docDetalle
+              return (
+                <>
+                  {lR('N° Documento', item.numero_documento)}
+                  {lR('Fecha', new Date(item.fecha_documento).toLocaleString('es-EC'))}
+                  {lR('Estado', ESTADO_COLORS[item.estado_documento]?.label ?? item.estado_documento)}
+                  {lR('Tipo', item.tipo_nombre)}
+                  {lR('Asunto', item.asunto)}
+                  {d?.resumen && lR('Resumen', d.resumen)}
+                  {lR('Unidad origen', item.unidad_origen_nombre)}
+                  {lR('Elaborado por', item.creado_por_nombre)}
+                  {(item as any).firmante_nombre && lR('Firmará / Enviará', `${(item as any).firmante_nombre}${(item as any).firmante_cargo ? ` — ${(item as any).firmante_cargo}` : ''}`)}
+                  {item.remitente_entidad && (
+                    <>
+                      <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Remitente externo</div>
+                      {lR('Entidad', item.remitente_entidad)}
+                      {lR('Nombre', item.remitente_nombre)}
+                      {lR('Email', item.remitente_email)}
+                    </>
+                  )}
+                  {d?.destinatarios?.length > 0 && (
+                    <>
+                      <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Destinatarios</div>
+                      {d.destinatarios.map((dest: any) => (
+                        <div key={dest.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 5, padding: '5px 8px', background: T.rowBg, borderRadius: 7, border: `0.5px solid ${T.rowBd}` }}>
+                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#002f6c', marginTop: 4, flexShrink: 0 }} />
+                          <div>
+                            <p style={{ fontSize: 11, fontWeight: 600, color: T.rowTxt, margin: 0 }}>{dest.usuario_nombre}</p>
+                            {dest.unidad_nombre && <p style={{ fontSize: 10, color: T.rowSub, margin: '1px 0 0' }}>{dest.unidad_nombre}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {d?.firma_bce_info && (
+                    <>
+                      <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Firma electrónica</div>
+                      <div style={{ background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
+                        <p style={{ fontWeight: 700, color: '#0f6e56', margin: '0 0 3px' }}>✓ {d.firma_bce_info.nombre ?? d.firma_bce_info.subject}</p>
+                        {d.firma_bce_info.cedula && <p style={{ color: T.rowTxt, margin: '0 0 2px' }}>CI: {d.firma_bce_info.cedula}</p>}
+                        {d.firma_bce_info.cargo  && <p style={{ color: T.rowSub, margin: '0 0 2px' }}>{d.firma_bce_info.cargo}</p>}
+                        {d.firma_bce_info.fecha  && <p style={{ color: T.rowSub, margin: 0, fontSize: 10 }}>{d.firma_bce_info.fecha}</p>}
+                      </div>
+                    </>
+                  )}
+                </>
+              )
+            })()}
+          </div>
         ) : tabActiva === 'adjuntos' ? (
           <AdjuntosPanel documentoId={item.documento_id} />
         ) : (
@@ -605,17 +660,20 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                       <div style={{ width: 22, height: 22, borderRadius: '50%', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 2px 6px ${color}55` }}>
                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />
                       </div>
-                      {!isLast && <div style={{ width: 2, flex: 1, background: `linear-gradient(${color},#e5e7eb)`, minHeight: 10, marginTop: 3, borderRadius: 1 }} />}
+                      {!isLast && <div style={{ width: 2, flex: 1, background: T.rowBd, minHeight: 10, marginTop: 3, borderRadius: 1 }} />}
                     </div>
-                    <div style={{ flex: 1, background: `${color}0d`, border: `0.5px solid ${color}30`, borderRadius: 8, padding: '7px 10px', marginBottom: isLast ? 0 : 2 }}>
+                    <div style={{ flex: 1, background: T.rowBg, border: `0.5px solid ${T.rowBd}`, borderRadius: 8, padding: '7px 10px', marginBottom: isLast ? 0 : 2 }}>
                       <p style={{ fontSize: 11, fontWeight: 700, color, margin: '0 0 1px' }}>{label}</p>
-                      <p style={{ fontSize: 10, color: '#6b7280', margin: '0 0 2px' }}>
+                      <p style={{ fontSize: 10, color: T.rowSub, margin: '0 0 2px' }}>
                         {s.usuario_nombre}
-                        {s.unidad_nombre ? ` · ${s.unidad_nombre}` : ''}
+                        {s.etapa === 'enviado' && docDetalle?.destinatarios?.length > 0
+                          ? ` → ${docDetalle.destinatarios.map((d: any) => d.usuario_nombre).join(' / ')}`
+                          : (s.unidad_nombre ? ` · ${s.unidad_nombre}` : '')
+                        }
                         {' · '}{new Date(s.creado_en).toLocaleString('es-EC')}
                       </p>
                       {s.observacion && (
-                        <p style={{ fontSize: 10, color: '#4b5563', margin: '4px 0 0', borderLeft: `2px solid ${color}`, paddingLeft: 6, fontStyle: 'italic' }}>
+                        <p style={{ fontSize: 10, color: T.rowTxt, margin: '4px 0 0', borderLeft: `2px solid ${T.rowBd}`, paddingLeft: 6, fontStyle: 'italic' }}>
                           {s.observacion}
                         </p>
                       )}
@@ -635,14 +693,14 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
           onChange={e => setComentario(e.target.value)}
           placeholder="Escribir comentario u observacion..."
           rows={2}
-          style={{ width: '100%', padding: '8px 10px', border: '1px solid #c8d9ee', borderRadius: 10, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: '#374151', background: '#fff' }}
+          style={{ width: '100%', padding: '8px 10px', border: `1px solid ${T.pnCmtBd}`, borderRadius: 10, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <button
               onClick={() => documentosService.descargarPDF(item.documento_id, item.numero_documento || `doc_${item.documento_id}`)}
               title={pdfFirmadoUrl ? 'Descargar PDF (firmado electrónicamente)' : 'Descargar PDF'}
-              style={{ width: 28, height: 28, borderRadius: 7, border: pdfFirmadoUrl ? '0.5px solid #0f6e56' : '0.5px solid #e5e7eb', background: pdfFirmadoUrl ? '#f0fdf4' : '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: pdfFirmadoUrl ? '#0f6e56' : '#9ca3af' }}>
+              style={{ width: 28, height: 28, borderRadius: 7, border: pdfFirmadoUrl ? '0.5px solid #0f6e56' : `0.5px solid ${T.rowBd}`, background: pdfFirmadoUrl ? 'rgba(15,110,86,.12)' : T.rowBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: pdfFirmadoUrl ? '#0f6e56' : T.rowSub }}>
               <Download size={13} />
             </button>
             {pdfFirmadoUrl && (
@@ -654,11 +712,11 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               onClick={handleImprimir}
               disabled={imprimiendo}
               title={imprimiendo ? 'Generando PDF...' : 'Imprimir documento'}
-              style={{ width: 28, height: 28, borderRadius: 7, border: '0.5px solid #e5e7eb', background: '#fff', cursor: imprimiendo ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: imprimiendo ? '#c4c9d4' : '#9ca3af' }}>
+              style={{ width: 28, height: 28, borderRadius: 7, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, cursor: imprimiendo ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: imprimiendo ? T.rowBd : T.rowSub }}>
               <Printer size={13} />
             </button>
             <button onClick={() => setMostrarEmail(true)} title="Enviar por email externo"
-              style={{ width: 28, height: 28, borderRadius: 7, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+              style={{ width: 28, height: 28, borderRadius: 7, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.rowSub }}>
               <Globe2 size={13} />
             </button>
           </div>
@@ -723,7 +781,10 @@ function PanelDetalleQuipux({
   const qc = useQueryClient()
   const { tema } = useThemeStore()
   const T = THEMES[tema].vars
-  const [tabActiva, setTab]               = useState<'info' | 'recorrido' | 'anexos'>('info')
+  const [tabActiva, setTab]               = useState<'preview' | 'info' | 'recorrido' | 'anexos'>('preview')
+  const [pdfUrl, setPdfUrl]               = useState<string | null>(null)
+  const [pdfCargando, setPdfCargando]     = useState(false)
+  const pdfRadiRef                        = useRef<string | null>(null)
   const [mostrarReasignar, setReasignar]  = useState(false)
   const [reasignarId, setReasignarId]     = useState<number | null>(null)
   const [reasignarObs, setReasignarObs]   = useState('')
@@ -839,6 +900,20 @@ function PanelDetalleQuipux({
     },
   })
 
+  useEffect(() => {
+    if (!item.tiene_pdf && !item.tiene_pdf_firmado) return
+    const radiId = item.radi_nume_radi
+    if (pdfRadiRef.current === radiId) return
+    pdfRadiRef.current = radiId
+    setPdfCargando(true)
+    const firmado = item.tiene_pdf_firmado
+    quipuxService.obtenerUrlPDF(radiId, firmado).then(url => {
+      setPdfUrl(url)
+      setPdfCargando(false)
+    }).catch(() => setPdfCargando(false))
+    return () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl) }
+  }, [item.radi_nume_radi])
+
   function parsarFirmaHtml(html: string) {
     if (!html || !html.includes('<')) return null
     const parser = new DOMParser()
@@ -857,7 +932,7 @@ function PanelDetalleQuipux({
     if (['xls','xlsx','csv','ods'].includes(ext)) return <FileSpreadsheet size={13} style={{ color: '#15803d' }} />
     if (['jpg','jpeg','png','gif','tif'].includes(ext)) return <FileImage size={13} style={{ color: '#7c3aed' }} />
     if (ext === 'pdf') return <FileText size={13} style={{ color: '#dc2626' }} />
-    return <File size={13} style={{ color: '#6b7280' }} />
+    return <File size={13} style={{ color: T.rowSub }} />
   }
 
   // Recorrido unificado: Quipux hist_eventos + acciones SGD mezcladas por fecha
@@ -919,14 +994,14 @@ function PanelDetalleQuipux({
 
   const lRow = (l: string, v?: string | null) => v ? (
     <div style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
-      <span style={{ fontSize: 10, color: '#9ca3af', width: 90, flexShrink: 0 }}>{l}</span>
-      <span style={{ fontSize: 11, color: '#374151', fontWeight: 500 }}>{v}</span>
+      <span style={{ fontSize: 10, color: T.rowSub, width: 90, flexShrink: 0 }}>{l}</span>
+      <span style={{ fontSize: 11, color: T.rowTxt, fontWeight: 500 }}>{v}</span>
     </div>
   ) : null
 
   return (
     <div style={{
-      position: 'absolute', right: 0, top: 0, bottom: 0, width: 420,
+      position: 'absolute', right: 0, top: 0, bottom: 0, width: 680,
       background: T.ctHdrBg, borderLeft: `3px solid ${T.pnBd}`,
       display: 'flex', flexDirection: 'column', zIndex: 5, overflow: 'hidden',
       boxShadow: T.pnSh,
@@ -938,39 +1013,39 @@ function PanelDetalleQuipux({
             <ArrowRightLeft size={14} style={{ color: T.pnBd }} />
             <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Reasignar documento Quipux</span>
             <button onClick={() => setReasignar(false)}
-              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
               <X size={14} />
             </button>
           </div>
           <div style={{ padding: '10px 14px' }}>
             <div style={{ position: 'relative', marginBottom: 10 }}>
-              <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+              <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
               <input placeholder="Buscar usuario por nombre..."
                 value={busquedaUsr} onChange={e => setBusquedaUsr(e.target.value)}
-                style={{ width: '100%', padding: '7px 10px 7px 28px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', color: '#374151', background: '#f9fafb' }} />
+                style={{ width: '100%', padding: '7px 10px 7px 28px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', color: T.rowTxt, background: T.rowBg }} />
             </div>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
             {usuarios?.results?.map(u => (
               <div key={u.id} onClick={() => setReasignarId(u.id)}
-                style={{ padding: '8px 10px', borderRadius: 8, cursor: 'pointer', border: `0.5px solid ${reasignarId === u.id ? '#002f6c' : '#e5e7eb'}`, background: reasignarId === u.id ? '#e8f1fd' : '#fff' }}>
-                <p style={{ fontSize: 12, fontWeight: 500, color: '#374151', margin: 0 }}>{u.nombre_completo}</p>
-                <p style={{ fontSize: 10, color: '#9ca3af', margin: '2px 0 0' }}>{u.cargo}{u.unidad_nombre ? ` · ${u.unidad_nombre}` : ''}</p>
+                style={{ padding: '8px 10px', borderRadius: 8, cursor: 'pointer', border: `0.5px solid ${reasignarId === u.id ? T.accentDk : T.rowBd}`, background: reasignarId === u.id ? T.rowSel : T.rowBg }}>
+                <p style={{ fontSize: 12, fontWeight: 500, color: T.rowTxt, margin: 0 }}>{u.nombre_completo}</p>
+                <p style={{ fontSize: 10, color: T.rowSub, margin: '2px 0 0' }}>{u.cargo}{u.unidad_nombre ? ` · ${u.unidad_nombre}` : ''}</p>
               </div>
             ))}
           </div>
           <div style={{ padding: '10px 14px' }}>
             <textarea value={reasignarObs} onChange={e => setReasignarObs(e.target.value)}
               placeholder="Instrucciones para el destinatario..." rows={2}
-              style={{ width: '100%', padding: '8px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: '#374151', background: '#fafbfc' }} />
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }} />
           </div>
-          <div style={{ padding: '10px 14px', borderTop: '0.5px solid #f0f0f0', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={() => setReasignar(false)}
-              style={{ padding: '7px 14px', border: '0.5px solid #e5e7eb', borderRadius: 9, fontSize: 11, cursor: 'pointer', background: '#fff', color: '#6b7280' }}>
+              style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
               Cancelar
             </button>
             <button onClick={() => reasignarId && reasignar.mutate()} disabled={!reasignarId || reasignar.isPending}
-              style={{ padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600, cursor: reasignarId ? 'pointer' : 'not-allowed', background: reasignarId ? '#002f6c' : '#e5e7eb', color: reasignarId ? '#fff' : '#9ca3af' }}>
+              style={{ padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600, cursor: reasignarId ? 'pointer' : 'not-allowed', background: reasignarId ? '#002f6c' : T.rowBd, color: reasignarId ? '#fff' : T.rowSub }}>
               {reasignar.isPending ? 'Reasignando...' : 'Reasignar'}
             </button>
           </div>
@@ -1037,23 +1112,17 @@ function PanelDetalleQuipux({
             </button>
           )}
 
-          {/* ── PDF / PDF Firmado ────────────────────────────────── */}
-          {item.tiene_pdf && (
-            <button onClick={() => quipuxService.descargarPDF(item.radi_nume_radi, item.radi_nume_text || item.radi_nume_radi)}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 8, fontSize: 11, cursor: 'pointer', border: '1px solid rgba(255,255,255,.3)', background: 'rgba(255,255,255,.12)', color: 'rgba(255,255,255,.85)' }}>
-              <Download size={12} /> PDF
-            </button>
-          )}
-          {item.tiene_pdf_firmado && (
-            <button onClick={() => quipuxService.descargarPDF(item.radi_nume_radi, item.radi_nume_text || item.radi_nume_radi, true)}
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 8, fontSize: 11, cursor: 'pointer', border: '1px solid #6ee7b7', background: 'rgba(110,231,183,.2)', color: '#6ee7b7' }}>
-              <Download size={12} /> PDF Firmado
+          {/* ── Descargar PDF (prefiere firmado si existe) ────────── */}
+          {(item.tiene_pdf || item.tiene_pdf_firmado) && (
+            <button onClick={() => quipuxService.descargarPDF(item.radi_nume_radi, item.radi_nume_text || item.radi_nume_radi, !!item.tiene_pdf_firmado)}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', borderRadius: 8, fontSize: 11, cursor: 'pointer', border: `1px solid ${item.tiene_pdf_firmado ? '#6ee7b7' : 'rgba(255,255,255,.3)'}`, background: item.tiene_pdf_firmado ? 'rgba(110,231,183,.2)' : 'rgba(255,255,255,.12)', color: item.tiene_pdf_firmado ? '#6ee7b7' : 'rgba(255,255,255,.85)' }}>
+              <Download size={12} /> {item.tiene_pdf_firmado ? 'PDF Firmado' : 'PDF'}
             </button>
           )}
 
           {/* ── Solo lectura: badge informativo ─────────────────── */}
           {soloLectura && !item.tiene_pdf && !item.tiene_pdf_firmado && (
-            <span style={{ fontSize: 10, color: '#9ca3af', padding: '4px 8px', background: '#f9fafb', borderRadius: 6, border: '0.5px solid #e5e7eb' }}>
+            <span style={{ fontSize: 10, color: T.rowSub, padding: '4px 8px', background: T.rowBg, borderRadius: 6, border: `0.5px solid ${T.rowBd}` }}>
               Solo lectura
             </span>
           )}
@@ -1070,10 +1139,10 @@ function PanelDetalleQuipux({
               style={{ width: '100%', accentColor: '#d97706', marginBottom: 6 }} />
             <textarea value={avanceObs} onChange={e => setAvanceObs(e.target.value)}
               placeholder="Observación (opcional)..." rows={2}
-              style={{ width: '100%', padding: '6px 8px', border: '0.5px solid #fcd34d', borderRadius: 6, fontSize: 11, fontFamily: 'inherit', resize: 'none', outline: 'none', background: '#fff', marginBottom: 6 }} />
+              style={{ width: '100%', padding: '6px 8px', border: '0.5px solid #fcd34d', borderRadius: 6, fontSize: 11, fontFamily: 'inherit', resize: 'none', outline: 'none', background: T.rowBg, color: T.rowTxt, marginBottom: 6 }} />
             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
               <button onClick={() => setEditAvance(false)}
-                style={{ padding: '4px 10px', borderRadius: 6, border: '0.5px solid #e5e7eb', background: '#fff', fontSize: 11, cursor: 'pointer', color: '#6b7280' }}>
+                style={{ padding: '4px 10px', borderRadius: 6, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, fontSize: 11, cursor: 'pointer', color: T.rowSub }}>
                 Cancelar
               </button>
               <button onClick={() => actualizarAvance.mutate()} disabled={actualizarAvance.isPending}
@@ -1086,42 +1155,42 @@ function PanelDetalleQuipux({
 
         {/* Overlay: Responder */}
         {mostrarResponder && (
-          <div style={{ position: 'absolute', inset: 0, background: '#fff', zIndex: 10, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '12px 14px', borderBottom: '0.5px solid #f5f6f8', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '12px 14px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Send size={14} style={{ color: '#002f6c' }} />
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#0a1628', flex: 1 }}>Responder documento Quipux</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt, flex: 1 }}>Responder documento Quipux</span>
               <button onClick={() => setResponder(false)}
-                style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+                style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
                 <X size={14} />
               </button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-              <p style={{ fontSize: 10, color: '#9ca3af', marginBottom: 10 }}>
+              <p style={{ fontSize: 10, color: T.rowSub, marginBottom: 10 }}>
                 Se creará un documento SGD en elaboración vinculado al radicado <strong style={{ color: '#002f6c' }}>{item.radi_nume_text}</strong>
               </p>
-              <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Tipo de documento:</label>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.rowTxt, display: 'block', marginBottom: 4 }}>Tipo de documento:</label>
               <select value={respTipoId ?? ''} onChange={e => setRespTipoId(Number(e.target.value))}
-                style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', marginBottom: 10, background: '#f9fafb' }}>
+                style={{ width: '100%', padding: '7px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', marginBottom: 10, background: T.rowBg, color: T.rowTxt }}>
                 <option value="">Seleccionar tipo...</option>
                 {tiposDoc?.results?.map((t: any) => (
                   <option key={t.id} value={t.id}>{t.prefijo_numeracion} — {t.nombre}</option>
                 ))}
               </select>
-              <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Asunto:</label>
+              <label style={{ fontSize: 11, fontWeight: 600, color: T.rowTxt, display: 'block', marginBottom: 4 }}>Asunto:</label>
               <input value={respAsunto} onChange={e => setRespAsunto(e.target.value)}
-                style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', background: '#f9fafb', marginBottom: 10 }} />
-              <p style={{ fontSize: 10, color: '#9ca3af' }}>
+                style={{ width: '100%', padding: '7px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', background: T.rowBg, color: T.rowTxt, marginBottom: 10 }} />
+              <p style={{ fontSize: 10, color: T.rowSub }}>
                 El documento quedará en tu bandeja <strong>En elaboración</strong> para que puedas redactarlo y firmarlo antes de enviarlo.
               </p>
             </div>
-            <div style={{ padding: '10px 14px', borderTop: '0.5px solid #f0f0f0', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setResponder(false)}
-                style={{ padding: '7px 14px', border: '0.5px solid #e5e7eb', borderRadius: 9, fontSize: 11, cursor: 'pointer', background: '#fff', color: '#6b7280' }}>
+                style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
                 Cancelar
               </button>
               <button onClick={() => respTipoId && respAsunto.trim() && responder.mutate()}
                 disabled={!respTipoId || !respAsunto.trim() || responder.isPending}
-                style={{ padding: '7px 16px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600, cursor: respTipoId ? 'pointer' : 'not-allowed', background: respTipoId ? '#002f6c' : '#e5e7eb', color: respTipoId ? '#fff' : '#9ca3af', display: 'flex', alignItems: 'center', gap: 5 }}>
+                style={{ padding: '7px 16px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600, cursor: respTipoId ? 'pointer' : 'not-allowed', background: respTipoId ? '#002f6c' : T.rowBd, color: respTipoId ? '#fff' : T.rowSub, display: 'flex', alignItems: 'center', gap: 5 }}>
                 <Send size={11} /> {responder.isPending ? 'Creando...' : 'Crear respuesta'}
               </button>
             </div>
@@ -1152,7 +1221,7 @@ function PanelDetalleQuipux({
               </div>
             )}
             {item.tarea_estado != null && (
-              <p style={{ fontSize: 10, color: '#6b7280', marginTop: 4, margin: '5px 0 0' }}>
+              <p style={{ fontSize: 10, color: T.rowSub, marginTop: 4, margin: '5px 0 0' }}>
                 Estado tarea: {item.tarea_estado === 1 ? 'Pendiente' : item.tarea_estado === 2 ? 'Finalizada' : 'Cancelada'}
               </p>
             )}
@@ -1161,20 +1230,22 @@ function PanelDetalleQuipux({
       </div>
 
       {/* Tabs — segmented control */}
-      <div style={{ padding: '8px 12px', borderBottom: '0.5px solid #eef0f5', flexShrink: 0, background: '#f8faff' }}>
-        <div style={{ display: 'flex', background: '#eef1f7', borderRadius: 10, padding: 3, gap: 2 }}>
-          {([
+      <div style={{ padding: '8px 12px', borderBottom: `0.5px solid ${T.pnMetaBd}`, flexShrink: 0, background: T.pnMeta }}>
+        <div style={{ display: 'flex', background: T.statsBg, borderRadius: 10, padding: 3, gap: 2 }}>
+          {(([
+            ...(item.tiene_pdf || item.tiene_pdf_firmado ? [['preview', 'Vista previa', Eye]] : []),
             ['info',      'Información',  FileText],
             ['recorrido', 'Recorrido',    ArrowRightLeft],
             ['anexos',    item.num_anexos > 0 ? `Anexos (${item.num_anexos})` : 'Anexos', Folder],
-          ] as const).map(([k, l, TabIcon]) => (
-            <button key={k} onClick={() => setTab(k)}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ]) as Array<[string, string, any]>).map(([k, l, TabIcon]) => (
+            <button key={k} onClick={() => setTab(k as 'preview' | 'info' | 'recorrido' | 'anexos')}
               style={{
                 flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
                 padding: '6px 4px', borderRadius: 8, fontSize: 11, fontWeight: tabActiva === k ? 700 : 500,
                 border: 'none', cursor: 'pointer', transition: 'all .15s',
-                background: tabActiva === k ? '#fff' : 'transparent',
-                color: tabActiva === k ? '#002f6c' : '#6b7280',
+                background: tabActiva === k ? T.ctHdrBg : 'transparent',
+                color: tabActiva === k ? T.accentDk : T.rowSub,
                 boxShadow: tabActiva === k ? '0 1px 4px rgba(0,47,108,.12)' : 'none',
               }}>
               <TabIcon size={12} />
@@ -1185,8 +1256,24 @@ function PanelDetalleQuipux({
       </div>
 
       {/* Tab content */}
-      <div style={{ flex: 1, padding: 14, overflow: 'auto' }}>
-        {isLoading && <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 12, paddingTop: 40 }}>Cargando…</div>}
+      <div style={{ flex: 1, padding: tabActiva === 'preview' ? 0 : 14, overflow: 'auto' }}>
+        {isLoading && tabActiva !== 'preview' && <div style={{ textAlign: 'center', color: T.rowSub, fontSize: 12, paddingTop: 40 }}>Cargando…</div>}
+
+        {tabActiva === 'preview' && (
+          pdfCargando ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 10, color: T.rowSub }}>
+              <div style={{ width: 32, height: 32, border: `3px solid ${T.pnBd}`, borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+              <span style={{ fontSize: 12 }}>Cargando PDF…</span>
+            </div>
+          ) : pdfUrl ? (
+            <iframe src={pdfUrl} style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} title="Vista previa" />
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 8, color: T.rowSub }}>
+              <Eye size={32} style={{ opacity: 0.3 }} />
+              <span style={{ fontSize: 12 }}>Sin PDF disponible</span>
+            </div>
+          )
+        )}
 
         {doc && tabActiva === 'info' && (
           <div>
@@ -1197,7 +1284,7 @@ function PanelDetalleQuipux({
             {doc.radi_resumen && lRow('Resumen', doc.radi_resumen)}
             {doc.creador && (
               <>
-                <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#9ca3af', letterSpacing: 1 }}>Remitente</div>
+                <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Remitente</div>
                 {lRow('Nombre', doc.creador.nombre)}
                 {lRow('Cargo', doc.creador.cargo)}
                 {lRow('Área', doc.creador.area)}
@@ -1207,12 +1294,12 @@ function PanelDetalleQuipux({
               const firma = parsarFirmaHtml(doc.radi_nomb_usua_firma)
               return firma ? (
                 <>
-                  <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: '#9ca3af', letterSpacing: 1 }}>Firma electrónica</div>
+                  <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Firma electrónica</div>
                   <div style={{ background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
                     <p style={{ fontWeight: 700, color: '#0f6e56', margin: '0 0 3px' }}>✓ {firma.nombre}</p>
-                    {firma.cedula && <p style={{ color: '#374151', margin: '0 0 2px' }}>CI: {firma.cedula}</p>}
-                    {firma.cargo  && <p style={{ color: '#6b7280', margin: '0 0 2px' }}>{firma.cargo}</p>}
-                    {firma.fecha  && <p style={{ color: '#9ca3af', margin: 0, fontSize: 10 }}>{firma.fecha}</p>}
+                    {firma.cedula && <p style={{ color: T.rowTxt, margin: '0 0 2px' }}>CI: {firma.cedula}</p>}
+                    {firma.cargo  && <p style={{ color: T.rowSub, margin: '0 0 2px' }}>{firma.cargo}</p>}
+                    {firma.fecha  && <p style={{ color: T.rowSub, margin: 0, fontSize: 10 }}>{firma.fecha}</p>}
                   </div>
                 </>
               ) : lRow('Firmado por', doc.radi_nomb_usua_firma)
@@ -1222,26 +1309,31 @@ function PanelDetalleQuipux({
 
         {doc && tabActiva === 'recorrido' && (
           <div>
-            {recorridoUnificado.length === 0 && <p style={{ fontSize: 11, color: '#9ca3af' }}>Sin recorrido registrado.</p>}
+            {recorridoUnificado.length === 0 && <p style={{ fontSize: 11, color: T.rowSub }}>Sin recorrido registrado.</p>}
             {recorridoUnificado.map((ev, i) => {
               const isLast = i === recorridoUnificado.length - 1
               const dotColor = ev.tipo === 'sgd' ? '#0f6e56' : '#002f6c'
-              const cardBg = ev.tipo === 'sgd' ? 'rgba(15,110,86,.05)' : 'rgba(0,47,108,.04)'
-              const cardBorder = ev.tipo === 'sgd' ? 'rgba(15,110,86,.2)' : 'rgba(0,47,108,.15)'
               return (
-                <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                    <div style={{ width: 22, height: 22, borderRadius: '50%', background: dotColor, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, boxShadow: `0 2px 6px ${dotColor}55`, flexShrink: 0 }}>{i + 1}</div>
-                    {!isLast && <div style={{ width: 2, flex: 1, background: `linear-gradient(${dotColor}, #e5e7eb)`, minHeight: 14, marginTop: 3, borderRadius: 1 }} />}
+                    <div style={{ width: 22, height: 22, borderRadius: '50%', background: dotColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `0 2px 6px ${dotColor}55` }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />
+                    </div>
+                    {!isLast && <div style={{ width: 2, flex: 1, background: T.rowBd, minHeight: 10, marginTop: 3, borderRadius: 1 }} />}
                   </div>
-                  <div style={{ flex: 1, paddingBottom: 4, background: cardBg, border: `0.5px solid ${cardBorder}`, borderRadius: 8, padding: '7px 10px', marginBottom: isLast ? 0 : 2 }}>
-                    <p style={{ fontSize: 10, color: '#9ca3af', margin: '0 0 2px' }}>{new Date(ev.fecha).toLocaleString('es-EC')}</p>
-                    <p style={{ fontSize: 11, fontWeight: 700, color: dotColor, margin: '0 0 2px' }}>
+                  <div style={{ flex: 1, background: T.rowBg, border: `0.5px solid ${T.rowBd}`, borderRadius: 8, padding: '7px 10px', marginBottom: isLast ? 0 : 2 }}>
+                    <p style={{ fontSize: 11, fontWeight: 700, color: dotColor, margin: '0 0 1px' }}>
                       {ev.accion}
                       {ev.tipo === 'sgd' && <span style={{ fontSize: 9, fontWeight: 600, background: '#dcfce7', color: '#0f6e56', padding: '1px 5px', borderRadius: 8, marginLeft: 5 }}>SGD</span>}
                     </p>
-                    {ev.descripcion && <p style={{ fontSize: 11, color: '#374151', margin: '0 0 2px' }}>{ev.descripcion}</p>}
-                    {ev.origen && <p style={{ fontSize: 10, color: '#9ca3af', margin: 0 }}>{ev.origen}{ev.destino ? ` → ${ev.destino}` : ''}</p>}
+                    <p style={{ fontSize: 10, color: T.rowSub, margin: '0 0 2px' }}>
+                      {ev.origen}{ev.destino ? ` → ${ev.destino}` : ''}{ev.origen ? ' · ' : ''}{new Date(ev.fecha).toLocaleString('es-EC')}
+                    </p>
+                    {ev.descripcion && (
+                      <p style={{ fontSize: 10, color: T.rowTxt, margin: '4px 0 0', borderLeft: `2px solid ${T.rowBd}`, paddingLeft: 6, fontStyle: 'italic' }}>
+                        {ev.descripcion}
+                      </p>
+                    )}
                   </div>
                 </div>
               )
@@ -1262,8 +1354,8 @@ function PanelDetalleQuipux({
                           <div style={{ width: `${h.avance}%`, height: '100%', background: h.avance >= 100 ? '#0f6e56' : '#d97706', borderRadius: 4, transition: 'width 0.3s' }} />
                         </div>
                       </div>
-                      {h.observacion && <p style={{ fontSize: 10, color: '#374151', margin: '2px 0' }}>{h.observacion}</p>}
-                      <p style={{ fontSize: 9, color: '#9ca3af', margin: 0 }}>{h.usuario} · {new Date(h.creado_en).toLocaleString('es-EC')}</p>
+                      {h.observacion && <p style={{ fontSize: 10, color: T.rowTxt, margin: '2px 0' }}>{h.observacion}</p>}
+                      <p style={{ fontSize: 9, color: T.rowSub, margin: 0 }}>{h.usuario} · {new Date(h.creado_en).toLocaleString('es-EC')}</p>
                     </div>
                   </div>
                 ))}
@@ -1274,19 +1366,19 @@ function PanelDetalleQuipux({
 
         {tabActiva === 'anexos' && (
           cargandoAnexos ? (
-            <p style={{ fontSize: 11, color: '#9ca3af' }}>Cargando anexos…</p>
+            <p style={{ fontSize: 11, color: T.rowSub }}>Cargando anexos…</p>
           ) : !anexos || anexos.length === 0 ? (
-            <p style={{ fontSize: 11, color: '#9ca3af' }}>Sin anexos adjuntos.</p>
+            <p style={{ fontSize: 11, color: T.rowSub }}>Sin anexos adjuntos.</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {anexos.map((a: QuipuxAnexo) => (
-                <div key={a.anex_codigo} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#f9fafb', borderRadius: 8, border: '0.5px solid #e5e7eb' }}>
+                <div key={a.anex_codigo} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: T.rowBg, borderRadius: 8, border: `0.5px solid ${T.rowBd}` }}>
                   {iconoAnexo(a.anex_tipo_ext)}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 11, fontWeight: 600, color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <p style={{ fontSize: 11, fontWeight: 600, color: T.rowTxt, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {a.anex_nombre || `anexo.${a.anex_tipo_ext}`}
                     </p>
-                    <p style={{ fontSize: 10, color: '#9ca3af', margin: 0 }}>
+                    <p style={{ fontSize: 10, color: T.rowSub, margin: 0 }}>
                       {a.anex_tipo_ext.toUpperCase()} {a.anex_tamano ? `· ${Math.round(Number(a.anex_tamano))} KB` : ''}
                     </p>
                   </div>
@@ -1296,7 +1388,7 @@ function PanelDetalleQuipux({
                       <Download size={10} /> Descargar
                     </button>
                   ) : (
-                    <span style={{ fontSize: 10, color: '#9ca3af' }}>Sin archivo</span>
+                    <span style={{ fontSize: 10, color: T.rowSub }}>Sin archivo</span>
                   )}
                 </div>
               ))}
@@ -1310,7 +1402,7 @@ function PanelDetalleQuipux({
         <textarea value={comentario} onChange={e => setComentario(e.target.value)}
           placeholder="Escribir observación sobre este documento Quipux..."
           rows={2}
-          style={{ width: '100%', padding: '8px 10px', border: '1px solid #c8d9ee', borderRadius: 10, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: '#374151', background: '#fff' }} />
+          style={{ width: '100%', padding: '8px 10px', border: `1px solid ${T.pnCmtBd}`, borderRadius: 10, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
           <button
             onClick={() => quipuxService.imprimirRecorrido(item.radi_nume_radi, item.radi_nume_text)}
@@ -1336,11 +1428,12 @@ export default function DocumentosPage() {
   const navigate = useNavigate()
   const authUsuario = useAuthStore(s => s.usuario)
   const esAdmin = authUsuario?.is_admin ?? false
-  const { roles, esAdmin: permisosAdmin } = usePermisosStore()
+  const { esAdmin: permisosAdmin, puede } = usePermisosStore()
   const { tema, setTema } = useThemeStore()
   const T = THEMES[tema].vars
-  // Usuarios regulares (no archivo, no admin) ven solo Quipux
-  const soloQuipux = !esAdmin && !permisosAdmin && !roles.includes('ARCHIVO')
+  // soloQuipux: usuarios que solo pueden VER documentos (no crear)
+  // → ven bandejas Quipux sin botón "Nuevo documento"
+  const soloQuipux = !puede('documentos', 'crear')
 
   const [temaOpen, setTemaOpen] = useState(false)
   const [bandejaActiva, setBandeja]   = useState('recibidos')
@@ -1411,15 +1504,16 @@ export default function DocumentosPage() {
   // Quipux docs — solo en bandejas con equivalente Quipux
   const qBandeja = QUIPUX_BANDEJA_MAP[bandejaActiva] ?? null
   const { data: quipuxData, isFetching: qFetching } = useQuery({
-    queryKey: ['quipux-bandeja', bandejaActiva, adminVer?.cedula, qPage],
+    queryKey: ['quipux-bandeja', bandejaActiva, adminVer?.cedula, qPage, busqueda],
     queryFn: () => quipuxService.buscar({
       bandeja: qBandeja!,
       page: String(qPage),
       page_size: String(Q_PAGE_SIZE),
       ...(esAdmin && adminVer ? { cedula_usuario: adminVer.cedula } : {}),
+      ...(busqueda ? { search: busqueda } : {}),
     }),
     enabled: !!qBandeja,
-    staleTime: 30000,
+    staleTime: busqueda ? 0 : 30000,
     placeholderData: keepPreviousData,
   })
   const quipuxItems = quipuxData?.results ?? []
@@ -1514,60 +1608,66 @@ export default function DocumentosPage() {
       display: 'grid', gridTemplateColumns: '200px 1fr',
       height: soloQuipux ? 'calc(100vh - 56px)' : 'calc(100vh - 96px)',
       borderRadius: soloQuipux ? 0 : 14,
-      overflow: 'hidden', border: soloQuipux ? 'none' : '0.5px solid #e5e7eb',
-      background: '#fff', position: 'relative',
+      overflow: 'hidden', border: soloQuipux ? 'none' : `0.5px solid ${T.rowBd}`,
+      background: T.ctBg, position: 'relative',
     }}>
-      {modal && <EditorDocumento onClose={() => setModal(false)} />}
+      {modal && (
+        <EditorDocumento
+          onClose={() => setModal(false)}
+          onEnviado={() => { setModal(false); setBandeja('enviados'); }}
+        />
+      )}
       {docEditar && (
         <EditorDocumento
           documentoExistente={docEditar}
-          onClose={() => { setDocEditar(null); qc.invalidateQueries({ queryKey: ['bandeja'] }) }}
+          onClose={() => { setDocEditar(null); qc.invalidateQueries({ queryKey: ['bandeja'] }); }}
+          onEnviado={() => { setDocEditar(null); setBandeja('enviados'); qc.invalidateQueries({ queryKey: ['bandeja'] }); }}
         />
       )}
 
       {/* Modal selector de usuario admin */}
       {mostrarSelectorUsuario && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 16, width: 440, maxHeight: '75vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.22)' }}>
-            <div style={{ padding: '14px 16px', borderBottom: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ background: T.ctHdrBg, borderRadius: 16, width: 440, maxHeight: '75vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.22)' }}>
+            <div style={{ padding: '14px 16px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Database size={14} style={{ color: '#002f6c' }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', flex: 1 }}>Ver bandeja de usuario</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, flex: 1 }}>Ver bandeja de usuario</span>
               <button onClick={() => setMostrarSelector(false)}
-                style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+                style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
                 <X size={14} />
               </button>
             </div>
             <div style={{ padding: '10px 14px' }}>
               <div style={{ position: 'relative' }}>
-                <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+                <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
                 <input autoFocus placeholder="Buscar por nombre o cédula..."
                   value={busqUsuario} onChange={e => setBusqUsuario(e.target.value)}
-                  style={{ width: '100%', padding: '7px 10px 7px 28px', border: '0.5px solid #e5e7eb', borderRadius: 9, fontSize: 12, outline: 'none', color: '#374151', background: '#f9fafb' }} />
+                  style={{ width: '100%', padding: '7px 10px 7px 28px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 12, outline: 'none', color: T.rowTxt, background: T.rowBg }} />
               </div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* Opción: mis propios documentos */}
               <div onClick={() => { setAdminVer(null); setMostrarSelector(false); setSelQuipux(null); setSelectedId(null) }}
-                style={{ padding: '9px 12px', borderRadius: 9, cursor: 'pointer', border: `0.5px solid ${!adminVer ? '#002f6c' : '#e5e7eb'}`, background: !adminVer ? '#e8f1fd' : '#fafbfc', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                style={{ padding: '9px 12px', borderRadius: 9, cursor: 'pointer', border: `0.5px solid ${!adminVer ? '#002f6c' : T.rowBd}`, background: !adminVer ? T.rowSel : T.rowBg, display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#002f6c', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
                   YO
                 </div>
                 <div>
                   <p style={{ fontSize: 12, fontWeight: 600, color: '#002f6c', margin: 0 }}>Mis documentos</p>
-                  <p style={{ fontSize: 10, color: '#6b7280', margin: 0 }}>Ver mi propia bandeja</p>
+                  <p style={{ fontSize: 10, color: T.rowSub, margin: 0 }}>Ver mi propia bandeja</p>
                 </div>
                 {!adminVer && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#002f6c', fontWeight: 700 }}>✓ activo</span>}
               </div>
               {usuariosSelector?.results?.filter(u => u.cedula).map(u => (
                 <div key={u.id}
                   onClick={() => { setAdminVer({ id: u.id, cedula: u.cedula, nombre: u.nombre_completo, activo: u.activo }); setMostrarSelector(false); setSelQuipux(null); setSelectedId(null) }}
-                  style={{ padding: '8px 12px', borderRadius: 9, cursor: 'pointer', border: `0.5px solid ${adminVer?.id === u.id ? '#002f6c' : '#e5e7eb'}`, background: adminVer?.id === u.id ? '#e8f1fd' : '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: u.activo ? '#e8f1fd' : '#f3f4f6', color: u.activo ? '#002f6c' : '#9ca3af', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
+                  style={{ padding: '8px 12px', borderRadius: 9, cursor: 'pointer', border: `0.5px solid ${adminVer?.id === u.id ? '#002f6c' : T.rowBd}`, background: adminVer?.id === u.id ? T.rowSel : T.rowBg, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: u.activo ? T.rowSel : T.rowHv, color: u.activo ? '#002f6c' : T.rowSub, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>
                     {u.nombres?.[0]}{u.apellidos?.[0]}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 12, fontWeight: 500, color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.nombre_completo}</p>
-                    <p style={{ fontSize: 10, color: '#9ca3af', margin: '1px 0 0' }}>
+                    <p style={{ fontSize: 12, fontWeight: 500, color: T.rowTxt, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.nombre_completo}</p>
+                    <p style={{ fontSize: 10, color: T.rowSub, margin: '1px 0 0' }}>
                       {u.cedula}{u.cargo ? ` · ${u.cargo}` : ''}
                       {!u.activo && <span style={{ marginLeft: 6, color: '#ef4444', fontWeight: 600 }}>Inactivo — solo Quipux</span>}
                     </p>
@@ -1576,7 +1676,7 @@ export default function DocumentosPage() {
                 </div>
               ))}
               {mostrarSelectorUsuario && !usuariosSelector && (
-                <p style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', padding: 16 }}>Escribe para buscar usuarios…</p>
+                <p style={{ fontSize: 11, color: T.rowSub, textAlign: 'center', padding: 16 }}>Escribe para buscar usuarios…</p>
               )}
             </div>
           </div>
@@ -1586,80 +1686,80 @@ export default function DocumentosPage() {
       {/* Modal búsqueda avanzada */}
       {busquedaAvanzada && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 16, width: 560, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.24)' }}>
-            <div style={{ padding: '14px 16px', borderBottom: '0.5px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ background: T.ctHdrBg, borderRadius: 16, width: 560, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.24)' }}>
+            <div style={{ padding: '14px 16px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Search size={14} style={{ color: '#002f6c' }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', flex: 1 }}>Búsqueda avanzada en Quipux</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, flex: 1 }}>Búsqueda avanzada en Quipux</span>
               <button onClick={() => setBusquedaAvanzada(false)}
-                style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+                style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
                 <X size={14} />
               </button>
             </div>
-            <div style={{ padding: '14px 16px', borderBottom: '0.5px solid #f5f6f8' }}>
+            <div style={{ padding: '14px 16px', borderBottom: `0.5px solid ${T.pnMetaBd}` }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 <div>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>N° Radicado</label>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>N° Radicado</label>
                   <input value={bAvNum} onChange={e => setBAvNum(e.target.value)}
                     placeholder="ej: CGPMC-2024-1234"
-                    style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', background: '#f9fafb', color: '#374151', boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '7px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', background: T.rowBg, color: T.rowTxt, boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Asunto</label>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Asunto</label>
                   <input value={bAvAsu} onChange={e => setBAvAsu(e.target.value)}
                     placeholder="Palabras clave del asunto..."
-                    style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', background: '#f9fafb', color: '#374151', boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '7px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', background: T.rowBg, color: T.rowTxt, boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Desde</label>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Desde</label>
                   <input type="date" value={bAvDes} onChange={e => setBAvDes(e.target.value)}
-                    style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', background: '#f9fafb', color: '#374151', boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '7px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', background: T.rowBg, color: T.rowTxt, boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 10, fontWeight: 700, color: '#6b7280', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Hasta</label>
+                  <label style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Hasta</label>
                   <input type="date" value={bAvHas} onChange={e => setBAvHas(e.target.value)}
-                    style={{ width: '100%', padding: '7px 10px', border: '0.5px solid #e5e7eb', borderRadius: 8, fontSize: 12, outline: 'none', background: '#f9fafb', color: '#374151', boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '7px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, outline: 'none', background: T.rowBg, color: T.rowTxt, boxSizing: 'border-box' }} />
                 </div>
               </div>
-              <p style={{ fontSize: 10, color: '#9ca3af' }}>Escribe al menos 3 caracteres en N° o Asunto para buscar.</p>
+              <p style={{ fontSize: 10, color: T.rowSub }}>Escribe al menos 3 caracteres en N° o Asunto para buscar.</p>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
               {bAvFetching && (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: 20, color: '#9ca3af', fontSize: 12 }}>Buscando…</div>
+                <div style={{ display: 'flex', justifyContent: 'center', padding: 20, color: T.rowSub, fontSize: 12 }}>Buscando…</div>
               )}
               {!bAvFetching && resultadosBusqAvz && (
                 resultadosBusqAvz.results.length === 0
-                  ? <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: 12, padding: 20 }}>No se encontraron documentos.</p>
+                  ? <p style={{ textAlign: 'center', color: T.rowSub, fontSize: 12, padding: 20 }}>No se encontraron documentos.</p>
                   : <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <p style={{ fontSize: 10, color: '#6b7280', marginBottom: 6 }}>{resultadosBusqAvz.count} resultado(s)</p>
+                      <p style={{ fontSize: 10, color: T.rowSub, marginBottom: 6 }}>{resultadosBusqAvz.count} resultado(s)</p>
                       {resultadosBusqAvz.results.map(item => (
                         <div key={item.radi_nume_radi}
                           onClick={() => { setSelQuipux(item); setBusquedaAvanzada(false) }}
-                          style={{ padding: '10px 12px', borderRadius: 10, cursor: 'pointer', border: '0.5px solid #e5e7eb', background: '#fafbfc', transition: 'all .15s' }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#e8f1fd'; (e.currentTarget as HTMLElement).style.borderColor = '#002f6c' }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#fafbfc'; (e.currentTarget as HTMLElement).style.borderColor = '#e5e7eb' }}>
+                          style={{ padding: '10px 12px', borderRadius: 10, cursor: 'pointer', border: `0.5px solid ${T.rowBd}`, background: T.rowBg, transition: 'all .15s' }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = T.rowHv; (e.currentTarget as HTMLElement).style.borderColor = '#002f6c' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = T.rowBg; (e.currentTarget as HTMLElement).style.borderColor = T.rowBd }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                             <Database size={11} style={{ color: '#002f6c', flexShrink: 0 }} />
                             <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'monospace', color: '#002f6c' }}>{item.radi_nume_text || item.radi_nume_radi}</span>
                             <span style={{ fontSize: 9, background: '#002f6c', color: '#fff', padding: '1px 5px', borderRadius: 8 }}>QUIPUX</span>
-                            <span style={{ marginLeft: 'auto', fontSize: 9, color: '#9ca3af' }}>{item.radi_fech_radi ? new Date(item.radi_fech_radi).toLocaleDateString('es-EC') : ''}</span>
+                            <span style={{ marginLeft: 'auto', fontSize: 9, color: T.rowSub }}>{item.radi_fech_radi ? new Date(item.radi_fech_radi).toLocaleDateString('es-EC') : ''}</span>
                           </div>
-                          <p style={{ fontSize: 12, fontWeight: 600, color: '#111827', margin: 0, lineHeight: 1.3 }}>{item.radi_asunto || '(Sin asunto)'}</p>
-                          <p style={{ fontSize: 10, color: '#6b7280', margin: '3px 0 0' }}>{item.area_nombre || item.creador_nombre}</p>
+                          <p style={{ fontSize: 12, fontWeight: 600, color: T.rowTxt, margin: 0, lineHeight: 1.3 }}>{item.radi_asunto || '(Sin asunto)'}</p>
+                          <p style={{ fontSize: 10, color: T.rowSub, margin: '3px 0 0' }}>{item.area_nombre || item.creador_nombre}</p>
                         </div>
                       ))}
                     </div>
               )}
               {!bAvFetching && !resultadosBusqAvz && (bAvNum.length >= 3 || bAvAsu.length >= 3) && (
-                <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: 12, padding: 20 }}>Sin resultados aún</p>
+                <p style={{ textAlign: 'center', color: T.rowSub, fontSize: 12, padding: 20 }}>Sin resultados aún</p>
               )}
             </div>
-            <div style={{ padding: '10px 16px', borderTop: '0.5px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ padding: '10px 16px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <button onClick={() => { setBAvNum(''); setBAvAsu(''); setBAvDes(''); setBAvHas('') }}
-                style={{ fontSize: 11, color: '#9ca3af', background: 'none', border: 'none', cursor: 'pointer' }}>
+                style={{ fontSize: 11, color: T.rowSub, background: 'none', border: 'none', cursor: 'pointer' }}>
                 Limpiar filtros
               </button>
               <button onClick={() => setBusquedaAvanzada(false)}
-                style={{ padding: '7px 16px', border: '0.5px solid #e5e7eb', borderRadius: 9, fontSize: 11, cursor: 'pointer', background: '#fff', color: '#374151' }}>
+                style={{ padding: '7px 16px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, cursor: 'pointer', background: T.rowBg, color: T.rowTxt }}>
                 Cerrar
               </button>
             </div>
@@ -1778,13 +1878,13 @@ export default function DocumentosPage() {
                 <span style={{ fontSize: 11, color: T.sbText }}>Tema: {THEMES[tema].nombre}</span>
               </button>
               {temaOpen && (
-                <div style={{ position: 'absolute', bottom: '100%', left: 14, background: '#fff', borderRadius: 12, padding: 10, boxShadow: '0 4px 20px rgba(0,0,0,.18)', display: 'flex', gap: 8, zIndex: 50 }}>
+                <div style={{ position: 'absolute', bottom: '100%', left: 0, background: T.ctHdrBg, borderRadius: 12, padding: 8, boxShadow: '0 4px 20px rgba(0,0,0,.22)', display: 'grid', gridTemplateColumns: 'repeat(4, 38px)', gap: 6, zIndex: 50, border: `1px solid ${T.rowBd}` }}>
                   {THEME_ORDER.map(id => (
-                    <div key={id} onClick={() => { setTema(id); setTemaOpen(false) }} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: 9, background: THEMES[id].color, border: tema === id ? '3px solid #002f6c' : '2px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {tema === id && <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#fff' }} />}
+                    <div key={id} onClick={() => { setTema(id); setTemaOpen(false) }} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 8, background: THEMES[id].color, border: tema === id ? '3px solid #002f6c' : `2px solid ${T.rowBd}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {tema === id && <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#fff' }} />}
                       </div>
-                      <span style={{ fontSize: 9, color: '#374151', whiteSpace: 'nowrap' }}>{THEMES[id].nombre}</span>
+                      <span style={{ fontSize: 8, color: T.rowTxt, whiteSpace: 'nowrap', textAlign: 'center', lineHeight: 1.2 }}>{THEMES[id].nombre}</span>
                     </div>
                   ))}
                 </div>
@@ -1825,7 +1925,7 @@ export default function DocumentosPage() {
                     <span style={{ fontSize: 9, color: '#ef4444', fontWeight: 600 }}>Usuario inactivo · solo Quipux</span>
                   )}
                   <button onClick={() => { setBusqUsuario(''); setMostrarSelector(true) }}
-                    style={{ marginTop: 4, fontSize: 9, color: '#002f6c', background: '#fff', border: '0.5px solid #93c5fd', borderRadius: 6, padding: '2px 7px', cursor: 'pointer', fontWeight: 600, width: '100%' }}>
+                    style={{ marginTop: 4, fontSize: 9, color: '#002f6c', background: T.ctHdrBg, border: '0.5px solid #93c5fd', borderRadius: 6, padding: '2px 7px', cursor: 'pointer', fontWeight: 600, width: '100%' }}>
                     Cambiar usuario
                   </button>
                 </div>
@@ -1903,6 +2003,12 @@ export default function DocumentosPage() {
                 { label: 'Respaldo documentos',  icon: Download,   action: () => {
                   setSidebarRespaldoAbierto(v => !v)
                 }},
+                ...(puede('tramites', 'ver') ? [
+                  { label: 'Trámites ciudadanos', icon: ClipboardList, action: () => navigate('/tramites') },
+                ] : []),
+                ...(puede('archivo', 'ver') ? [
+                  { label: 'Archivo documental',  icon: Archive,       action: () => navigate('/archivo') },
+                ] : []),
                 ...(esAdmin || permisosAdmin ? [
                   { label: 'Usuarios internos',  icon: Users,      action: () => navigate('/usuarios') },
                   { label: 'Áreas / organigrama',icon: BookUser,   action: () => navigate('/organigrama') },
@@ -1965,13 +2071,13 @@ export default function DocumentosPage() {
                   <span style={{ fontSize: 11, color: T.sbText }}>Tema: {THEMES[tema].nombre}</span>
                 </button>
                 {temaOpen && (
-                  <div style={{ position: 'absolute', bottom: '100%', left: 6, background: '#fff', borderRadius: 12, padding: 10, boxShadow: '0 4px 20px rgba(0,0,0,.18)', display: 'flex', gap: 8, zIndex: 50 }}>
+                  <div style={{ position: 'absolute', bottom: '100%', left: 0, background: T.ctHdrBg, borderRadius: 12, padding: 8, boxShadow: '0 4px 20px rgba(0,0,0,.22)', display: 'grid', gridTemplateColumns: 'repeat(4, 38px)', gap: 6, zIndex: 50, border: `1px solid ${T.rowBd}` }}>
                     {THEME_ORDER.map(id => (
-                      <div key={id} onClick={() => { setTema(id); setTemaOpen(false) }} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 9, background: THEMES[id].color, border: tema === id ? '3px solid #002f6c' : '2px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {tema === id && <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#fff' }} />}
+                      <div key={id} onClick={() => { setTema(id); setTemaOpen(false) }} style={{ cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                        <div style={{ width: 34, height: 34, borderRadius: 8, background: THEMES[id].color, border: tema === id ? '3px solid #002f6c' : `2px solid ${T.rowBd}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {tema === id && <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#fff' }} />}
                         </div>
-                        <span style={{ fontSize: 9, color: '#374151', whiteSpace: 'nowrap' }}>{THEMES[id].nombre}</span>
+                        <span style={{ fontSize: 8, color: T.rowTxt, whiteSpace: 'nowrap', textAlign: 'center', lineHeight: 1.2 }}>{THEMES[id].nombre}</span>
                       </div>
                     ))}
                   </div>
@@ -1990,26 +2096,26 @@ export default function DocumentosPage() {
             {BANDEJAS.find(b => b.key === bandejaActiva)?.label ?? 'Documentos'}
           </span>
           <div style={{ position: 'relative', flex: 1, maxWidth: 420 }}>
-            <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+            <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
             <input placeholder="Asunto, numero de documento, numero de referencia..."
-              value={busqueda} onChange={e => setBusqueda(e.target.value)}
-              style={{ width: '100%', padding: '6px 10px 6px 26px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }} />
+              value={busqueda} onChange={e => { setBusqueda(e.target.value); setQPage(1); }}
+              style={{ width: '100%', padding: '6px 10px 6px 26px', fontSize: 11, border: `0.5px solid ${T.rowBd}`, borderRadius: 8, background: T.rowBg, color: T.rowTxt, outline: 'none' }} />
           </div>
           <select value={filtroTipo} onChange={e => setFiltroTipo(e.target.value)}
-            style={{ padding: '6px 10px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }}>
+            style={{ padding: '6px 10px', fontSize: 11, border: `0.5px solid ${T.rowBd}`, borderRadius: 8, background: T.rowBg, color: T.rowTxt, outline: 'none' }}>
             <option value="">Todos los tipos</option>
             {['OFI','MEM','CIR','RES','INF','CON','CER','ACT'].map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           <div style={{ display: 'flex', gap: 4, marginLeft: 4 }}>
             {['Todos','No leidos'].map((f, i) => (
               <button key={f} onClick={() => setFiltroLeido(i === 1 ? 'false' : '')}
-                style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: '0.5px solid #e5e7eb', background: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? '#002f6c' : 'transparent', color: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? '#fff' : '#9ca3af' }}>
+                style={{ padding: '5px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: `0.5px solid ${T.rowBd}`, background: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? T.accentDk : 'transparent', color: (i === 1 && filtroLeido === 'false') || (i === 0 && !filtroLeido) ? '#fff' : T.rowSub }}>
                 {f}
               </button>
             ))}
           </div>
           <button onClick={() => { refetch(); refetchConteos() }}
-            style={{ width: 30, height: 30, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+            style={{ width: 30, height: 30, borderRadius: 8, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.rowSub }}>
             <RefreshCw size={13} />
           </button>
 
@@ -2018,8 +2124,8 @@ export default function DocumentosPage() {
         <div style={{ padding: '5px 14px', background: T.statsBg, borderBottom: `1px solid ${T.ctHdrBd}`, fontSize: 11, color: T.rowSub, flexShrink: 0 }}>
           {!soloQuipux && (
             <>
-              SGD: <strong style={{ color: '#374151' }}>{data?.count ?? 0}</strong>
-              {qBandeja && <span style={{ marginLeft: 8, color: '#d1d5db' }}>|</span>}
+              SGD: <strong style={{ color: T.rowTxt }}>{data?.count ?? 0}</strong>
+              {qBandeja && <span style={{ marginLeft: 8, color: T.rowBd }}>|</span>}
             </>
           )}
           {qBandeja && (
@@ -2027,7 +2133,7 @@ export default function DocumentosPage() {
               {soloQuipux ? '' : 'Quipux: '}
               <strong style={{ color: T.accentDk }}>{quipuxTotal.toLocaleString()}</strong>
               {quipuxTotal > 0 && (
-                <span style={{ marginLeft: 4, fontSize: 10, color: '#9ca3af' }}>
+                <span style={{ marginLeft: 4, fontSize: 10, color: T.rowSub }}>
                   {soloQuipux ? 'documentos' : `(mostrando ${Math.min(qPage * Q_PAGE_SIZE, quipuxTotal).toLocaleString()})`}
                 </span>
               )}
@@ -2035,7 +2141,7 @@ export default function DocumentosPage() {
           )}
           {!soloQuipux && (
             <>
-              <span style={{ marginLeft: 8, color: '#d1d5db' }}>|</span>
+              <span style={{ marginLeft: 8, color: T.rowBd }}>|</span>
               <span style={{ marginLeft: 8 }}>Bandeja: {BANDEJAS.find(b => b.key === bandejaActiva)?.label}</span>
             </>
           )}
@@ -2050,9 +2156,9 @@ export default function DocumentosPage() {
           </div>
 
           {isLoading && !soloQuipux ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100, fontSize: 12, color: '#9ca3af' }}>Cargando...</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 100, fontSize: 12, color: T.rowSub }}>Cargando...</div>
           ) : ((soloQuipux ? 0 : items.length) === 0 && quipuxItemsFiltrados.length === 0) ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 150, color: '#9ca3af' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 150, color: T.rowSub }}>
               <Inbox size={28} style={{ opacity: .3, marginBottom: 8 }} />
               <p style={{ fontSize: 12 }}>Esta bandeja esta vacia</p>
             </div>
@@ -2066,13 +2172,13 @@ export default function DocumentosPage() {
                 const esExterno = !!item.remitente_entidad
                 return (
                   <div key={`sgd-${item.id}`} onClick={() => handleSelectSGD(item)}
+                    className="row-hover-lift"
                     style={{
                       display: 'grid', gridTemplateColumns: '24px 24px 64px 1fr 120px 140px 120px 100px',
                       gap: 8, padding: '8px 12px', borderBottom: `0.5px solid ${T.rowBd}`,
                       cursor: 'pointer', alignItems: 'center',
                       background: isOn ? T.rowSel : !item.leido ? T.rowNr : T.rowBg,
                       borderLeft: `3px solid ${isOn ? T.rowBlSel : !item.leido ? T.rowBlNr : 'transparent'}`,
-                      transition: 'background .12s',
                     }}
                     onMouseEnter={e => { if (!isOn) (e.currentTarget as HTMLElement).style.background = !item.leido ? T.rowHvNr : T.rowHv }}
                     onMouseLeave={e => { if (!isOn) (e.currentTarget as HTMLElement).style.background = !item.leido ? T.rowNr : T.rowBg }}>
@@ -2125,13 +2231,13 @@ export default function DocumentosPage() {
                     const est = ESTADOS_Q[item.esta_codi] ?? { bg: '#f3f4f6', text: '#6b7280', label: item.estado_nombre }
                     return (
                       <div key={`q-${item.radi_nume_radi}`} onClick={() => handleSelectQuipux(item)}
+                        className="row-hover-lift"
                         style={{
                           display: 'grid', gridTemplateColumns: '24px 24px 64px 1fr 120px 140px 120px 100px',
                           gap: 8, padding: '8px 12px', borderBottom: `0.5px solid ${T.rowBd}`,
                           cursor: 'pointer', alignItems: 'center',
                           background: isOn ? T.rowSel : T.rowNr,
                           borderLeft: `3px solid ${isOn ? T.rowBlSel : 'transparent'}`,
-                          transition: 'background .12s',
                         }}
                         onMouseEnter={e => { if (!isOn) (e.currentTarget as HTMLElement).style.background = T.rowHvNr }}
                         onMouseLeave={e => { if (!isOn) (e.currentTarget as HTMLElement).style.background = T.rowNr }}>
@@ -2166,14 +2272,14 @@ export default function DocumentosPage() {
                     )
                   })}
                   {/* Paginación Quipux */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '10px 12px', borderTop: '0.5px solid #f0f0f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '10px 12px', borderTop: `0.5px solid ${T.rowBd}` }}>
                     {qPage > 1 && (
                       <button onClick={() => setQPage(p => p - 1)} disabled={qFetching}
-                        style={{ padding: '5px 12px', borderRadius: 8, border: '0.5px solid #d1d5db', background: '#fff', fontSize: 11, cursor: 'pointer', color: '#374151' }}>
+                        style={{ padding: '5px 12px', borderRadius: 8, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, fontSize: 11, cursor: 'pointer', color: T.rowTxt }}>
                         ← Anterior
                       </button>
                     )}
-                    <span style={{ fontSize: 10, color: '#9ca3af' }}>
+                    <span style={{ fontSize: 10, color: T.rowSub }}>
                       {Math.min((qPage - 1) * Q_PAGE_SIZE + 1, quipuxTotal).toLocaleString()}–{Math.min(qPage * Q_PAGE_SIZE, quipuxTotal).toLocaleString()} de {quipuxTotal.toLocaleString()}
                     </span>
                     {quipuxHayMas && (

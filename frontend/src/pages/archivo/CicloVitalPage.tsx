@@ -1,17 +1,20 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { archivoService, Expediente, Transferencia } from '@/services/archivo.service'
+import { useThemeStore } from '@/store/themeStore'
+import { THEMES } from '@/constants/themes'
 import {
   Inbox, Building2, Archive, Landmark,
   ArrowRight, X, FileText,
   Clock, CheckCircle, AlertTriangle, Send
 } from 'lucide-react'
 
+// CATEGORIAS / TIPO / ESTADO: colores semánticos fijos de archivo
 const CATEGORIAS = [
-  { key: 'gestion',    label: 'Archivo de Gestión',    icon: Inbox,    color: '#002f6c', desc: '0-2 años · documentación de uso continuo' },
-  { key: 'central',    label: 'Archivo Central',       icon: Building2,color: '#0f6e56', desc: '2-15 años · custodia institucional' },
-  { key: 'intermedio', label: 'Archivo Intermedio',    icon: Archive,  color: '#854f0b', desc: '15+ años · Dirección de Archivo del ente rector' },
-  { key: 'historico',  label: 'Archivo Histórico',     icon: Landmark, color: '#7e22ce', desc: 'Permanente · Archivo Nacional del Ecuador' },
+  { key: 'gestion',    label: 'Archivo de Gestión',    icon: Inbox,     color: '#002f6c', desc: '0-2 años · documentación de uso continuo' },
+  { key: 'central',    label: 'Archivo Central',       icon: Building2, color: '#0f6e56', desc: '2-15 años · custodia institucional' },
+  { key: 'intermedio', label: 'Archivo Intermedio',    icon: Archive,   color: '#854f0b', desc: '15+ años · Dirección de Archivo del ente rector' },
+  { key: 'historico',  label: 'Archivo Histórico',     icon: Landmark,  color: '#7e22ce', desc: 'Permanente · Archivo Nacional del Ecuador' },
 ]
 
 const TIPO_TRANSFERENCIA: Record<string, { from: string; to: string; label: string }> = {
@@ -28,7 +31,16 @@ const ESTADO_TRANSFERENCIA: Record<string, { bg: string; text: string; label: st
   rechazada:  { bg: '#fef2f2', text: '#dc2626', label: 'Rechazada' },
 }
 
+function useTheme() {
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
+  const inputStyle: React.CSSProperties = { background: T.rowBg, color: T.rowTxt, border: `0.5px solid ${T.rowBd}`, outline: 'none', borderRadius: 10, padding: '9px 12px', fontSize: 13, width: '100%', boxSizing: 'border-box' }
+  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: T.rowSub, marginBottom: 6 }
+  return { T, inputStyle, labelStyle }
+}
+
 function ModalNuevaTransferencia({ categoria, onClose }: { categoria: string; onClose: () => void }) {
+  const { T, inputStyle, labelStyle } = useTheme()
   const qc = useQueryClient()
   const tipoSugerido = categoria === 'gestion' ? 'primaria' : categoria === 'central' ? 'secundaria' : 'final'
   const [form, setForm] = useState<Record<string, any>>({ tipo: tipoSugerido, numero_memorando: '' })
@@ -50,7 +62,6 @@ function ModalNuevaTransferencia({ categoria, onClose }: { categoria: string; on
   })
 
   const expedientes = expedientesData?.results ?? []
-  const cls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
 
   const toggleExp = (id: number) => setSeleccionados(prev => {
     const next = new Set(prev)
@@ -60,58 +71,67 @@ function ModalNuevaTransferencia({ categoria, onClose }: { categoria: string; on
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <div style={{ background: T.ctHdrBg, borderRadius: 20, width: '100%', maxWidth: 680, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `0.5px solid ${T.rowBd}` }}>
           <div>
-            <h3 className="font-bold text-gray-900 text-sm">Nueva transferencia documental</h3>
-            <p className="text-xs text-gray-400 mt-0.5">{TIPO_TRANSFERENCIA[tipoSugerido].label}</p>
+            <h3 style={{ fontWeight: 700, color: T.rowTxt, fontSize: 14, margin: 0 }}>Nueva transferencia documental</h3>
+            <p style={{ fontSize: 11, color: T.rowSub, marginTop: 2 }}>{TIPO_TRANSFERENCIA[tipoSugerido].label}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100"><X size={16} className="text-gray-500" /></button>
+          <button onClick={onClose} style={{ padding: 6, borderRadius: 8, background: T.rowHv, border: 'none', cursor: 'pointer', color: T.rowSub }}>
+            <X size={16} />
+          </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          {error && <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">{error}</div>}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+          {error && (
+            <div style={{ marginBottom: 12, background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#dc2626' }}>
+              {error}
+            </div>
+          )}
 
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">N° de memorando</label>
-            <input className={cls} placeholder="Ej: MEM-DAD-2026-0034"
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>N° de memorando</label>
+            <input style={inputStyle} placeholder="Ej: MEM-DAD-2026-0034"
               value={form.numero_memorando} onChange={e => setForm(f => ({ ...f, numero_memorando: e.target.value }))} />
           </div>
 
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">
+            <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: T.rowSub, marginBottom: 8 }}>
               Selecciona los expedientes a transferir ({seleccionados.size} seleccionados)
             </p>
-            <div className="space-y-1.5 max-h-80 overflow-y-auto border border-gray-100 rounded-xl p-2">
+            <div style={{ border: `0.5px solid ${T.rowBd}`, borderRadius: 10, overflow: 'hidden', maxHeight: 320, overflowY: 'auto' }}>
               {expedientes.length === 0 ? (
-                <p className="text-xs text-gray-400 text-center py-6">No hay expedientes en esta categoría listos para transferir</p>
+                <p style={{ fontSize: 12, color: T.rowSub, textAlign: 'center', padding: '24px 0' }}>No hay expedientes en esta categoría listos para transferir</p>
               ) : expedientes.map(exp => (
                 <div key={exp.id} onClick={() => toggleExp(exp.id)}
-                  className="flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all"
-                  style={{ background: seleccionados.has(exp.id) ? '#e8f1fd' : '#fff', border: '1px solid', borderColor: seleccionados.has(exp.id) ? '#002f6c' : '#f0f0f0' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', cursor: 'pointer', borderBottom: `0.5px solid ${T.rowBd}`, background: seleccionados.has(exp.id) ? T.rowSel : T.ctHdrBg }}
+                  onMouseEnter={e => { if (!seleccionados.has(exp.id)) e.currentTarget.style.background = T.rowHv }}
+                  onMouseLeave={e => { if (!seleccionados.has(exp.id)) e.currentTarget.style.background = T.ctHdrBg }}>
                   <input type="checkbox" checked={seleccionados.has(exp.id)} onChange={() => {}}
-                    className="w-4 h-4" style={{ accentColor: '#002f6c' }} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold font-mono" style={{ color: '#002f6c' }}>{exp.codigo_expediente}</p>
-                    <p className="text-sm text-gray-900 truncate">{exp.titulo}</p>
+                    style={{ width: 14, height: 14, accentColor: T.accentDk }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: T.accentDk, margin: 0 }}>{exp.codigo_expediente}</p>
+                    <p style={{ fontSize: 12, color: T.rowTxt, margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{exp.titulo}</p>
                   </div>
-                  <span className="text-xs text-gray-400">{exp.num_fojas} fojas</span>
+                  <span style={{ fontSize: 11, color: T.rowSub, flexShrink: 0 }}>{exp.num_fojas} fojas</span>
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
-          <button onClick={onClose} className="px-4 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">Cancelar</button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '14px 24px', borderTop: `0.5px solid ${T.rowBd}` }}>
+          <button onClick={onClose}
+            style={{ padding: '8px 16px', fontSize: 13, fontWeight: 500, color: T.rowSub, background: T.rowHv, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, cursor: 'pointer' }}>
+            Cancelar
+          </button>
           <button
             onClick={() => {
               if (seleccionados.size === 0) { setError('Selecciona al menos un expediente'); return }
               mutation.mutate({ tipo: tipoSugerido, numero_memorando: form.numero_memorando, expedientes_ids: Array.from(seleccionados) })
             }}
             disabled={mutation.isPending}
-            className="px-4 py-2.5 text-sm font-bold text-white rounded-xl flex items-center gap-2"
-            style={{ background: '#002f6c' }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', fontSize: 13, fontWeight: 700, color: '#fff', background: T.accentDk, border: 'none', borderRadius: 10, cursor: 'pointer' }}>
             <Send size={14} /> Solicitar transferencia
           </button>
         </div>
@@ -128,13 +148,14 @@ function ExpurgarButton({ expediente, onDone }: { expediente: Expediente; onDone
   })
   return (
     <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
-      className="px-4 py-2.5 text-sm font-bold text-white rounded-xl" style={{ background: '#854f0b' }}>
+      style={{ padding: '8px 16px', fontSize: 13, fontWeight: 700, color: '#fff', background: '#854f0b', border: 'none', borderRadius: 10, cursor: 'pointer' }}>
       {mutation.isPending ? 'Procesando...' : 'Marcar expurgo realizado'}
     </button>
   )
 }
 
 function FoliarButton({ expediente, onDone }: { expediente: Expediente; onDone: () => void }) {
+  const { T } = useTheme()
   const qc = useQueryClient()
   const [numFojas, setNumFojas] = useState(expediente.num_fojas || 0)
   const mutation = useMutation({
@@ -142,11 +163,11 @@ function FoliarButton({ expediente, onDone }: { expediente: Expediente; onDone: 
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['expedientes-categoria'] }); onDone() },
   })
   return (
-    <div className="flex items-center gap-2">
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <input type="number" value={numFojas} onChange={e => setNumFojas(Number(e.target.value))}
-        className="w-20 px-2 py-2 text-sm border border-gray-200 rounded-xl outline-none" placeholder="Fojas" />
+        style={{ width: 80, padding: '7px 10px', fontSize: 12, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, outline: 'none', background: T.rowBg, color: T.rowTxt }} placeholder="Fojas" />
       <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
-        className="px-4 py-2.5 text-sm font-bold text-white rounded-xl" style={{ background: '#0f6e56' }}>
+        style={{ padding: '8px 16px', fontSize: 13, fontWeight: 700, color: '#fff', background: '#0f6e56', border: 'none', borderRadius: 10, cursor: 'pointer' }}>
         {mutation.isPending ? 'Procesando...' : 'Marcar foliación realizada'}
       </button>
     </div>
@@ -154,6 +175,7 @@ function FoliarButton({ expediente, onDone }: { expediente: Expediente; onDone: 
 }
 
 function CerrarButton({ expediente, onDone }: { expediente: Expediente; onDone: () => void }) {
+  const { T } = useTheme()
   const qc = useQueryClient()
   const mutation = useMutation({
     mutationFn: () => archivoService.cerrar(expediente.id),
@@ -161,13 +183,14 @@ function CerrarButton({ expediente, onDone }: { expediente: Expediente; onDone: 
   })
   return (
     <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
-      className="px-4 py-2.5 text-sm font-bold text-white rounded-xl" style={{ background: '#002f6c' }}>
+      style={{ padding: '8px 16px', fontSize: 13, fontWeight: 700, color: '#fff', background: T.accentDk, border: 'none', borderRadius: 10, cursor: 'pointer' }}>
       {mutation.isPending ? 'Procesando...' : 'Cerrar expediente'}
     </button>
   )
 }
 
 export default function CicloVitalPage() {
+  const { T } = useTheme()
   const [categoriaActiva, setCategoriaActiva] = useState('gestion')
   const [modalTransferencia, setModalTransferencia] = useState(false)
   const [vista, setVista] = useState<'expedientes' | 'transferencias'>('expedientes')
@@ -191,25 +214,22 @@ export default function CicloVitalPage() {
     <div>
       {modalTransferencia && <ModalNuevaTransferencia categoria={categoriaActiva} onClose={() => setModalTransferencia(false)} />}
 
-      <div className="flex items-center justify-between mb-5">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Ciclo vital del documento</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Gestión → Central → Intermedio → Histórico</p>
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: T.rowTxt, margin: 0 }}>Ciclo vital del documento</h1>
+          <p style={{ fontSize: 12, color: T.rowSub, marginTop: 4 }}>Gestión → Central → Intermedio → Histórico</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setVista('expedientes')}
-            className="px-3 py-2 text-xs font-semibold rounded-xl"
-            style={{ background: vista === 'expedientes' ? '#002f6c' : '#f3f4f6', color: vista === 'expedientes' ? '#fff' : '#6b7280' }}>
-            Por categoría
-          </button>
-          <button onClick={() => setVista('transferencias')}
-            className="px-3 py-2 text-xs font-semibold rounded-xl"
-            style={{ background: vista === 'transferencias' ? '#002f6c' : '#f3f4f6', color: vista === 'transferencias' ? '#fff' : '#6b7280' }}>
-            Transferencias
-          </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['expedientes', 'transferencias'] as const).map(v => (
+            <button key={v} onClick={() => setVista(v)}
+              style={{ padding: '7px 12px', fontSize: 11, fontWeight: 600, borderRadius: 10, border: 'none', cursor: 'pointer', background: vista === v ? T.accentDk : T.rowHv, color: vista === v ? '#fff' : T.rowSub }}>
+              {v === 'expedientes' ? 'Por categoría' : 'Transferencias'}
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* Pipeline de categorías — colores semánticos fijos */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 20 }}>
         {CATEGORIAS.map((cat, i) => {
           const Icon = cat.icon
@@ -217,79 +237,72 @@ export default function CicloVitalPage() {
           return (
             <div key={cat.key} style={{ display: 'flex', alignItems: 'center', flex: 1, gap: 4 }}>
               <div onClick={() => setCategoriaActiva(cat.key)}
-                style={{
-                  flex: 1, padding: '14px 16px', borderRadius: 14, cursor: 'pointer',
-                  background: isActive ? cat.color : '#fff',
-                  border: `1.5px solid ${isActive ? cat.color : '#e5e7eb'}`,
-                  transition: 'all .15s',
-                }}>
+                style={{ flex: 1, padding: '14px 16px', borderRadius: 14, cursor: 'pointer', background: isActive ? cat.color : T.ctHdrBg, border: `1.5px solid ${isActive ? cat.color : T.rowBd}`, transition: 'all .15s' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                   <Icon size={16} style={{ color: isActive ? '#fff' : cat.color }} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: isActive ? '#fff' : '#0a1628' }}>{cat.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: isActive ? '#fff' : T.rowTxt }}>{cat.label}</span>
                 </div>
-                <p style={{ fontSize: 10, color: isActive ? 'rgba(255,255,255,.8)' : '#9ca3af' }}>{cat.desc}</p>
+                <p style={{ fontSize: 10, color: isActive ? 'rgba(255,255,255,.8)' : T.rowSub, margin: 0 }}>{cat.desc}</p>
               </div>
-              {i < CATEGORIAS.length - 1 && <ArrowRight size={16} style={{ color: '#d1d5db', flexShrink: 0 }} />}
+              {i < CATEGORIAS.length - 1 && <ArrowRight size={16} style={{ color: T.rowBd, flexShrink: 0 }} />}
             </div>
           )
         })}
       </div>
 
       {vista === 'expedientes' ? (
-        <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100">
-            <span className="text-sm font-bold text-gray-900">
+        <div style={{ background: T.ctHdrBg, border: `0.5px solid ${T.rowBd}`, borderRadius: 14, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderBottom: `0.5px solid ${T.rowBd}` }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt }}>
               {catActual.label} — {expedientes.length} expedientes
             </span>
             <button onClick={() => setModalTransferencia(true)}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-bold text-white rounded-xl"
-              style={{ background: '#002f6c' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', fontSize: 12, fontWeight: 700, color: '#fff', background: T.accentDk, border: 'none', borderRadius: 10, cursor: 'pointer' }}>
               <Send size={13} /> Solicitar transferencia
             </button>
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-16 text-sm text-gray-400">Cargando...</div>
+            <div style={{ textAlign: 'center', padding: 48, fontSize: 12, color: T.rowSub }}>Cargando...</div>
           ) : expedientes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-              <FileText size={28} className="mb-2 opacity-40" />
-              <p className="text-sm">No hay expedientes en esta categoría</p>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 48, color: T.rowSub }}>
+              <FileText size={28} style={{ opacity: 0.3, marginBottom: 8 }} />
+              <p style={{ fontSize: 13 }}>No hay expedientes en esta categoría</p>
             </div>
           ) : (
-            <table className="w-full">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Expediente</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Serie</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Estado</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Próxima transferencia</th>
+                <tr style={{ background: T.rowHv, borderBottom: `0.5px solid ${T.rowBd}` }}>
+                  {['Expediente', 'Serie', 'Estado', 'Próxima transferencia'].map(h => (
+                    <th key={h} style={{ padding: '10px 20px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody>
                 {expedientes.map(exp => (
-                  <tr key={exp.id} onClick={() => setSelectedExp(exp)} className="hover:bg-gray-50 cursor-pointer">
-                    <td className="px-5 py-3.5">
-                      <p className="text-xs font-bold font-mono" style={{ color: '#002f6c' }}>{exp.codigo_expediente}</p>
-                      <p className="text-sm font-medium text-gray-900 mt-0.5">{exp.titulo}</p>
+                  <tr key={exp.id} onClick={() => setSelectedExp(exp)} style={{ borderBottom: `0.5px solid ${T.rowBd}`, cursor: 'pointer' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.rowHv)}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                    <td style={{ padding: '12px 20px' }}>
+                      <p style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: T.accentDk, margin: 0 }}>{exp.codigo_expediente}</p>
+                      <p style={{ fontSize: 12, fontWeight: 500, color: T.rowTxt, margin: '2px 0 0' }}>{exp.titulo}</p>
                     </td>
-                    <td className="px-5 py-3.5">
-                      <span className="text-xs text-gray-600">{exp.serie_nombre}</span>
+                    <td style={{ padding: '12px 20px' }}>
+                      <span style={{ fontSize: 11, color: T.rowSub }}>{exp.serie_nombre}</span>
                     </td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-1.5">
-                        {exp.foliado && exp.expurgado ? (
-                          <span className="flex items-center gap-1 text-xs font-semibold text-green-700">
-                            <CheckCircle size={12} /> Listo para transferir
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-xs font-semibold text-amber-600">
-                            <AlertTriangle size={12} /> Falta {!exp.expurgado ? 'expurgo' : 'foliación'}
-                          </span>
-                        )}
-                      </div>
+                    <td style={{ padding: '12px 20px' }}>
+                      {exp.foliado && exp.expurgado ? (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: '#15803d' }}>
+                          <CheckCircle size={12} /> Listo para transferir
+                        </span>
+                      ) : (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: '#c2410c' }}>
+                          <AlertTriangle size={12} /> Falta {!exp.expurgado ? 'expurgo' : 'foliación'}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-5 py-3.5">
-                      <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <td style={{ padding: '12px 20px' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: T.rowSub }}>
                         <Clock size={12} />
                         {exp.fecha_limite_categoria ? new Date(exp.fecha_limite_categoria).toLocaleDateString('es-EC') : 'Sin definir'}
                       </span>
@@ -301,39 +314,39 @@ export default function CicloVitalPage() {
           )}
         </div>
       ) : (
-        <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-gray-100">
-            <span className="text-sm font-bold text-gray-900">Historial de transferencias documentales</span>
+        <div style={{ background: T.ctHdrBg, border: `0.5px solid ${T.rowBd}`, borderRadius: 14, overflow: 'hidden' }}>
+          <div style={{ padding: '12px 20px', borderBottom: `0.5px solid ${T.rowBd}` }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt }}>Historial de transferencias documentales</span>
           </div>
           {transferencias.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-              <Send size={28} className="mb-2 opacity-40" />
-              <p className="text-sm">No hay transferencias registradas</p>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 48, color: T.rowSub }}>
+              <Send size={28} style={{ opacity: 0.3, marginBottom: 8 }} />
+              <p style={{ fontSize: 13 }}>No hay transferencias registradas</p>
             </div>
           ) : (
-            <table className="w-full">
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Tipo</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Unidad</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Memorando</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Expedientes</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Estado</th>
+                <tr style={{ background: T.rowHv, borderBottom: `0.5px solid ${T.rowBd}` }}>
+                  {['Tipo', 'Unidad', 'Memorando', 'Expedientes', 'Estado'].map(h => (
+                    <th key={h} style={{ padding: '10px 20px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody>
                 {transferencias.map((t: Transferencia) => {
                   const est = ESTADO_TRANSFERENCIA[t.estado] ?? ESTADO_TRANSFERENCIA.borrador
                   return (
-                    <tr key={t.id} className="hover:bg-gray-50">
-                      <td className="px-5 py-3.5 text-xs font-medium text-gray-700">
+                    <tr key={t.id} style={{ borderBottom: `0.5px solid ${T.rowBd}` }}
+                      onMouseEnter={e => (e.currentTarget.style.background = T.rowHv)}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                      <td style={{ padding: '12px 20px', fontSize: 11, fontWeight: 500, color: T.rowTxt }}>
                         {TIPO_TRANSFERENCIA[t.tipo]?.label ?? t.tipo}
                       </td>
-                      <td className="px-5 py-3.5 text-sm text-gray-900">{t.unidad_nombre}</td>
-                      <td className="px-5 py-3.5 text-xs font-mono text-gray-600">{t.numero_memorando || '—'}</td>
-                      <td className="px-5 py-3.5 text-sm text-gray-600">{t.total_expedientes}</td>
-                      <td className="px-5 py-3.5">
-                        <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: est.bg, color: est.text }}>
+                      <td style={{ padding: '12px 20px', fontSize: 12, color: T.rowTxt }}>{t.unidad_nombre}</td>
+                      <td style={{ padding: '12px 20px', fontSize: 11, fontFamily: 'monospace', color: T.rowSub }}>{t.numero_memorando || '—'}</td>
+                      <td style={{ padding: '12px 20px', fontSize: 12, color: T.rowTxt }}>{t.total_expedientes}</td>
+                      <td style={{ padding: '12px 20px' }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: est.bg, color: est.text }}>
                           {est.label}
                         </span>
                       </td>
@@ -348,45 +361,41 @@ export default function CicloVitalPage() {
 
       {selectedExp && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div style={{ background: T.ctHdrBg, borderRadius: 20, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `0.5px solid ${T.rowBd}` }}>
               <div>
-                <p className="text-xs font-bold font-mono" style={{ color: '#002f6c' }}>{selectedExp.codigo_expediente}</p>
-                <h3 className="font-bold text-gray-900 text-sm mt-0.5">{selectedExp.titulo}</h3>
+                <p style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: T.accentDk, margin: 0 }}>{selectedExp.codigo_expediente}</p>
+                <h3 style={{ fontWeight: 700, color: T.rowTxt, fontSize: 14, margin: '3px 0 0' }}>{selectedExp.titulo}</h3>
               </div>
-              <button onClick={() => setSelectedExp(null)} className="p-1.5 rounded-lg hover:bg-gray-100">
-                <X size={16} className="text-gray-500" />
+              <button onClick={() => setSelectedExp(null)} style={{ padding: 6, borderRadius: 8, background: T.rowHv, border: 'none', cursor: 'pointer', color: T.rowSub }}>
+                <X size={16} />
               </button>
             </div>
 
-            <div className="px-6 py-5 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl" style={{ background: selectedExp.expurgado ? '#f0fdf4' : '#fef2f2' }}>
-                  <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: selectedExp.expurgado ? '#15803d' : '#dc2626' }}>
-                    Expurgo
-                  </p>
-                  <p className="text-xs text-gray-600">
+            <div style={{ padding: '20px 24px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                <div style={{ padding: 12, borderRadius: 10, background: selectedExp.expurgado ? '#f0fdf4' : '#fef2f2' }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: selectedExp.expurgado ? '#15803d' : '#dc2626', margin: '0 0 4px' }}>Expurgo</p>
+                  <p style={{ fontSize: 11, color: T.rowSub, margin: 0 }}>
                     {selectedExp.expurgado ? `Realizado el ${new Date(selectedExp.fecha_expurgo!).toLocaleDateString('es-EC')}` : 'Pendiente'}
                   </p>
                 </div>
-                <div className="p-3 rounded-xl" style={{ background: selectedExp.foliado ? '#f0fdf4' : '#fef2f2' }}>
-                  <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: selectedExp.foliado ? '#15803d' : '#dc2626' }}>
-                    Foliación
-                  </p>
-                  <p className="text-xs text-gray-600">
+                <div style={{ padding: 12, borderRadius: 10, background: selectedExp.foliado ? '#f0fdf4' : '#fef2f2' }}>
+                  <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: selectedExp.foliado ? '#15803d' : '#dc2626', margin: '0 0 4px' }}>Foliación</p>
+                  <p style={{ fontSize: 11, color: T.rowSub, margin: 0 }}>
                     {selectedExp.foliado ? `${selectedExp.num_fojas} fojas — ${new Date(selectedExp.fecha_foliacion!).toLocaleDateString('es-EC')}` : 'Pendiente'}
                   </p>
                 </div>
               </div>
 
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
-                <p className="text-xs text-blue-800">
+              <div style={{ background: T.rowHv, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, padding: 12, marginBottom: 8 }}>
+                <p style={{ fontSize: 11, color: T.rowTxt, margin: 0 }}>
                   Conforme al Art. 33-35 de la Regla Técnica, el expediente debe expurgarse y foliarse antes de cerrarse o transferirse.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '14px 24px', borderTop: `0.5px solid ${T.rowBd}` }}>
               {!selectedExp.expurgado && (
                 <ExpurgarButton expediente={selectedExp} onDone={() => setSelectedExp(null)} />
               )}

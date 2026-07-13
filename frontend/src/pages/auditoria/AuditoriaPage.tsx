@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useThemeStore } from '@/store/themeStore'
+import { THEMES } from '@/constants/themes'
 import api from '@/services/api'
 import {
   Shield, Search, RefreshCw, Filter, X,
@@ -8,14 +10,10 @@ import {
   Plus, Trash2, Stamp, AlertTriangle
 } from 'lucide-react'
 
-// ── Servicio ──────────────────────────────────────────────────────────
-
 const auditoriaService = {
   logs: (params: Record<string, string>) =>
     api.get<{ count: number; results: any[] }>('/auditoria/logs/', { params }).then(r => r.data),
 }
-
-// ── Constantes ────────────────────────────────────────────────────────
 
 const ACCION_CONFIG: Record<string, { bg: string; text: string; label: string; icon: any }> = {
   INSERT:   { bg: '#f0fdf4', text: '#15803d', label: 'Creación',          icon: Plus        },
@@ -59,36 +57,28 @@ function formatFecha(iso: string) {
   return d.toLocaleDateString('es-EC') + ' ' + d.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' })
 }
 
-// ── Panel de detalle de un log ────────────────────────────────────────
-
 function PanelDetalle({ log, onClose }: { log: any; onClose: () => void }) {
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
   const accion = ACCION_CONFIG[log.accion] ?? ACCION_CONFIG.UPDATE
   const ActIcon = accion.icon
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 50,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(0,0,0,0.45)',
-    }}>
-      <div style={{
-        background: '#fff', borderRadius: 16, width: '100%', maxWidth: 580,
-        maxHeight: '85vh', display: 'flex', flexDirection: 'column',
-        margin: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '0.5px solid #f0f0f0' }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)' }}>
+      <div style={{ background: T.ctHdrBg, borderRadius: 16, width: '100%', maxWidth: 580, maxHeight: '85vh', display: 'flex', flexDirection: 'column', margin: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', border: `1px solid ${T.rowBd}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: `1px solid ${T.rowBd}` }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: accion.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <ActIcon size={15} style={{ color: accion.text }} />
           </div>
           <div style={{ flex: 1 }}>
-            <p style={{ fontSize: 13, fontWeight: 700, color: '#0a1628', margin: 0 }}>
+            <p style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, margin: 0 }}>
               {accion.label} — {TABLA_LABELS[log.tabla] ?? log.tabla}
             </p>
-            <p style={{ fontSize: 10, color: '#9ca3af', margin: '2px 0 0' }}>
+            <p style={{ fontSize: 10, color: T.rowSub, margin: '2px 0 0' }}>
               {formatFecha(log.creado_en)} · {log.usuario_email || '—'} · {log.ip_address || '—'}
             </p>
           </div>
-          <button onClick={onClose} style={{ padding: 6, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}>
+          <button onClick={onClose} style={{ padding: 6, borderRadius: 8, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
             <X size={16} />
           </button>
         </div>
@@ -96,28 +86,28 @@ function PanelDetalle({ log, onClose }: { log: any; onClose: () => void }) {
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
             {[
-              { label: 'Módulo',     value: MODULO_CONFIG[log.modulo]?.label ?? log.modulo ?? '—' },
-              { label: 'Tabla',      value: TABLA_LABELS[log.tabla] ?? log.tabla },
-              { label: 'Registro',   value: log.registro_id ? `#${log.registro_id}` : '—' },
-              { label: 'Unidad',     value: log.unidad_id ? `ID ${log.unidad_id}` : '—' },
+              { label: 'Módulo',   value: MODULO_CONFIG[log.modulo]?.label ?? log.modulo ?? '—' },
+              { label: 'Tabla',    value: TABLA_LABELS[log.tabla] ?? log.tabla },
+              { label: 'Registro', value: log.registro_id ? `#${log.registro_id}` : '—' },
+              { label: 'Unidad',   value: log.unidad_id ? `ID ${log.unidad_id}` : '—' },
             ].map(({ label, value }) => (
-              <div key={label} style={{ background: '#f9fafb', borderRadius: 8, padding: '8px 10px' }}>
-                <p style={{ fontSize: 9, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', margin: '0 0 3px' }}>{label}</p>
-                <p style={{ fontSize: 12, fontWeight: 500, color: '#374151', margin: 0 }}>{value}</p>
+              <div key={label} style={{ background: T.statsBg, borderRadius: 8, padding: '8px 10px' }}>
+                <p style={{ fontSize: 9, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.06em', margin: '0 0 3px' }}>{label}</p>
+                <p style={{ fontSize: 12, fontWeight: 500, color: T.rowTxt, margin: 0 }}>{value}</p>
               </div>
             ))}
           </div>
 
           {log.descripcion && (
             <div style={{ marginBottom: 12 }}>
-              <p style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Descripción</p>
-              <p style={{ fontSize: 12, color: '#374151', background: '#f9fafb', borderRadius: 8, padding: '8px 10px' }}>{log.descripcion}</p>
+              <p style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Descripción</p>
+              <p style={{ fontSize: 12, color: T.rowTxt, background: T.statsBg, borderRadius: 8, padding: '8px 10px' }}>{log.descripcion}</p>
             </div>
           )}
 
           {log.campos_cambiados && (
             <div style={{ marginBottom: 12 }}>
-              <p style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Campos modificados</p>
+              <p style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>Campos modificados</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {(Array.isArray(log.campos_cambiados) ? log.campos_cambiados : log.campos_cambiados.replace(/[{}]/g, '').split(',')).map((c: string) => (
                   <span key={c} style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 6, background: '#eff6ff', color: '#1d4ed8' }}>
@@ -154,9 +144,9 @@ function PanelDetalle({ log, onClose }: { log: any; onClose: () => void }) {
   )
 }
 
-// ── Página principal ──────────────────────────────────────────────────
-
 export default function AuditoriaPage() {
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
   const [filtros, setFiltros] = useState<Record<string, string>>({})
   const [mostrarFiltros, setMostrarFiltros] = useState(false)
   const [busqueda, setBusqueda] = useState('')
@@ -176,7 +166,7 @@ export default function AuditoriaPage() {
   const logs = data?.results ?? []
   const filtrosActivos = Object.keys(filtros).length + (busqueda ? 1 : 0)
 
-  const cls = "w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-[#002f6c] bg-white"
+  const inputStyle = { background: T.rowBg, color: T.rowTxt, border: `1px solid ${T.rowBd}` }
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto' }}>
@@ -185,28 +175,24 @@ export default function AuditoriaPage() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 700, color: '#0a1628', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Shield size={18} style={{ color: '#002f6c' }} /> Log de auditoría
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: T.rowTxt, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Shield size={18} style={{ color: T.accentDk }} /> Log de auditoría
           </h1>
-          <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+          <p style={{ fontSize: 12, color: T.rowSub, marginTop: 4 }}>
             Registro completo de acciones — exigido por Contraloría General del Estado
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setMostrarFiltros(!mostrarFiltros)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '8px 14px', borderRadius: 10,
-              border: `0.5px solid ${filtrosActivos > 0 ? '#002f6c' : '#e5e7eb'}`,
-              background: filtrosActivos > 0 ? '#e8f1fd' : '#fff',
-              color: filtrosActivos > 0 ? '#002f6c' : '#6b7280',
-              fontSize: 12, fontWeight: 600, cursor: 'pointer',
-            }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${filtrosActivos > 0 ? T.accentDk : T.rowBd}`,
+              background: filtrosActivos > 0 ? T.rowSel : T.ctHdrBg,
+              color: filtrosActivos > 0 ? T.accentDk : T.rowSub }}>
             <Filter size={13} />
             Filtros {filtrosActivos > 0 && `(${filtrosActivos})`}
           </button>
           <button onClick={() => refetch()}
-            style={{ width: 34, height: 34, borderRadius: 9, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+            style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${T.rowBd}`, background: T.ctHdrBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.rowSub }}>
             <RefreshCw size={13} />
           </button>
         </div>
@@ -214,30 +200,28 @@ export default function AuditoriaPage() {
 
       {/* Panel de filtros */}
       {mostrarFiltros && (
-        <div style={{ background: '#fff', borderRadius: 12, border: '0.5px solid #e5e7eb', padding: 16, marginBottom: 16 }}>
+        <div style={{ background: T.ctHdrBg, borderRadius: 12, border: `1px solid ${T.rowBd}`, padding: 16, marginBottom: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-            <div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Módulo</label>
-              <select className={cls} value={filtros.modulo ?? ''} onChange={e => setFiltro('modulo', e.target.value)}>
-                <option value="">Todos</option>
-                {Object.entries(MODULO_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Acción</label>
-              <select className={cls} value={filtros.accion ?? ''} onChange={e => setFiltro('accion', e.target.value)}>
-                <option value="">Todas</option>
-                {Object.entries(ACCION_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Desde</label>
-              <input type="date" className={cls} value={filtros.desde ?? ''} onChange={e => setFiltro('desde', e.target.value)} />
-            </div>
-            <div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>Hasta</label>
-              <input type="date" className={cls} value={filtros.hasta ?? ''} onChange={e => setFiltro('hasta', e.target.value)} />
-            </div>
+            {[
+              { label: 'Módulo', key: 'modulo', opts: Object.entries(MODULO_CONFIG).map(([k, v]) => ({ v: k, l: v.label })) },
+              { label: 'Acción', key: 'accion', opts: Object.entries(ACCION_CONFIG).map(([k, v]) => ({ v: k, l: v.label })) },
+            ].map(({ label, key, opts }) => (
+              <div key={key}>
+                <label style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>{label}</label>
+                <select className="w-full px-3 py-2 text-sm rounded-lg outline-none" style={inputStyle}
+                  value={filtros[key] ?? ''} onChange={e => setFiltro(key, e.target.value)}>
+                  <option value="">Todos</option>
+                  {opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+              </div>
+            ))}
+            {[{ label: 'Desde', key: 'desde' }, { label: 'Hasta', key: 'hasta' }].map(({ label, key }) => (
+              <div key={key}>
+                <label style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.06em', display: 'block', marginBottom: 4 }}>{label}</label>
+                <input type="date" className="w-full px-3 py-2 text-sm rounded-lg outline-none" style={inputStyle}
+                  value={filtros[key] ?? ''} onChange={e => setFiltro(key, e.target.value)} />
+              </div>
+            ))}
           </div>
           {filtrosActivos > 0 && (
             <button onClick={limpiarFiltros}
@@ -248,31 +232,32 @@ export default function AuditoriaPage() {
         </div>
       )}
 
-      {/* Barra de búsqueda y contador */}
+      {/* Barra de búsqueda */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <div style={{ position: 'relative', flex: 1, maxWidth: 400 }}>
-          <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+          <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
           <input placeholder="Buscar por tabla, usuario, descripción..."
             value={busqueda} onChange={e => setBusqueda(e.target.value)}
-            style={{ width: '100%', padding: '7px 10px 7px 26px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }} />
+            className="w-full text-sm rounded-lg outline-none"
+            style={{ padding: '7px 10px 7px 26px', border: `1px solid ${T.rowBd}`, background: T.rowBg, color: T.rowTxt }} />
         </div>
-        <span style={{ fontSize: 11, color: '#9ca3af' }}>
+        <span style={{ fontSize: 11, color: T.rowSub }}>
           {isLoading ? 'Cargando...' : `${data?.count ?? 0} registros${data?.count === 500 ? ' (mostrando últimos 500)' : ''}`}
         </span>
       </div>
 
       {/* Tabla de logs */}
-      <div style={{ background: '#fff', borderRadius: 14, border: '0.5px solid #e5e7eb', overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '36px 100px 110px 120px 1fr 140px', gap: 10, padding: '8px 14px', background: '#f9fafb', borderBottom: '0.5px solid #f0f0f0' }}>
+      <div style={{ background: T.ctHdrBg, borderRadius: 14, border: `1px solid ${T.rowBd}`, overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '36px 100px 110px 120px 1fr 140px', gap: 10, padding: '8px 14px', background: T.statsBg, borderBottom: `1px solid ${T.rowBd}` }}>
           {['', 'Acción', 'Módulo', 'Tabla', 'Usuario / Descripción', 'Fecha'].map((h, i) => (
-            <span key={i} style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</span>
+            <span key={i} style={{ fontSize: 10, fontWeight: 600, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</span>
           ))}
         </div>
 
         {isLoading ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af', fontSize: 12 }}>Cargando registros...</div>
+          <div style={{ textAlign: 'center', padding: 40, color: T.rowSub, fontSize: 12 }}>Cargando registros...</div>
         ) : logs.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 60, color: '#c4c9d4' }}>
+          <div style={{ textAlign: 'center', padding: 60, color: T.rowSub }}>
             <Shield size={32} style={{ opacity: .3, margin: '0 auto 8px', display: 'block' }} />
             <p style={{ fontSize: 12 }}>No hay registros con los filtros actuales</p>
           </div>
@@ -282,17 +267,10 @@ export default function AuditoriaPage() {
           const ActIcon = accion.icon
           const ModIcon = modulo?.icon ?? Shield
           return (
-            <div key={log.id}
-              onClick={() => setSelected(log)}
-              style={{
-                display: 'grid', gridTemplateColumns: '36px 100px 110px 120px 1fr 140px',
-                gap: 10, padding: '8px 14px', borderBottom: '0.5px solid #f9fafb',
-                cursor: 'pointer', alignItems: 'center',
-                transition: 'background .1s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-            >
+            <div key={log.id} onClick={() => setSelected(log)}
+              style={{ display: 'grid', gridTemplateColumns: '36px 100px 110px 120px 1fr 140px', gap: 10, padding: '8px 14px', borderBottom: `1px solid ${T.rowBd}`, cursor: 'pointer', alignItems: 'center', transition: 'background .1s' }}
+              onMouseEnter={e => (e.currentTarget.style.background = T.rowHv)}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
               <div style={{ width: 28, height: 28, borderRadius: 7, background: accion.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <ActIcon size={13} style={{ color: accion.text }} />
               </div>
@@ -300,25 +278,25 @@ export default function AuditoriaPage() {
                 {accion.label}
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <ModIcon size={11} style={{ color: modulo?.color ?? '#9ca3af', flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <ModIcon size={11} style={{ color: modulo?.color ?? T.rowSub, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: T.rowTxt, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {modulo?.label ?? log.modulo ?? '—'}
                 </span>
               </div>
-              <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#6b7280', background: '#f3f4f6', padding: '2px 6px', borderRadius: 5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <span style={{ fontSize: 10, fontFamily: 'monospace', color: T.rowSub, background: T.statsBg, padding: '2px 6px', borderRadius: 5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {TABLA_LABELS[log.tabla] ?? log.tabla}
               </span>
               <div style={{ minWidth: 0 }}>
-                <p style={{ fontSize: 11, fontWeight: 500, color: '#374151', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <p style={{ fontSize: 11, fontWeight: 500, color: T.rowTxt, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {log.usuario_email || '—'}
                 </p>
                 {log.descripcion && (
-                  <p style={{ fontSize: 10, color: '#9ca3af', margin: '1px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <p style={{ fontSize: 10, color: T.rowSub, margin: '1px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {log.descripcion}
                   </p>
                 )}
               </div>
-              <span style={{ fontSize: 10, color: '#9ca3af', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 10, color: T.rowSub, whiteSpace: 'nowrap' }}>
                 {formatFecha(log.creado_en)}
               </span>
             </div>

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
+import { useThemeStore } from '@/store/themeStore'
+import { THEMES } from '@/constants/themes'
 import { usuariosService } from '@/services/usuarios.service'
 import {
   User, Mail, Phone, Building2, Calendar,
@@ -9,6 +11,8 @@ import {
 
 export default function PerfilPage() {
   const { usuario: authUser } = useAuthStore()
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
   const qc = useQueryClient()
   const [tabActiva, setTab]     = useState<'info' | 'password'>('info')
   const [guardado, setGuardado] = useState(false)
@@ -23,7 +27,6 @@ export default function PerfilPage() {
     queryFn:  usuariosService.perfil,
   })
 
-  // Solo email / email_institucional / telefono_movil son editables por el propio usuario
   const [form, setForm] = useState<Record<string, string>>({})
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -73,48 +76,47 @@ export default function PerfilPage() {
     })
   }
 
-  const cls      = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
-  const clsRO    = "w-full px-3 py-2.5 text-sm border border-gray-100 rounded-xl bg-gray-50 text-gray-600 cursor-default select-text"
-  const clsLabel = "block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5"
+  const inputStyle = { background: T.rowBg, color: T.rowTxt, border: `1px solid ${T.rowBd}` }
+  const inputFocus = (e: React.FocusEvent<HTMLInputElement>) => (e.currentTarget.style.borderColor = T.accentDk)
+  const inputBlur  = (e: React.FocusEvent<HTMLInputElement>) => (e.currentTarget.style.borderColor = T.rowBd)
+  const labelStyle = { display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.08em', color: T.rowSub, marginBottom: 6 }
 
   const iniciales = perfil
     ? `${perfil.nombres?.[0] ?? ''}${perfil.apellidos?.[0] ?? ''}`.toUpperCase()
     : '??'
 
   if (isLoading) return (
-    <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Cargando perfil...</div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 192, color: T.rowSub, fontSize: 14 }}>
+      Cargando perfil...
+    </div>
   )
 
   return (
     <div className="max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-gray-900">Mi perfil</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Consulta tu información y actualiza tus datos de contacto</p>
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: T.rowTxt }}>Mi perfil</h1>
+        <p style={{ fontSize: 14, color: T.rowSub, marginTop: 2 }}>Consulta tu información y actualiza tus datos de contacto</p>
       </div>
 
       {/* Card de perfil */}
-      <div className="bg-white border border-gray-100 rounded-2xl p-6 mb-5">
-        <div className="flex items-center gap-5">
-          <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-2xl font-bold flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #002f6c, #0052cc)', color: '#fff' }}>
+      <div style={{ background: T.ctHdrBg, border: `1px solid ${T.rowBd}`, borderRadius: 16, padding: 24, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+          <div style={{ width: 80, height: 80, borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700, flexShrink: 0, background: 'linear-gradient(135deg,#002f6c,#0052cc)', color: '#fff' }}>
             {iniciales}
           </div>
           <div>
-            <h2 className="text-lg font-bold text-gray-900">{perfil?.nombre_completo}</h2>
-            <p className="text-sm text-gray-500 mt-0.5">{perfil?.cargo || 'Sin cargo asignado'}</p>
-            <div className="flex items-center gap-3 mt-2 flex-wrap">
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                style={{ background: '#e8f1fd', color: '#002f6c' }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: T.rowTxt }}>{perfil?.nombre_completo}</h2>
+            <p style={{ fontSize: 14, color: T.rowSub, marginTop: 2 }}>{perfil?.cargo || 'Sin cargo asignado'}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: '#e8f1fd', color: '#002f6c' }}>
                 {perfil?.tipo}
               </span>
               {perfil?.firma_electronica && (
-                <span className="text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1"
-                  style={{ background: '#f0fdf4', color: '#15803d' }}>
+                <span style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: '#f0fdf4', color: '#15803d', display: 'flex', alignItems: 'center', gap: 4 }}>
                   <Shield size={11} /> Firma BCE activa
                 </span>
               )}
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                style={{ background: perfil?.activo ? '#f0fdf4' : '#fef2f2', color: perfil?.activo ? '#15803d' : '#dc2626' }}>
+              <span style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 999, background: perfil?.activo ? '#f0fdf4' : '#fef2f2', color: perfil?.activo ? '#15803d' : '#dc2626' }}>
                 {perfil?.activo ? 'Activo' : 'Inactivo'}
               </span>
             </div>
@@ -123,11 +125,12 @@ export default function PerfilPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-5">
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
         {[['info','Información personal'],['password','Cambiar contraseña']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k as any)}
-            className="px-4 py-2 text-sm font-semibold rounded-xl transition-all"
-            style={{ background: tabActiva === k ? '#002f6c' : '#f3f4f6', color: tabActiva === k ? '#fff' : '#6b7280' }}>
+            style={{ padding: '8px 16px', fontSize: 14, fontWeight: 600, borderRadius: 12, border: 'none', cursor: 'pointer', transition: 'all .15s',
+              background: tabActiva === k ? T.accentDk : T.rowHv,
+              color: tabActiva === k ? '#fff' : T.rowSub }}>
             {l}
           </button>
         ))}
@@ -135,55 +138,56 @@ export default function PerfilPage() {
 
       {/* Tab: Información personal */}
       {tabActiva === 'info' && (
-        <div className="bg-white border border-gray-100 rounded-2xl p-6 space-y-5">
+        <div style={{ background: T.ctHdrBg, border: `1px solid ${T.rowBd}`, borderRadius: 16, padding: 24 }}>
 
           {/* Aviso de solo lectura */}
-          <div className="flex items-start gap-2 p-3 rounded-xl text-xs"
-            style={{ background: '#fffbeb', border: '0.5px solid #fcd34d', color: '#92400e' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: 12, borderRadius: 12, marginBottom: 20, background: '#fffbeb', border: '0.5px solid #fcd34d', color: '#92400e', fontSize: 12 }}>
             <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
             <span>Los datos personales, cargo y unidad son gestionados por Administración. Solo puedes actualizar tus datos de contacto.</span>
           </div>
 
           {/* Datos de identidad — solo lectura */}
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Datos personales</p>
-            <div className="grid grid-cols-2 gap-4 mb-4">
+          <div style={{ marginBottom: 20 }}>
+            <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: T.rowSub, marginBottom: 12 }}>Datos personales</p>
+            <div className="grid grid-cols-2 gap-4" style={{ marginBottom: 16 }}>
               <div>
-                <label className={clsLabel}><User size={11} className="inline mr-1" />Nombres</label>
-                <div className={clsRO}>{perfil?.nombres || '—'}</div>
+                <label style={labelStyle}><User size={11} className="inline mr-1" />Nombres</label>
+                <div style={{ background: T.rowHv, color: T.rowSub, border: `1px solid ${T.rowBd}`, padding: '10px 12px', borderRadius: 12, fontSize: 14 }}>{perfil?.nombres || '—'}</div>
               </div>
               <div>
-                <label className={clsLabel}>Apellidos</label>
-                <div className={clsRO}>{perfil?.apellidos || '—'}</div>
+                <label style={labelStyle}>Apellidos</label>
+                <div style={{ background: T.rowHv, color: T.rowSub, border: `1px solid ${T.rowBd}`, padding: '10px 12px', borderRadius: 12, fontSize: 14 }}>{perfil?.apellidos || '—'}</div>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-2 gap-4" style={{ marginBottom: 16 }}>
               <div>
-                <label className={clsLabel}>Cédula</label>
-                <div className={clsRO}>{perfil?.cedula || '—'}</div>
+                <label style={labelStyle}>Cédula</label>
+                <div style={{ background: T.rowHv, color: T.rowSub, border: `1px solid ${T.rowBd}`, padding: '10px 12px', borderRadius: 12, fontSize: 14 }}>{perfil?.cedula || '—'}</div>
               </div>
               <div>
-                <label className={clsLabel}><Calendar size={11} className="inline mr-1" />Fecha de ingreso</label>
-                <div className={clsRO}>{perfil?.fecha_ingreso || '—'}</div>
+                <label style={labelStyle}><Calendar size={11} className="inline mr-1" />Fecha de ingreso</label>
+                <div style={{ background: T.rowHv, color: T.rowSub, border: `1px solid ${T.rowBd}`, padding: '10px 12px', borderRadius: 12, fontSize: 14 }}>{perfil?.fecha_ingreso || '—'}</div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className={clsLabel}><Building2 size={11} className="inline mr-1" />Unidad</label>
-                <div className={clsRO}>{perfil?.unidad_nombre || '—'}</div>
+                <label style={labelStyle}><Building2 size={11} className="inline mr-1" />Unidad</label>
+                <div style={{ background: T.rowHv, color: T.rowSub, border: `1px solid ${T.rowBd}`, padding: '10px 12px', borderRadius: 12, fontSize: 14 }}>{perfil?.unidad_nombre || '—'}</div>
               </div>
               <div>
-                <label className={clsLabel}>Cargo</label>
-                <div className={clsRO}>{perfil?.cargo || '—'}</div>
+                <label style={labelStyle}>Cargo</label>
+                <div style={{ background: T.rowHv, color: T.rowSub, border: `1px solid ${T.rowBd}`, padding: '10px 12px', borderRadius: 12, fontSize: 14 }}>{perfil?.cargo || '—'}</div>
               </div>
             </div>
           </div>
 
-          <hr className="border-gray-100" />
+          <hr style={{ border: 'none', borderTop: `1px solid ${T.rowBd}`, margin: '20px 0' }} />
 
           {/* Datos de contacto — editables */}
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Datos de contacto <span style={{ color: '#002f6c' }}>(editables)</span></p>
+            <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: T.rowSub, marginBottom: 12 }}>
+              Datos de contacto <span style={{ color: T.accentDk }}>(editables)</span>
+            </p>
 
             {guardado && (
               <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-3 mb-4 text-sm text-green-700">
@@ -191,48 +195,55 @@ export default function PerfilPage() {
               </div>
             )}
 
-            <div className="space-y-4">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div>
-                <label className={clsLabel}><Mail size={11} className="inline mr-1" />Correo personal</label>
-                <input className={cls} type="email"
+                <label style={labelStyle}><Mail size={11} className="inline mr-1" />Correo personal</label>
+                <input className="w-full px-3 py-2.5 text-sm rounded-xl outline-none"
+                  style={inputStyle} type="email"
                   defaultValue={perfil?.email}
-                  onChange={e => set('email', e.target.value)} />
+                  onChange={e => set('email', e.target.value)}
+                  onFocus={inputFocus} onBlur={inputBlur} />
               </div>
               <div>
-                <label className={clsLabel}><Mail size={11} className="inline mr-1" />Correo institucional</label>
-                <input className={cls} type="email"
+                <label style={labelStyle}><Mail size={11} className="inline mr-1" />Correo institucional</label>
+                <input className="w-full px-3 py-2.5 text-sm rounded-xl outline-none"
+                  style={inputStyle} type="email"
                   defaultValue={perfil?.email_institucional ?? ''}
-                  onChange={e => set('email_institucional', e.target.value)} />
+                  onChange={e => set('email_institucional', e.target.value)}
+                  onFocus={inputFocus} onBlur={inputBlur} />
               </div>
               <div>
-                <label className={clsLabel}><Phone size={11} className="inline mr-1" />Teléfono móvil</label>
-                <input className={cls}
+                <label style={labelStyle}><Phone size={11} className="inline mr-1" />Teléfono móvil</label>
+                <input className="w-full px-3 py-2.5 text-sm rounded-xl outline-none"
+                  style={inputStyle}
                   defaultValue={perfil?.telefono_movil ?? ''}
-                  onChange={e => set('telefono_movil', e.target.value)} />
+                  onChange={e => set('telefono_movil', e.target.value)}
+                  onFocus={inputFocus} onBlur={inputBlur} />
               </div>
             </div>
           </div>
 
           {/* Info sistema */}
-          <div className="pt-2 border-t border-gray-50">
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Información del sistema</p>
+          <div style={{ paddingTop: 20, borderTop: `1px solid ${T.rowBd}`, marginTop: 20 }}>
+            <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: T.rowSub, marginBottom: 12 }}>Información del sistema</p>
             <div className="grid grid-cols-2 gap-3">
               {[
                 { label: 'Último acceso', value: perfil?.ultimo_acceso ? new Date(perfil.ultimo_acceso).toLocaleString('es-EC') : 'Nunca' },
                 { label: 'Cuenta creada',  value: perfil?.creado_en    ? new Date(perfil.creado_en).toLocaleDateString('es-EC')    : '—'     },
               ].map(({ label, value }) => (
-                <div key={label} className="p-3 rounded-xl" style={{ background: '#f8faff' }}>
-                  <p className="text-[10px] text-gray-400 font-medium">{label}</p>
-                  <p className="text-xs font-semibold text-gray-700 mt-0.5">{value}</p>
+                <div key={label} style={{ padding: 12, borderRadius: 12, background: T.statsBg }}>
+                  <p style={{ fontSize: 10, color: T.rowSub, fontWeight: 500 }}>{label}</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: T.rowTxt, marginTop: 2 }}>{value}</p>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="flex justify-end pt-2">
+          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 16 }}>
             <button onClick={handleGuardar} disabled={actualizarMutation.isPending || Object.keys(form).length === 0}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white rounded-xl"
-              style={{ background: Object.keys(form).length === 0 ? '#94a3b8' : actualizarMutation.isPending ? '#4a90e2' : '#002f6c', cursor: Object.keys(form).length === 0 ? 'not-allowed' : 'pointer' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', fontSize: 14, fontWeight: 700, color: '#fff', borderRadius: 12, border: 'none',
+                background: Object.keys(form).length === 0 ? T.rowBd : actualizarMutation.isPending ? '#4a90e2' : T.accentDk,
+                cursor: Object.keys(form).length === 0 ? 'not-allowed' : 'pointer' }}>
               {actualizarMutation.isPending
                 ? <span className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} />
                 : <Save size={15} />}
@@ -244,7 +255,7 @@ export default function PerfilPage() {
 
       {/* Tab: Cambiar contraseña */}
       {tabActiva === 'password' && (
-        <div className="bg-white border border-gray-100 rounded-2xl p-6 space-y-4">
+        <div style={{ background: T.ctHdrBg, border: `1px solid ${T.rowBd}`, borderRadius: 16, padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
 
           {errorPw && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">{errorPw}</div>
@@ -256,71 +267,78 @@ export default function PerfilPage() {
           )}
 
           <div>
-            <label className={clsLabel}><Lock size={11} className="inline mr-1" />Contraseña actual</label>
-            <div className="relative">
+            <label style={labelStyle}><Lock size={11} className="inline mr-1" />Contraseña actual</label>
+            <div style={{ position: 'relative' }}>
               <input
                 type={showPwActual ? 'text' : 'password'}
-                className={cls + ' pr-10'}
+                className="w-full px-3 py-2.5 text-sm rounded-xl outline-none pr-10"
+                style={inputStyle}
                 placeholder="••••••••"
                 value={formPw.password_actual}
-                onChange={e => setFormPw(f => ({ ...f, password_actual: e.target.value }))} />
+                onChange={e => setFormPw(f => ({ ...f, password_actual: e.target.value }))}
+                onFocus={inputFocus} onBlur={inputBlur} />
               <button type="button" onClick={() => setShowPwActual(!showPwActual)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: T.rowSub }}>
                 {showPwActual ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
           </div>
 
           <div>
-            <label className={clsLabel}>Nueva contraseña</label>
-            <div className="relative">
+            <label style={labelStyle}>Nueva contraseña</label>
+            <div style={{ position: 'relative' }}>
               <input
                 type={showPwNuevo ? 'text' : 'password'}
-                className={cls + ' pr-10'}
+                className="w-full px-3 py-2.5 text-sm rounded-xl outline-none pr-10"
+                style={inputStyle}
                 placeholder="Mínimo 8 caracteres"
                 value={formPw.password_nuevo}
-                onChange={e => setFormPw(f => ({ ...f, password_nuevo: e.target.value }))} />
+                onChange={e => setFormPw(f => ({ ...f, password_nuevo: e.target.value }))}
+                onFocus={inputFocus} onBlur={inputBlur} />
               <button type="button" onClick={() => setShowPwNuevo(!showPwNuevo)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: T.rowSub }}>
                 {showPwNuevo ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
           </div>
 
           <div>
-            <label className={clsLabel}>Confirmar nueva contraseña</label>
+            <label style={labelStyle}>Confirmar nueva contraseña</label>
             <input
               type="password"
-              className={cls + (formPw.confirmar && formPw.confirmar !== formPw.password_nuevo ? ' border-red-300' : '')}
+              className="w-full px-3 py-2.5 text-sm rounded-xl outline-none"
+              style={{ ...inputStyle, borderColor: formPw.confirmar && formPw.confirmar !== formPw.password_nuevo ? '#f87171' : T.rowBd }}
               placeholder="Repite la nueva contraseña"
               value={formPw.confirmar}
-              onChange={e => setFormPw(f => ({ ...f, confirmar: e.target.value }))} />
+              onChange={e => setFormPw(f => ({ ...f, confirmar: e.target.value }))}
+              onFocus={e => (e.currentTarget.style.borderColor = T.accentDk)}
+              onBlur={e => (e.currentTarget.style.borderColor = formPw.confirmar && formPw.confirmar !== formPw.password_nuevo ? '#f87171' : T.rowBd)} />
             {formPw.confirmar && formPw.confirmar !== formPw.password_nuevo && (
-              <p className="text-xs text-red-500 mt-1">Las contraseñas no coinciden</p>
+              <p style={{ fontSize: 12, color: '#ef4444', marginTop: 4 }}>Las contraseñas no coinciden</p>
             )}
           </div>
 
-          <div className="p-4 rounded-xl text-xs text-gray-500 space-y-1" style={{ background: '#f8faff' }}>
-            <p className="font-semibold text-gray-700 mb-2">Requisitos:</p>
+          <div style={{ padding: 16, borderRadius: 12, fontSize: 12, color: T.rowSub, background: T.statsBg }}>
+            <p style={{ fontWeight: 600, color: T.rowTxt, marginBottom: 8 }}>Requisitos:</p>
             {([
               ['Mínimo 8 caracteres',         formPw.password_nuevo.length >= 8],
               ['Al menos una mayúscula',        /[A-Z]/.test(formPw.password_nuevo)],
               ['Al menos un número',            /[0-9]/.test(formPw.password_nuevo)],
             ] as [string, boolean][]).map(([req, ok]) => (
-              <div key={req} className="flex items-center gap-2">
-                <div className="w-3.5 h-3.5 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ background: ok ? '#f0fdf4' : '#f3f4f6', border: `1px solid ${ok ? '#86efac' : '#e5e7eb'}` }}>
+              <div key={req} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <div style={{ width: 14, height: 14, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  background: ok ? '#f0fdf4' : T.rowHv, border: `1px solid ${ok ? '#86efac' : T.rowBd}` }}>
                   {ok && <CheckCircle size={9} style={{ color: '#15803d' }} />}
                 </div>
-                <span style={{ color: ok ? '#15803d' : '#9ca3af' }}>{req}</span>
+                <span style={{ color: ok ? '#15803d' : T.rowSub }}>{req}</span>
               </div>
             ))}
           </div>
 
-          <div className="flex justify-end pt-2">
+          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 8 }}>
             <button onClick={handleCambiarPw} disabled={cambiarPwMutation.isPending}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white rounded-xl"
-              style={{ background: cambiarPwMutation.isPending ? '#4a90e2' : '#002f6c' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', fontSize: 14, fontWeight: 700, color: '#fff', borderRadius: 12, border: 'none', cursor: 'pointer',
+                background: cambiarPwMutation.isPending ? '#4a90e2' : T.accentDk }}>
               {cambiarPwMutation.isPending
                 ? <span className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} />
                 : <Lock size={15} />}

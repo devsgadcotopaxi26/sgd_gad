@@ -82,7 +82,9 @@ def _cedula_usuario(user):
 
 
 def _es_admin(user):
-    return user.is_superuser or user.roles.filter(rol__codigo__in=['ADMIN', 'ARCHIVO'], activo=True).exists()
+    return user.is_superuser or user.roles.filter(
+        rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
+    ).exists()
 
 
 def _get_tareas_quipux(cedula, bandeja, page, page_size, es_admin):
@@ -247,37 +249,51 @@ class QuipuxDocumentosView(APIView):
             tipo_filtro    = bandeja_info[0] if bandeja_info else None
             estados_filtro = bandeja_info[1] if bandeja_info else None
 
-            # Construir condiciones de bandeja (OR: Quipux original + SGD reasignados)
-            bandeja_subs:   list = []
-            bandeja_params: list = []
+            # Condiciones Quipux nativas (sí aplican filtro de esta_codi)
+            native_subs:   list = []
+            native_params: list = []
 
             if tipo_filtro is not None:
-                bandeja_subs.append(
+                native_subs.append(
                     "r.radi_nume_radi IN "
                     "(SELECT radi_nume_radi FROM usuarios_radicado "
                     " WHERE usua_cedula = %s AND radi_usua_tipo = %s)"
                 )
-                bandeja_params.extend([cedula, tipo_filtro])
+                native_params.extend([cedula, tipo_filtro])
             else:
                 # archivados: cualquier tipo del usuario
-                bandeja_subs.append(
+                native_subs.append(
                     "r.radi_nume_radi IN "
                     "(SELECT radi_nume_radi FROM usuarios_radicado WHERE usua_cedula = %s)"
                 )
-                bandeja_params.append(cedula)
+                native_params.append(cedula)
 
-            # Copia: también incluir tabla `informados` (97K registros fuera de usuarios_radicado)
+            # Copia: también incluir tabla `informados`
             if bandeja == 'copia':
-                bandeja_subs.append(
+                native_subs.append(
                     "r.radi_nume_radi IN ("
                     "  SELECT i.radi_nume_radi FROM informados i"
                     "  JOIN usuarios u ON u.usua_codi = i.usua_codi"
                     "  WHERE u.usua_cedula = %s"
                     ")"
                 )
-                bandeja_params.append(cedula)
+                native_params.append(cedula)
 
-            # Agregar documentos reasignados via SGD (tabla doc_quipux_bandeja en la DB principal)
+            # Construir condición nativa con filtro de estado incorporado
+            if estados_filtro:
+                ph_e = ','.join(['%s'] * len(estados_filtro))
+                native_condition = (
+                    f"(({' OR '.join(native_subs)}) AND r.esta_codi IN ({ph_e}))"
+                )
+                native_all_params = native_params + list(estados_filtro)
+            else:
+                native_condition = f"({' OR '.join(native_subs)})"
+                native_all_params = native_params
+
+            # Documentos reasignados via SGD — NO aplican filtro de esta_codi
+            # (el estado Quipux no debe ocultar un documento reasignado activamente)
+            sgd_condition: str | None = None
+            sgd_params:    list       = []
             try:
                 from apps.documentos.models import QuipuxBandejaSGD
                 sgd_f = {'cedula_usuario': cedula}
@@ -290,19 +306,18 @@ class QuipuxDocumentosView(APIView):
                 )
                 if sgd_extras:
                     ph = ','.join(['%s'] * len(sgd_extras))
-                    bandeja_subs.append(f"r.radi_nume_text IN ({ph})")
-                    bandeja_params.extend(sgd_extras)
+                    sgd_condition = f"r.radi_nume_text IN ({ph})"
+                    sgd_params    = sgd_extras
             except Exception:
                 pass
 
-            where_parts.append(f"({' OR '.join(bandeja_subs)})")
-            params.extend(bandeja_params)
-
-            # Filtro obligatorio de esta_codi según bandeja (AND, no OR)
-            if estados_filtro:
-                ph = ','.join(['%s'] * len(estados_filtro))
-                where_parts.append(f"r.esta_codi IN ({ph})")
-                params.extend(estados_filtro)
+            # Combinar: (nativa_con_estado) OR (sgd_sin_estado)
+            if sgd_condition:
+                where_parts.append(f"({native_condition} OR {sgd_condition})")
+                params.extend(native_all_params + sgd_params)
+            else:
+                where_parts.append(native_condition)
+                params.extend(native_all_params)
         else:
             # Sin cédula: no mostrar ningún documento
             where_parts.append("1=0")

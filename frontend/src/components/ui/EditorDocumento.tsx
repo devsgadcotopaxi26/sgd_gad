@@ -2,17 +2,19 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import { documentosService, CrearDocumento, DocumentoDetalle } from '@/services/documentos.service';
+import { documentosService, listasService, CrearDocumento, DocumentoDetalle } from '@/services/documentos.service';
 
 import { usuariosService, Usuario } from '@/services/usuarios.service';
 import { PLANTILLAS_TEXTO } from '@/constants/plantillas.constants';
-import { X, FileText, Wand2, Eye, Save, AlertCircle, Search, Signature, Trash2, Paperclip } from 'lucide-react';
+import { X, FileText, Wand2, Eye, Save, AlertCircle, Search, Signature, Trash2, Paperclip, Users, Send } from 'lucide-react';
 import logoPrefectura from '@/assets/logo-prefectura.svg';
+import marcaAguaQuipux from '@/assets/marca_agua_quipux.png';
 import ModalFirmaElectronica from '@/components/ui/ModalFirmaElectronica';
 import AdjuntosPanel from '@/components/ui/AdjuntosPanel';
 
 interface EditorDocumentoProps {
   onClose: () => void;
+  onEnviado?: () => void;  // called after document is actually sent (with or without firma)
   documentoExistente?: DocumentoDetalle;
 }
 
@@ -44,7 +46,48 @@ const QUILL_MODULES = {
 
 const clsInput = 'w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-blue-800 focus:ring-2 focus:ring-blue-800/10 bg-white';
 
-export default function EditorDocumento({ onClose, documentoExistente }: EditorDocumentoProps) {
+function PdfPreview({ docId }: { docId: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(true);
+
+  useEffect(() => {
+    let objectUrl: string;
+    setCargando(true);
+    documentosService.obtenerUrlPDF(docId)
+      .then(u => { objectUrl = u; setUrl(u); })
+      .finally(() => setCargando(false));
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [docId]);
+
+  if (cargando) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#525659]">
+        <div className="text-white text-sm flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          Generando vista previa…
+        </div>
+      </div>
+    );
+  }
+
+  if (!url) {
+    return (
+      <div className="h-full flex items-center justify-center bg-[#525659]">
+        <p className="text-red-300 text-sm">No se pudo cargar la vista previa del PDF.</p>
+      </div>
+    );
+  }
+
+  return (
+    <iframe
+      src={url}
+      className="w-full h-full border-0"
+      title="Vista previa del documento"
+    />
+  );
+}
+
+export default function EditorDocumento({ onClose, onEnviado, documentoExistente }: EditorDocumentoProps) {
   const qc = useQueryClient();
   const esEdicion = !!documentoExistente;
 
@@ -59,13 +102,18 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
       unidad_origen: documentoExistente!.unidad_origen ?? undefined,
     } : { prioridad: 'normal', confidencial: false }
   );
-  const [cuerpo, setCuerpo] = useState(esEdicion ? (documentoExistente!.cuerpo ?? '') : '');
+  const [cuerpo, setCuerpo] = useState(
+    esEdicion
+      ? (documentoExistente!.cuerpo ?? '')
+      : '<p>De mi consideración,</p><p><br></p><p>Con sentimiento de distinguida consideración.</p>'
+  );
   const [error, setError] = useState('');
   const [vistaPrevia, setVistaPrevia] = useState(false);
   const [tipoSeleccionado, setTipoSeleccionado] = useState<any>(null);
   const [docParaFirmar, setDocParaFirmar] = useState<any>(null);
   const [docGuardado, setDocGuardado] = useState<any>(esEdicion ? documentoExistente : null);
-  const [accionPostGuardar, setAccionPostGuardar] = useState<'borrador' | 'firmar'>('borrador');
+  const [accionPostGuardar, setAccionPostGuardar] = useState<'borrador' | 'firmar' | 'enviar' | 'reasignar'>('borrador');
+  const [enviando, setEnviando] = useState(false);
 
   // --- Person search & assignment ---
   const [personas, setPersonas] = useState<PersonaDocumento[]>(() => {
@@ -101,6 +149,16 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
     enabled: busquedaPersona.length >= 2,
   });
 
+  // Load all lists once, filter client-side so they always appear in the dropdown
+  const { data: todasListas } = useQuery({
+    queryKey: ['todas-listas-dist'],
+    queryFn: () => listasService.buscar(''),
+    staleTime: 5 * 60 * 1000,
+  });
+  const listasFiltradas = (todasListas ?? []).filter(l =>
+    busquedaPersona.length < 2 || l.nombre.toLowerCase().includes(busquedaPersona.toLowerCase())
+  );
+
   // --- Set tipoSeleccionado once tipos load (needed for both new and edit) ---
   useEffect(() => {
     if (tipos && form.tipo_documento) {
@@ -109,10 +167,12 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
     }
   }, [tipos, form.tipo_documento]);
 
-  // --- Auto-add logged-in user as "de" ---
+  // --- Auto-add logged-in user as "de" (check inside updater to avoid stale closure) ---
   useEffect(() => {
-    if (perfil && !personas.some(p => p.rol === 'de')) {
-      setPersonas(prev => [{
+    if (!perfil) return;
+    setPersonas(prev => {
+      if (prev.some(p => p.rol === 'de')) return prev;
+      return [{
         id: perfil.id,
         nombre_completo: perfil.nombre_completo,
         cargo: perfil.cargo,
@@ -121,8 +181,8 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
         unidad_siglas: perfil.unidad_siglas,
         unidad_id: perfil.unidad_id,
         rol: 'de',
-      }, ...prev]);
-    }
+      }, ...prev];
+    });
   }, [perfil]);
 
   // --- Close dropdown on outside click ---
@@ -166,9 +226,30 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
     setPersonas(prev => prev.filter(p => !(p.id === id && p.rol === rol)));
   };
 
-  const personasDe = personas.filter(p => p.rol === 'de');
-  const personasPara = personas.filter(p => p.rol === 'para');
+  const agregarLista = (lista: import('@/services/documentos.service').ListaDistribucion) => {
+    lista.miembros.forEach(m => {
+      if (personas.some(p => p.id === m.id && p.rol === 'para')) return;
+      setPersonas(prev => [...prev, {
+        id: m.id,
+        nombre_completo: m.nombre_completo,
+        cargo: m.cargo,
+        titulo: m.titulo,
+        unidad_nombre: m.unidad_nombre,
+        unidad_siglas: m.unidad_siglas,
+        unidad_id: m.unidad_id,
+        rol: 'para',
+      }]);
+    });
+    setBusquedaPersona('');
+    setMostrarResultados(false);
+  };
+
+  const personasDe    = personas.filter(p => p.rol === 'de');
+  const personasPara  = personas.filter(p => p.rol === 'para');
   const personasCopia = personas.filter(p => p.rol === 'copia');
+  // Si el DE es otra persona, el documento se guarda como borrador en SU bandeja.
+  // El usuario actual no puede firmar ni enviar en nombre de otro.
+  const esYoElRemitente = personasDe.length === 0 || (perfil != null && personasDe[0]?.id === perfil.id);
 
   const handleTipoChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = Number(e.target.value);
@@ -187,12 +268,31 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
   };
 
   // --- Mutations ---
-  const onGuardadoExito = (doc: any) => {
+  const onGuardadoExito = async (doc: any) => {
     qc.invalidateQueries({ queryKey: ['bandeja'] });
     qc.invalidateQueries({ queryKey: ['bandeja-conteos'] });
     qc.invalidateQueries({ queryKey: ['doc-detalle', doc.id] });
     setDocGuardado(doc);
-    if (accionPostGuardar === 'firmar') setDocParaFirmar(doc);
+    if (accionPostGuardar === 'firmar') {
+      setDocParaFirmar(doc);
+    } else if (accionPostGuardar === 'enviar') {
+      try {
+        await documentosService.enviar(doc.id);
+        qc.invalidateQueries({ queryKey: ['bandeja'] });
+        qc.invalidateQueries({ queryKey: ['bandeja-conteos'] });
+      } catch (_) {}
+      onEnviado ? onEnviado() : onClose();
+    } else if (accionPostGuardar === 'reasignar') {
+      const remitente = personasDe[0];
+      if (remitente) {
+        try {
+          await documentosService.reasignarA(doc.id, remitente.id, remitente.unidad_id ?? null);
+          qc.invalidateQueries({ queryKey: ['bandeja'] });
+          qc.invalidateQueries({ queryKey: ['bandeja-conteos'] });
+        } catch (_) {}
+      }
+      onClose();
+    }
   };
   const onGuardadoError = (e: any) =>
     setError(Object.values(e.response?.data ?? {}).flat().join(' ') || 'Error al guardar el documento');
@@ -239,6 +339,7 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
     const personaDe = personas.find(p => p.rol === 'de')!;
     const unidadOrigen = personaDe.unidad_id || perfil?.unidad_id!;
     const destinatariosIds = personasPara.map(p => p.id);
+    const remitente_id = (perfil && personaDe.id !== perfil.id) ? personaDe.id : null;
     return {
       ...form,
       tipo_documento: form.tipo_documento!,
@@ -248,6 +349,7 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
       destinatarios_ids: destinatariosIds,
       cuerpo,
       palabras_clave: [],
+      remitente_id,
     } as CrearDocumento;
   };
 
@@ -266,6 +368,34 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
     else mutation.mutate(buildPayload());
   };
 
+  const handleEnviarSinFirma = () => {
+    if (!validarFormulario(true)) return;
+    setAccionPostGuardar('enviar');
+    if (esEdicion) actualizarMutation.mutate(buildPayload());
+    else mutation.mutate(buildPayload());
+  };
+
+  const handleGuardarYReasignar = () => {
+    if (!validarFormulario(false)) return;
+    setAccionPostGuardar('reasignar');
+    mutation.mutate(buildPayload());
+  };
+
+  // When doc is already saved as draft → send directly without re-saving
+  const handleEnviarDirecto = async () => {
+    if (!docGuardado || enviando) return;
+    setEnviando(true);
+    try {
+      await documentosService.enviar(docGuardado.id);
+      qc.invalidateQueries({ queryKey: ['bandeja'] });
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] });
+      onEnviado ? onEnviado() : onClose();
+    } catch (_) {
+      setError('Error al enviar el documento');
+      setEnviando(false);
+    }
+  };
+
   // --- Render helpers ---
   const renderPersonaFila = (persona: PersonaDocumento, label: string | null, idx: number) => (
     <tr key={`${persona.rol}-${persona.id}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/60'}>
@@ -275,7 +405,7 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
         {label ?? ''}
       </td>
       <td className="px-2 py-1.5 text-xs text-gray-900 truncate max-w-[140px]" title={persona.nombre_completo}>
-        {persona.titulo ? `${persona.titulo} ` : ''}{persona.nombre_completo}
+        {persona.nombre_completo}
       </td>
       <td className="px-2 py-1.5 text-xs text-gray-600 truncate max-w-[100px]" title={persona.cargo}>
         {persona.cargo || '-'}
@@ -316,7 +446,7 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
   // RENDER
   // ========================
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.40)', backdropFilter: 'blur(8px)' }}>
       <div className="bg-white rounded-2xl shadow-2xl flex flex-col w-[96vw] max-w-7xl h-[95vh]">
 
         {/* ===== HEADER ===== */}
@@ -348,121 +478,98 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
         {/* ===== CONTENT ===== */}
         <div className="flex-1 overflow-hidden">
           {vistaPrevia ? (
-            /* ---------- VISTA PREVIA A4 ---------- */
-            <div className="h-full overflow-y-auto p-8 flex justify-center bg-[#525659]">
-              <div className="bg-white shadow-2xl w-full max-w-[21cm] min-h-[29.7cm] flex flex-col font-serif text-[11pt] text-black relative overflow-hidden">
+            /* ---------- VISTA PREVIA ---------- */
+            docGuardado ? (
+              /* ── PDF real embebido cuando el doc está guardado ── */
+              <PdfPreview docId={docGuardado.id} />
+            ) : (
+              /* ── HTML preview cuando aún no se ha guardado ── */
+              <div className="h-full overflow-y-auto p-8 flex justify-center bg-[#525659]">
+                <div className="bg-white shadow-2xl w-full max-w-[21cm] min-h-[29.7cm] flex flex-col text-black relative overflow-hidden"
+                     style={{ fontFamily: '"Times New Roman", "Liberation Serif", Times, serif', fontSize: '11pt', lineHeight: '1.18' }}>
 
-                {/* Marca de agua */}
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ opacity: 0.04 }}>
-                  <img src={logoPrefectura} alt="" className="w-[60%]" />
-                </div>
-
-                {/* Encabezado */}
-                <div className="pt-8 px-12 pb-3 relative z-10">
-                  <div className="flex items-start justify-between">
-                    <img
-                      src="/escudo-cotopaxi.png"
-                      alt="Escudo GAD Cotopaxi"
-                      className="h-[85px] object-contain"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                    />
-                    <img
-                      src={logoPrefectura}
-                      alt="Prefectura Cotopaxi"
-                      className="h-[75px] object-contain"
-                    />
-                  </div>
-                </div>
-
-                {/* Lineas superiores */}
-                <div className="flex mx-12 gap-0">
-                  <div className="h-[2.5px] flex-[45] bg-[#da291c]"></div>
-                  <div className="flex-[10]"></div>
-                  <div className="h-[2.5px] flex-[45] bg-[#002f6c]"></div>
-                </div>
-
-                {/* Cuerpo */}
-                <div className="px-14 pt-10 flex-1 flex flex-col relative z-10">
-                  <div className="text-right font-bold font-sans text-[11pt] mb-1 text-black">
-                    {tipoSeleccionado?.nombre?.toUpperCase() ?? 'DOCUMENTO'} Nro. GADPC-
-                    {personasDe[0]?.unidad_siglas || perfil?.unidad_siglas || '[SIGLAS]'}-2026-(por asignar)-
-                    {tipoSeleccionado?.prefijo_numeracion ?? ''}
-                  </div>
-                  <div className="text-right font-sans text-[11pt] mb-10 text-black">
-                    Latacunga, {new Date().toLocaleDateString('es-EC', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  {/* Marca de agua */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ opacity: 0.06, zIndex: 0 }}>
+                    <img src={marcaAguaQuipux} alt="" style={{ width: '60%', objectFit: 'contain' }} />
                   </div>
 
-                  <div className="grid grid-cols-[80px_1fr] gap-y-3 mb-8 font-serif text-[11pt]">
-                    <div className="font-bold">PARA:</div>
-                    <div>
-                      {personasPara.length > 0 ? personasPara.map((p, i) => (
-                        <div key={p.id} className={i > 0 ? 'mt-2' : ''}>
-                          <div className="font-bold">{p.nombre_completo}</div>
-                          <div>{p.cargo}</div>
-                          {p.unidad_nombre && <div className="uppercase">{p.unidad_nombre}</div>}
-                        </div>
-                      )) : (
-                        <div className="font-bold text-gray-400">[Seleccione destinatario]</div>
+                  {/* ── ENCABEZADO ── */}
+                  <div className="flex items-center justify-between relative z-10" style={{ padding: '14px 28px 8px' }}>
+                    <img src="/escudo-cotopaxi.png" alt="Escudo GAD" style={{ width: 75, objectFit: 'contain' }}
+                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    <img src={logoPrefectura} alt="Prefectura" style={{ width: 170, objectFit: 'contain' }} />
+                  </div>
+
+                  {/* ── LÍNEA bicolor: roja izq | gap | azul der ── */}
+                  <div style={{ display: 'flex', margin: 0 }}>
+                    <div style={{ height: 2, flex: 1, background: '#da291c' }}></div>
+                    <div style={{ flex: '0 0 3px' }}></div>
+                    <div style={{ height: 2, flex: 1, background: '#002f6c' }}></div>
+                  </div>
+
+                  {/* ── CONTENIDO ── */}
+                  <div className="flex-1 flex flex-col relative z-10" style={{ padding: '5mm 30mm 20mm 40mm' }}>
+
+                    <div style={{ textAlign: 'right', fontWeight: 'bold' }}>
+                      {tipoSeleccionado?.nombre ?? 'Documento'} Nro. (por asignar)
+                    </div>
+                    <div style={{ textAlign: 'right', fontWeight: 'bold' }}>
+                      Latacunga, {new Date().toLocaleDateString('es-EC', { day: 'numeric', month: 'long', year: 'numeric' })}
+                    </div>
+
+                    <div style={{ marginTop: '22pt' }}>
+                      <span style={{ fontWeight: 'bold' }}>PARA:</span>
+                      <div style={{ paddingLeft: '56pt', marginTop: '2pt' }}>
+                        {personasPara.length > 0 ? personasPara.map((p, i) => (
+                          <div key={p.id} style={{ marginBottom: i < personasPara.length - 1 ? '11pt' : 0 }}>
+                            <span>{p.nombre_completo}</span>
+                            {p.cargo && <><br /><span style={{ fontWeight: 'bold' }}>{p.cargo}</span></>}
+                            {p.unidad_nombre && <><br /><span style={{ fontWeight: 'bold' }}>{p.unidad_nombre}</span></>}
+                          </div>
+                        )) : <span style={{ color: '#aaa' }}>[Seleccione destinatario]</span>}
+                      </div>
+                    </div>
+                    <div style={{ margin: '14pt 0' }}>
+                      <span style={{ fontWeight: 'bold' }}>ASUNTO:</span>{' '}
+                      {form.asunto || <span style={{ color: '#aaa' }}>[Escriba el asunto]</span>}
+                    </div>
+
+                    <div className="render-quill" style={{ textAlign: 'justify', flex: 1 }}
+                         dangerouslySetInnerHTML={{ __html: cuerpo || '<p style="color:#aaa;font-style:italic">[Sin contenido]</p>' }} />
+
+                    <div style={{ marginTop: '11pt' }}>
+                      <p style={{ margin: '0 0 11pt 0' }}>Atentamente,</p>
+                      <div style={{ width: '55mm', borderTop: '1pt solid #000', margin: '38pt 0 4pt' }}></div>
+                      <div style={{ fontWeight: 'normal', lineHeight: '1.18' }}>
+                        {personasDe[0]?.nombre_completo ?? '[Nombre del Funcionario]'}
+                      </div>
+                      {personasDe[0]?.cargo && (
+                        <div style={{ fontWeight: 'bold', lineHeight: '1.18' }}>{personasDe[0].cargo}</div>
+                      )}
+                      {personasDe[0]?.unidad_nombre && (
+                        <div style={{ fontWeight: 'bold', lineHeight: '1.18' }}>{personasDe[0].unidad_nombre}</div>
                       )}
                     </div>
-                    <div className="font-bold">DE:</div>
-                    <div>
-                      {personasDe.length > 0 ? (
-                        <>
-                          <div className="font-bold">{personasDe[0].nombre_completo}</div>
-                          <div>{personasDe[0].cargo}</div>
-                          {personasDe[0].unidad_nombre && <div className="uppercase">{personasDe[0].unidad_nombre}</div>}
-                        </>
-                      ) : (
-                        <div className="font-bold text-gray-400">[Remitente]</div>
-                      )}
-                    </div>
-                    <div className="font-bold">ASUNTO:</div>
-                    <div className="font-bold uppercase">
-                      {form.asunto || '[Escriba el asunto]'}
-                    </div>
                   </div>
 
-                  <div
-                    className="text-justify mb-8 render-quill leading-relaxed"
-                    dangerouslySetInnerHTML={{ __html: cuerpo || '<p class="text-gray-400 italic">[Sin contenido]</p>' }}
-                  />
-
-                  {/* Bloque firma */}
-                  <div className="mt-auto mb-8 text-[11pt]">
-                    <p className="text-left mb-16">Atentamente,</p>
-                    <div className="w-[220px]">
-                      <div className="border-t border-black mb-1"></div>
-                      <p className="font-bold uppercase text-[10pt]">
-                        {personasDe[0]?.nombre_completo?.toUpperCase() ?? '[NOMBRE DEL FUNCIONARIO]'}
-                      </p>
-                      <p className="uppercase text-[10pt]">
-                        {personasDe[0]?.cargo ?? '[Cargo]'}
-                      </p>
-                      <p className="uppercase text-[10pt]">
-                        {personasDe[0]?.unidad_nombre || '[Unidad]'}
-                      </p>
+                  {/* ── PIE DE PÁGINA ── */}
+                  <div style={{ padding: '0 10mm 10px', position: 'relative', zIndex: 1 }}>
+                    <div style={{ display: 'flex', marginBottom: 4 }}>
+                      <div style={{ height: 2, flex: 1, background: '#da291c' }}></div>
+                      <div style={{ flex: '0 0 3px' }}></div>
+                      <div style={{ height: 2, flex: 1, background: '#002f6c' }}></div>
                     </div>
-                  </div>
-                </div>
-
-                {/* Pie de pagina */}
-                <div className="pb-4 px-12 mt-auto relative z-10">
-                  <div className="flex gap-0 mb-2">
-                    <div className="h-[2.5px] flex-[45] bg-[#da291c]"></div>
-                    <div className="flex-[10]"></div>
-                    <div className="h-[2.5px] flex-[45] bg-[#002f6c]"></div>
-                  </div>
-                  <div className="font-sans text-[8pt] text-[#333] text-center leading-snug">
-                    <span className="font-bold text-[#da291c]">Dir:</span> Calle Tarqui N 507 y Quito &bull; <span className="font-bold text-[#da291c]">Telf:</span> (03) 2800 416 - 2800 418 &bull; <span className="font-bold text-[#da291c]">Telefax:</span> 2800 411<br />
-                    <span className="font-bold text-[#da291c]">E-mail:</span> documentacion@cotopaxi.gob.ec &bull; www.cotopaxi.gob.ec &bull; Cotopaxi - Ecuador
-                  </div>
-                  <div className="font-sans text-[7pt] text-gray-400 text-right mt-1">
-                    Pagina 1 de 1
+                    <div style={{ fontFamily: "'Liberation Sans', Calibri, Arial, sans-serif", fontSize: '7.5pt', color: '#333', textAlign: 'center', lineHeight: 1.6 }}>
+                      <strong>Dir:</strong> Calle Tarqui N° 507 y Quito &nbsp;•&nbsp;
+                      <strong>Telf:</strong> (03) 2800 416 - 2800 418 &nbsp;•&nbsp;
+                      <strong>Telefax:</strong> 2800 411<br />
+                      <strong>E-mail:</strong> info@cotopaxi.gob.ec &nbsp;•&nbsp;
+                      www.cotopaxi.gob.ec &nbsp;•&nbsp; Cotopaxi - Ecuador
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )
           ) : (
             /* ---------- FORMULARIO - 2 COLUMNAS ---------- */
             <div className="h-full flex">
@@ -540,72 +647,114 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
                     </select>
                   </div>
 
-                  {/* ===== BUSCAR PERSONA ===== */}
+                  {/* ===== BUSCAR PERSONA / LISTA ===== */}
                   <div className="border-t border-gray-200 pt-4">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">
-                      Buscar persona
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-1.5">
+                      <Search size={11} /> Buscar persona o lista de distribución
                     </label>
                     <div ref={buscadorRef} className="relative">
                       <div className="relative">
                         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                         <input
                           className={`${clsInput} pl-9`}
-                          placeholder="Buscar por nombre..."
+                          placeholder="Nombre de funcionario o lista..."
                           value={busquedaPersona}
                           onChange={e => {
                             setBusquedaPersona(e.target.value);
                             setMostrarResultados(true);
                           }}
-                          onFocus={() => busquedaPersona.length >= 2 && setMostrarResultados(true)}
+                          onFocus={() => setMostrarResultados(true)}
                         />
                       </div>
 
                       {/* Search results dropdown */}
-                      {mostrarResultados && busquedaPersona.length >= 2 && (
-                        <div className="absolute z-50 left-0 right-0 mt-1 max-h-[200px] overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg">
-                          {usuariosBusqueda?.results && usuariosBusqueda.results.filter(u => u.activo).length > 0 ? (
-                            usuariosBusqueda.results.filter(u => u.activo).map(u => (
-                              <div
-                                key={u.id}
-                                className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-b-0 hover:bg-gray-50"
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-semibold text-gray-900 truncate">{u.nombre_completo}</p>
-                                  <p className="text-[10px] text-gray-500 truncate">
-                                    {u.cargo || 'Sin cargo'}{u.unidad_siglas ? ` [${u.unidad_siglas}]` : ''}
-                                  </p>
-                                </div>
-                                <div className="flex gap-1 flex-shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => agregarPersona(u, 'para')}
-                                    className="px-2 py-1 text-[10px] font-bold rounded-md bg-[#002f6c] text-white hover:bg-[#002f6c]/80 transition-colors"
-                                    title="Agregar como destinatario"
-                                  >
-                                    Para
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => agregarPersona(u, 'de')}
-                                    className="px-2 py-1 text-[10px] font-bold rounded-md bg-[#0f6e56] text-white hover:bg-[#0f6e56]/80 transition-colors"
-                                    title="Agregar como remitente"
-                                  >
-                                    De
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => agregarPersona(u, 'copia')}
-                                    className="px-2 py-1 text-[10px] font-bold rounded-md bg-gray-500 text-white hover:bg-gray-400 transition-colors"
-                                    title="Agregar con copia"
-                                  >
-                                    Copia
-                                  </button>
-                                </div>
+                      {mostrarResultados && (
+                        <div className="absolute z-50 left-0 right-0 mt-1 max-h-[260px] overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg">
+                          {/* Listas de distribución */}
+                          {listasFiltradas.length > 0 && (
+                            <>
+                              <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-100 flex items-center gap-1.5">
+                                <Users size={11} className="text-amber-600" />
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Listas de distribución</span>
                               </div>
-                            ))
-                          ) : (
+                              {listasFiltradas.map(lista => (
+                                <div
+                                  key={`lista-${lista.id}`}
+                                  className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 hover:bg-amber-50/60"
+                                >
+                                  <Users size={14} className="text-amber-500 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold text-gray-900 truncate">{lista.nombre}</p>
+                                    <p className="text-[10px] text-gray-500 truncate">
+                                      {lista.total_miembros} miembro{lista.total_miembros !== 1 ? 's' : ''}
+                                      {lista.preview_miembros.length > 0 && ` · ${lista.preview_miembros.join(', ')}${lista.total_miembros > 3 ? '...' : ''}`}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => agregarLista(lista)}
+                                    className="px-2 py-1 text-[10px] font-bold rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors flex-shrink-0"
+                                    title="Agregar todos los miembros como destinatarios"
+                                  >
+                                    + Para
+                                  </button>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                          {/* Funcionarios individuales */}
+                          {usuariosBusqueda?.results && usuariosBusqueda.results.filter(u => u.activo).length > 0 && (
+                            <>
+                              <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-100 flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Funcionarios</span>
+                              </div>
+                              {usuariosBusqueda.results.filter(u => u.activo).map(u => (
+                                <div
+                                  key={u.id}
+                                  className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 last:border-b-0 hover:bg-gray-50"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold text-gray-900 truncate">{u.nombre_completo}</p>
+                                    <p className="text-[10px] text-gray-500 truncate">
+                                      {u.cargo || 'Sin cargo'}{u.unidad_siglas ? ` [${u.unidad_siglas}]` : ''}
+                                    </p>
+                                  </div>
+                                  <div className="flex gap-1 flex-shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => agregarPersona(u, 'para')}
+                                      className="px-2 py-1 text-[10px] font-bold rounded-md bg-[#002f6c] text-white hover:bg-[#002f6c]/80 transition-colors"
+                                      title="Agregar como destinatario"
+                                    >
+                                      Para
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => agregarPersona(u, 'de')}
+                                      className="px-2 py-1 text-[10px] font-bold rounded-md bg-[#0f6e56] text-white hover:bg-[#0f6e56]/80 transition-colors"
+                                      title="Agregar como remitente"
+                                    >
+                                      De
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => agregarPersona(u, 'copia')}
+                                      className="px-2 py-1 text-[10px] font-bold rounded-md bg-gray-500 text-white hover:bg-gray-400 transition-colors"
+                                      title="Agregar con copia"
+                                    >
+                                      Copia
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </>
+                          )}
+                          {/* Estado vacío */}
+                          {listasFiltradas.length === 0 && !usuariosBusqueda?.results?.filter(u => u.activo).length && (
                             <div className="px-3 py-4 text-center text-sm text-gray-400">
-                              {usuariosBusqueda?.results ? 'No se encontraron funcionarios' : 'Buscando...'}
+                              {busquedaPersona.length < 2
+                                ? 'Escriba al menos 2 caracteres para buscar funcionarios'
+                                : 'No se encontraron resultados'}
                             </div>
                           )}
                         </div>
@@ -691,44 +840,108 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
           <p className="text-xs text-gray-400">
             {docGuardado ? `Documento guardado: ${docGuardado.numero_documento || 'borrador'}` : 'El numero se asigna al firmar y enviar'}
           </p>
-          <div className="flex gap-3">
+          <div className="flex gap-2">
             <button
               onClick={onClose}
               className="px-4 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
             >
               {docGuardado ? 'Cerrar' : 'Cancelar'}
             </button>
+
             {!docGuardado ? (
-              <>
-                <button
-                  onClick={handleGuardar}
-                  disabled={isPending}
-                  className="px-4 py-2.5 text-sm font-bold text-[#002f6c] border border-[#002f6c] rounded-xl hover:bg-blue-50 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Save size={15} />
-                  Guardar borrador
-                </button>
-                <button
-                  onClick={handleFirmarYEnviar}
-                  disabled={isPending}
-                  className="px-5 py-2.5 text-sm font-bold text-white bg-[#002f6c] rounded-xl hover:bg-[#002f6c]/90 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isPending ? (
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : (
-                    <Signature size={16} />
-                  )}
-                  {isPending ? 'Procesando...' : 'Firmar y Enviar'}
-                </button>
-              </>
+              esYoElRemitente ? (
+                /* ── Soy el remitente: tres opciones ── */
+                <>
+                  <button
+                    onClick={handleGuardar}
+                    disabled={isPending}
+                    title="Guarda el borrador para revisarlo después"
+                    className="px-4 py-2.5 text-sm font-bold text-[#002f6c] border border-[#002f6c] rounded-xl hover:bg-blue-50 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Save size={15} />
+                    Guardar borrador
+                  </button>
+                  <button
+                    onClick={handleEnviarSinFirma}
+                    disabled={isPending}
+                    title="Envía el documento sin firma electrónica"
+                    className="px-4 py-2.5 text-sm font-bold text-white bg-[#0f6e56] rounded-xl hover:bg-[#0f6e56]/90 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isPending && accionPostGuardar === 'enviar' ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Send size={15} />
+                    )}
+                    Enviar sin firma
+                  </button>
+                  <button
+                    onClick={handleFirmarYEnviar}
+                    disabled={isPending}
+                    title="Firma electrónicamente y envía el documento"
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-[#002f6c] rounded-xl hover:bg-[#002f6c]/90 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isPending && accionPostGuardar === 'firmar' ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Signature size={16} />
+                    )}
+                    {isPending && accionPostGuardar === 'firmar' ? 'Procesando...' : 'Firmar y Enviar'}
+                  </button>
+                </>
+              ) : (
+                /* ── DE es otra persona: Aceptar (mi bandeja) o Aceptar y Reasignar ── */
+                <>
+                  <button
+                    onClick={handleGuardar}
+                    disabled={isPending}
+                    title="Guarda el borrador en tu bandeja En elaboración"
+                    className="px-4 py-2.5 text-sm font-bold text-gray-700 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Save size={15} />
+                    {isPending && accionPostGuardar === 'borrador' ? 'Guardando...' : 'Aceptar'}
+                  </button>
+                  <button
+                    onClick={handleGuardarYReasignar}
+                    disabled={isPending}
+                    title={`El documento irá a la bandeja En elaboración de ${personasDe[0]?.nombre_completo} para que lo firme y envíe`}
+                    className="px-4 py-2.5 text-sm font-bold text-white bg-[#002f6c] rounded-xl hover:bg-[#002f6c]/90 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Send size={15} />
+                    {isPending && accionPostGuardar === 'reasignar' ? 'Reasignando...' : 'Aceptar y Reasignar'}
+                  </button>
+                </>
+              )
             ) : !docParaFirmar ? (
-              <button
-                onClick={() => setDocParaFirmar(docGuardado)}
-                className="px-5 py-2.5 text-sm font-bold text-white bg-[#0f6e56] rounded-xl hover:bg-[#0f6e56]/90 transition-colors flex items-center gap-2"
-              >
-                <Signature size={16} />
-                Firmar y Enviar
-              </button>
+              esYoElRemitente ? (
+                /* ── Borrador guardado y soy remitente: enviar o firmar ── */
+                <>
+                  <button
+                    onClick={handleEnviarDirecto}
+                    disabled={enviando}
+                    title="Envía el documento sin firma electrónica"
+                    className="px-4 py-2.5 text-sm font-bold text-white bg-[#0f6e56] rounded-xl hover:bg-[#0f6e56]/90 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {enviando ? (
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Send size={15} />
+                    )}
+                    Enviar sin firma
+                  </button>
+                  <button
+                    onClick={() => setDocParaFirmar(docGuardado)}
+                    className="px-5 py-2.5 text-sm font-bold text-white bg-[#002f6c] rounded-xl hover:bg-[#002f6c]/90 transition-colors flex items-center gap-2"
+                  >
+                    <Signature size={16} />
+                    Firmar y Enviar
+                  </button>
+                </>
+              ) : (
+                /* ── Borrador guardado pero no soy el remitente ── */
+                <p className="text-xs text-amber-600 font-medium">
+                  Borrador creado. Solo {personasDe[0]?.nombre_completo} puede firmarlo y enviarlo.
+                </p>
+              )
             ) : null}
           </div>
         </div>
@@ -742,10 +955,14 @@ export default function EditorDocumento({ onClose, documentoExistente }: EditorD
               setDocParaFirmar(null);
               onClose();
             }}
-            onFirmado={() => {
+            onFirmado={async () => {
+              try {
+                await documentosService.enviar(docParaFirmar.id);
+              } catch (_) {}
               qc.invalidateQueries({ queryKey: ['bandeja'] });
+              qc.invalidateQueries({ queryKey: ['bandeja-conteos'] });
               setDocParaFirmar(null);
-              onClose();
+              onEnviado ? onEnviado() : onClose();
             }}
           />
         )}

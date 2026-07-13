@@ -1,17 +1,19 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/services/api'
+import { useThemeStore } from '@/store/themeStore'
+import { THEMES } from '@/constants/themes'
 import {
   BookOpen, FileCheck, Plus, X, Search, RefreshCw,
   CheckCircle, Clock, AlertTriangle, XCircle,
   ArrowLeftRight, Stamp, Eye, Calendar, User
 } from 'lucide-react'
 
-// ── Servicios ─────────────────────────────────────────────────────────
+type PagedResult = { results: any[]; count: number }
 
 const prestamosService = {
-  listar: (params?: Record<string, string>) =>
-    api.get<{ results: any[]; count: number }>('/archivo/prestamos/', { params }).then(r => r.data),
+  listar: (params?: Record<string, string>): Promise<PagedResult> =>
+    api.get('/archivo/prestamos/', { params }).then(r => r.data as PagedResult),
   crear: (data: any) =>
     api.post('/archivo/prestamos/', data).then(r => r.data),
   devolver: (id: number, observaciones?: string) =>
@@ -23,21 +25,20 @@ const prestamosService = {
 }
 
 const copiasCertificadasService = {
-  listar: (params?: Record<string, string>) =>
-    api.get<{ results: any[]; count: number }>('/archivo/copias-certificadas/', { params }).then(r => r.data),
+  listar: (params?: Record<string, string>): Promise<PagedResult> =>
+    api.get('/archivo/copias-certificadas/', { params }).then(r => r.data as PagedResult),
   crear: (data: any) =>
     api.post('/archivo/copias-certificadas/', data).then(r => r.data),
 }
 
 const expedientesService = {
-  listar: (search?: string) =>
-    api.get<any[]>('/archivo/expedientes/', {
+  listar: (search?: string): Promise<any[]> =>
+    api.get('/archivo/expedientes/', {
       params: { search, estado: 'abierto' }
-    }).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    }).then(r => { const d = r.data as any; return Array.isArray(d) ? d : (d.results ?? []) }),
 }
 
-// ── Constantes ────────────────────────────────────────────────────────
-
+// Colores semánticos fijos de estados de préstamo
 const ESTADO_PRESTAMO: Record<string, { bg: string; text: string; label: string; icon: any }> = {
   activo:     { bg: '#eff6ff', text: '#1d4ed8', label: 'Activo',     icon: Clock },
   devuelto:   { bg: '#f0fdf4', text: '#15803d', label: 'Devuelto',   icon: CheckCircle },
@@ -45,9 +46,16 @@ const ESTADO_PRESTAMO: Record<string, { bg: string; text: string; label: string;
   extraviado: { bg: '#faf5ff', text: '#7e22ce', label: 'Extraviado', icon: XCircle },
 }
 
-// ── Modal nuevo préstamo ──────────────────────────────────────────────
+function useTheme() {
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
+  const inputStyle: React.CSSProperties = { background: T.rowBg, color: T.rowTxt, border: `0.5px solid ${T.rowBd}`, outline: 'none', borderRadius: 10, padding: '9px 12px', fontSize: 13, width: '100%', boxSizing: 'border-box' }
+  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: T.rowSub, marginBottom: 6 }
+  return { T, inputStyle, labelStyle }
+}
 
 function ModalNuevoPrestamo({ onClose }: { onClose: () => void }) {
+  const { T, inputStyle, labelStyle } = useTheme()
   const qc = useQueryClient()
   const [form, setForm] = useState<Record<string, any>>({})
   const [error, setError] = useState('')
@@ -66,38 +74,39 @@ function ModalNuevoPrestamo({ onClose }: { onClose: () => void }) {
   })
 
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
-  const cls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: '#e8f1fd' }}>
-              <BookOpen size={15} style={{ color: '#002f6c' }} />
+      <div style={{ background: T.ctHdrBg, borderRadius: 20, width: '100%', maxWidth: 520, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `0.5px solid ${T.rowBd}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: T.rowSel }}>
+              <BookOpen size={15} style={{ color: T.accentDk }} />
             </div>
-            <h3 className="font-bold text-gray-900 text-sm">Nuevo préstamo documental</h3>
+            <h3 style={{ fontWeight: 700, color: T.rowTxt, fontSize: 14, margin: 0 }}>Nuevo préstamo documental</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
-            <X size={16} className="text-gray-500" />
+          <button onClick={onClose} style={{ padding: 6, borderRadius: 8, background: T.rowHv, border: 'none', cursor: 'pointer', color: T.rowSub }}>
+            <X size={16} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          {error && <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">{error}</div>}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {error && <div style={{ background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#dc2626' }}>{error}</div>}
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Buscar expediente *</label>
-            <input className={cls} placeholder="Código o título del expediente..."
+            <label style={labelStyle}>Buscar expediente *</label>
+            <input style={inputStyle} placeholder="Código o título del expediente..."
               value={busqExp} onChange={e => setBusqExp(e.target.value)} />
             {expedientes && expedientes.length > 0 && !form.expediente && (
-              <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                {expedientes.slice(0, 5).map((exp: any) => (
+              <div style={{ marginTop: 4, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, overflow: 'hidden' }}>
+                {(expedientes as any[]).slice(0, 5).map((exp: any) => (
                   <div key={exp.id}
                     onClick={() => { set('expediente', exp.id); setBusqExp(exp.codigo_expediente + ' — ' + exp.titulo) }}
-                    className="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm border-b border-gray-100 last:border-0">
-                    <span className="font-mono text-xs text-[#002f6c] font-bold">{exp.codigo_expediente}</span>
-                    <span className="ml-2 text-gray-600">{exp.titulo}</span>
+                    style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 12, borderBottom: `0.5px solid ${T.rowBd}`, background: T.ctHdrBg, color: T.rowTxt }}
+                    onMouseEnter={e => (e.currentTarget.style.background = T.rowSel)}
+                    onMouseLeave={e => (e.currentTarget.style.background = T.ctHdrBg)}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11, color: T.accentDk, fontWeight: 700 }}>{exp.codigo_expediente}</span>
+                    <span style={{ marginLeft: 8 }}>{exp.titulo}</span>
                   </div>
                 ))}
               </div>
@@ -105,22 +114,21 @@ function ModalNuevoPrestamo({ onClose }: { onClose: () => void }) {
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Fecha de devolución esperada *</label>
-            <input type="date" className={cls}
-              value={form.fecha_devolucion_esperada ?? ''}
-              onChange={e => set('fecha_devolucion_esperada', e.target.value)} />
+            <label style={labelStyle}>Fecha de devolución esperada *</label>
+            <input type="date" style={inputStyle} value={form.fecha_devolucion_esperada ?? ''} onChange={e => set('fecha_devolucion_esperada', e.target.value)} />
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Observaciones</label>
-            <textarea className={cls + ' resize-none'} rows={3}
+            <label style={labelStyle}>Observaciones</label>
+            <textarea style={{ ...inputStyle, resize: 'none' }} rows={3}
               placeholder="Motivo del préstamo, condiciones especiales..."
               value={form.observaciones ?? ''} onChange={e => set('observaciones', e.target.value)} />
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
-          <button onClick={onClose} className="px-4 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '14px 24px', borderTop: `0.5px solid ${T.rowBd}` }}>
+          <button onClick={onClose}
+            style={{ padding: '8px 16px', fontSize: 13, fontWeight: 500, color: T.rowSub, background: T.rowHv, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, cursor: 'pointer' }}>
             Cancelar
           </button>
           <button
@@ -131,8 +139,7 @@ function ModalNuevoPrestamo({ onClose }: { onClose: () => void }) {
               mutation.mutate(form)
             }}
             disabled={mutation.isPending}
-            className="px-4 py-2.5 text-sm font-bold text-white rounded-xl flex items-center gap-2"
-            style={{ background: mutation.isPending ? '#4a90e2' : '#002f6c' }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', fontSize: 13, fontWeight: 700, color: '#fff', background: mutation.isPending ? '#94a3b8' : T.accentDk, border: 'none', borderRadius: 10, cursor: 'pointer' }}>
             {mutation.isPending
               ? <><span className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} /> Registrando...</>
               : <><Plus size={15} /> Registrar préstamo</>}
@@ -143,9 +150,8 @@ function ModalNuevoPrestamo({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ── Modal nueva copia certificada ─────────────────────────────────────
-
 function ModalNuevaCopia({ onClose }: { onClose: () => void }) {
+  const { T, inputStyle, labelStyle } = useTheme()
   const qc = useQueryClient()
   const [form, setForm] = useState<Record<string, any>>({})
   const [error, setError] = useState('')
@@ -164,73 +170,75 @@ function ModalNuevaCopia({ onClose }: { onClose: () => void }) {
   })
 
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
-  const cls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: '#f0fdf4' }}>
+      <div style={{ background: T.ctHdrBg, borderRadius: 20, width: '100%', maxWidth: 520, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.25)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `0.5px solid ${T.rowBd}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0fdf4' }}>
               <Stamp size={15} style={{ color: '#15803d' }} />
             </div>
-            <h3 className="font-bold text-gray-900 text-sm">Emitir copia certificada</h3>
+            <h3 style={{ fontWeight: 700, color: T.rowTxt, fontSize: 14, margin: 0 }}>Emitir copia certificada</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
-            <X size={16} className="text-gray-500" />
+          <button onClick={onClose} style={{ padding: 6, borderRadius: 8, background: T.rowHv, border: 'none', cursor: 'pointer', color: T.rowSub }}>
+            <X size={16} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          {error && <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3">{error}</div>}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {error && <div style={{ background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: '#dc2626' }}>{error}</div>}
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Buscar expediente *</label>
-            <input className={cls} placeholder="Código o título del expediente..."
+            <label style={labelStyle}>Buscar expediente *</label>
+            <input style={inputStyle} placeholder="Código o título del expediente..."
               value={busqExp} onChange={e => setBusqExp(e.target.value)} />
             {expedientes && expedientes.length > 0 && !form.expediente && (
-              <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                {expedientes.slice(0, 5).map((exp: any) => (
+              <div style={{ marginTop: 4, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, overflow: 'hidden' }}>
+                {(expedientes as any[]).slice(0, 5).map((exp: any) => (
                   <div key={exp.id}
                     onClick={() => { set('expediente', exp.id); setBusqExp(exp.codigo_expediente + ' — ' + exp.titulo) }}
-                    className="px-3 py-2 hover:bg-green-50 cursor-pointer text-sm border-b border-gray-100 last:border-0">
-                    <span className="font-mono text-xs text-[#15803d] font-bold">{exp.codigo_expediente}</span>
-                    <span className="ml-2 text-gray-600">{exp.titulo}</span>
+                    style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 12, borderBottom: `0.5px solid ${T.rowBd}`, background: T.ctHdrBg, color: T.rowTxt }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#f0fdf4')}
+                    onMouseLeave={e => (e.currentTarget.style.background = T.ctHdrBg)}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#15803d', fontWeight: 700 }}>{exp.codigo_expediente}</span>
+                    <span style={{ marginLeft: 8 }}>{exp.titulo}</span>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Nombre solicitante *</label>
-              <input className={cls} placeholder="Nombre completo"
+              <label style={labelStyle}>Nombre solicitante *</label>
+              <input style={inputStyle} placeholder="Nombre completo"
                 value={form.solicitante_nombre ?? ''} onChange={e => set('solicitante_nombre', e.target.value)} />
             </div>
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Cédula / RUC</label>
-              <input className={cls} placeholder="0000000000"
+              <label style={labelStyle}>Cédula / RUC</label>
+              <input style={inputStyle} placeholder="0000000000"
                 value={form.solicitante_cedula ?? ''} onChange={e => set('solicitante_cedula', e.target.value)} />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Número de fojas *</label>
-            <input type="number" className={cls} placeholder="Ej: 5"
+            <label style={labelStyle}>Número de fojas *</label>
+            <input type="number" style={inputStyle} placeholder="Ej: 5"
               value={form.numero_fojas ?? ''} onChange={e => set('numero_fojas', Number(e.target.value))} />
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Motivo de la solicitud</label>
-            <textarea className={cls + ' resize-none'} rows={3}
+            <label style={labelStyle}>Motivo de la solicitud</label>
+            <textarea style={{ ...inputStyle, resize: 'none' }} rows={3}
               placeholder="¿Para qué se necesita la copia certificada?"
               value={form.motivo ?? ''} onChange={e => set('motivo', e.target.value)} />
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
-          <button onClick={onClose} className="px-4 py-2.5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '14px 24px', borderTop: `0.5px solid ${T.rowBd}` }}>
+          <button onClick={onClose}
+            style={{ padding: '8px 16px', fontSize: 13, fontWeight: 500, color: T.rowSub, background: T.rowHv, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, cursor: 'pointer' }}>
             Cancelar
           </button>
           <button
@@ -241,8 +249,7 @@ function ModalNuevaCopia({ onClose }: { onClose: () => void }) {
               mutation.mutate(form)
             }}
             disabled={mutation.isPending}
-            className="px-4 py-2.5 text-sm font-bold text-white rounded-xl flex items-center gap-2"
-            style={{ background: mutation.isPending ? '#4a90e2' : '#15803d' }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', fontSize: 13, fontWeight: 700, color: '#fff', background: mutation.isPending ? '#94a3b8' : '#15803d', border: 'none', borderRadius: 10, cursor: 'pointer' }}>
             {mutation.isPending
               ? <><span className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,.3)', borderTopColor: '#fff' }} /> Emitiendo...</>
               : <><Stamp size={15} /> Emitir copia</>}
@@ -253,9 +260,8 @@ function ModalNuevaCopia({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ── Tab Préstamos ─────────────────────────────────────────────────────
-
 function TabPrestamos() {
+  const { T } = useTheme()
   const qc = useQueryClient()
   const [modal, setModal] = useState(false)
   const [busqueda, setBusqueda] = useState('')
@@ -281,37 +287,37 @@ function TabPrestamos() {
     <div>
       {modal && <ModalNuevoPrestamo onClose={() => setModal(false)} />}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         <button onClick={() => setModal(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, background: '#002f6c', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none' }}>
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, background: T.accentDk, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none' }}>
           <Plus size={14} /> Nuevo préstamo
         </button>
         <div style={{ position: 'relative', flex: 1, maxWidth: 340 }}>
-          <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+          <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
           <input placeholder="Buscar por expediente o solicitante..."
             value={busqueda} onChange={e => setBusqueda(e.target.value)}
-            style={{ width: '100%', padding: '7px 10px 7px 26px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }} />
+            style={{ width: '100%', padding: '7px 10px 7px 26px', fontSize: 11, border: `0.5px solid ${T.rowBd}`, borderRadius: 8, background: T.rowBg, color: T.rowTxt, outline: 'none', boxSizing: 'border-box' }} />
         </div>
         <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value)}
-          style={{ padding: '7px 10px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }}>
+          style={{ padding: '7px 10px', fontSize: 11, border: `0.5px solid ${T.rowBd}`, borderRadius: 8, background: T.rowBg, color: T.rowTxt, outline: 'none' }}>
           <option value="">Todos los estados</option>
           {Object.entries(ESTADO_PRESTAMO).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
         <button onClick={() => refetch()}
-          style={{ width: 30, height: 30, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+          style={{ width: 30, height: 30, borderRadius: 8, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.rowSub }}>
           <RefreshCw size={13} />
         </button>
       </div>
 
-      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>
+      <div style={{ fontSize: 11, color: T.rowSub, marginBottom: 8 }}>
         {data?.count ?? 0} préstamos registrados
       </div>
 
       {isLoading ? (
-        <div style={{ textAlign: 'center', padding: 32, color: '#9ca3af', fontSize: 12 }}>Cargando...</div>
+        <div style={{ textAlign: 'center', padding: 32, color: T.rowSub, fontSize: 12 }}>Cargando...</div>
       ) : prestamos.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 48, color: '#c4c9d4' }}>
-          <BookOpen size={32} style={{ opacity: .3, margin: '0 auto 8px' }} />
+        <div style={{ textAlign: 'center', padding: 48, color: T.rowSub }}>
+          <BookOpen size={32} style={{ opacity: 0.3, margin: '0 auto 8px', display: 'block' }} />
           <p style={{ fontSize: 12 }}>No hay préstamos registrados</p>
         </div>
       ) : (
@@ -322,27 +328,19 @@ function TabPrestamos() {
             const hoy = new Date().toISOString().split('T')[0]
             const vencido = p.estado === 'activo' && p.fecha_devolucion_esperada < hoy
             return (
-              <div key={p.id} style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                padding: '10px 14px', borderRadius: 10,
-                border: `0.5px solid ${vencido ? '#fecaca' : '#f0f0f0'}`,
-                background: vencido ? '#fef9f9' : '#fff',
-              }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-                  background: est.bg, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, border: `0.5px solid ${vencido ? '#fecaca' : T.rowBd}`, background: vencido ? '#fef9f9' : T.ctHdrBg }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0, background: est.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <EstIcon size={16} style={{ color: est.text }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: 12, fontWeight: 600, color: '#0a1628', margin: 0 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: T.rowTxt, margin: 0 }}>
                     {p.expediente_codigo || p.expediente}
                   </p>
                   <div style={{ display: 'flex', gap: 10, marginTop: 3, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 10, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <span style={{ fontSize: 10, color: T.rowSub, display: 'flex', alignItems: 'center', gap: 3 }}>
                       <User size={9} /> {p.solicitante_nombre || '—'}
                     </span>
-                    <span style={{ fontSize: 10, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <span style={{ fontSize: 10, color: T.rowSub, display: 'flex', alignItems: 'center', gap: 3 }}>
                       <Calendar size={9} /> Vence: {p.fecha_devolucion_esperada}
                     </span>
                     {p.fecha_devolucion_real && (
@@ -364,13 +362,13 @@ function TabPrestamos() {
                           Confirmar
                         </button>
                         <button onClick={() => setDevolviendo(null)}
-                          style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', background: '#f9fafb', border: '0.5px solid #e5e7eb', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>
+                          style={{ fontSize: 11, fontWeight: 600, color: T.rowSub, background: T.rowHv, border: `0.5px solid ${T.rowBd}`, borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>
                           Cancelar
                         </button>
                       </div>
                     ) : (
                       <button onClick={() => setDevolviendo(p.id)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#002f6c', background: '#e8f1fd', border: '0.5px solid #93c5fd', borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>
+                        style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: T.accentDk, background: T.rowSel, border: `0.5px solid ${T.accentDk}50`, borderRadius: 7, padding: '4px 10px', cursor: 'pointer' }}>
                         <ArrowLeftRight size={11} /> Devolver
                       </button>
                     )
@@ -385,9 +383,8 @@ function TabPrestamos() {
   )
 }
 
-// ── Tab Copias Certificadas ───────────────────────────────────────────
-
 function TabCopias() {
+  const { T } = useTheme()
   const [modal, setModal] = useState(false)
   const [busqueda, setBusqueda] = useState('')
 
@@ -408,69 +405,60 @@ function TabCopias() {
           <Stamp size={14} /> Emitir copia certificada
         </button>
         <div style={{ position: 'relative', flex: 1, maxWidth: 340 }}>
-          <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#c4c9d4' }} />
+          <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: T.rowSub }} />
           <input placeholder="Buscar por expediente o solicitante..."
             value={busqueda} onChange={e => setBusqueda(e.target.value)}
-            style={{ width: '100%', padding: '7px 10px 7px 26px', fontSize: 11, border: '0.5px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', color: '#374151', outline: 'none' }} />
+            style={{ width: '100%', padding: '7px 10px 7px 26px', fontSize: 11, border: `0.5px solid ${T.rowBd}`, borderRadius: 8, background: T.rowBg, color: T.rowTxt, outline: 'none', boxSizing: 'border-box' }} />
         </div>
         <button onClick={() => refetch()}
-          style={{ width: 30, height: 30, borderRadius: 8, border: '0.5px solid #e5e7eb', background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
+          style={{ width: 30, height: 30, borderRadius: 8, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.rowSub }}>
           <RefreshCw size={13} />
         </button>
       </div>
 
-      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>
+      <div style={{ fontSize: 11, color: T.rowSub, marginBottom: 8 }}>
         {data?.count ?? 0} copias certificadas emitidas
       </div>
 
       {isLoading ? (
-        <div style={{ textAlign: 'center', padding: 32, color: '#9ca3af', fontSize: 12 }}>Cargando...</div>
+        <div style={{ textAlign: 'center', padding: 32, color: T.rowSub, fontSize: 12 }}>Cargando...</div>
       ) : copias.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 48, color: '#c4c9d4' }}>
-          <FileCheck size={32} style={{ opacity: .3, margin: '0 auto 8px' }} />
+        <div style={{ textAlign: 'center', padding: 48, color: T.rowSub }}>
+          <FileCheck size={32} style={{ opacity: 0.3, margin: '0 auto 8px', display: 'block' }} />
           <p style={{ fontSize: 12 }}>No hay copias certificadas emitidas</p>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {copias.map((c: any) => (
-            <div key={c.id} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '10px 14px', borderRadius: 10,
-              border: '0.5px solid #f0f0f0', background: '#fff',
-            }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: 9, flexShrink: 0,
-                background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
+            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, border: `0.5px solid ${T.rowBd}`, background: T.ctHdrBg }}
+              onMouseEnter={e => (e.currentTarget.style.background = T.rowHv)}
+              onMouseLeave={e => (e.currentTarget.style.background = T.ctHdrBg)}>
+              <div style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0, background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Stamp size={16} style={{ color: '#15803d' }} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontSize: 12, fontWeight: 600, color: '#0a1628', margin: 0 }}>
+                <p style={{ fontSize: 12, fontWeight: 600, color: T.rowTxt, margin: 0 }}>
                   {c.expediente_codigo || c.expediente}
                 </p>
                 <div style={{ display: 'flex', gap: 10, marginTop: 3, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 10, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <span style={{ fontSize: 10, color: T.rowSub, display: 'flex', alignItems: 'center', gap: 3 }}>
                     <User size={9} /> {c.solicitante_nombre}
                     {c.solicitante_cedula && ` · ${c.solicitante_cedula}`}
                   </span>
-                  <span style={{ fontSize: 10, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <span style={{ fontSize: 10, color: T.rowSub, display: 'flex', alignItems: 'center', gap: 3 }}>
                     <Eye size={9} /> {c.numero_fojas} {c.numero_fojas === 1 ? 'foja' : 'fojas'}
                   </span>
-                  <span style={{ fontSize: 10, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <span style={{ fontSize: 10, color: T.rowSub, display: 'flex', alignItems: 'center', gap: 3 }}>
                     <Calendar size={9} /> {new Date(c.fecha_emision).toLocaleDateString('es-EC')}
                   </span>
                 </div>
                 {c.motivo && (
-                  <p style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, fontStyle: 'italic' }}>
-                    {c.motivo}
-                  </p>
+                  <p style={{ fontSize: 10, color: T.rowSub, marginTop: 2, fontStyle: 'italic' }}>{c.motivo}</p>
                 )}
               </div>
-              <div style={{ flexShrink: 0 }}>
-                <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: '#f0fdf4', color: '#15803d' }}>
-                  Emitida
-                </span>
-              </div>
+              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: '#f0fdf4', color: '#15803d', flexShrink: 0 }}>
+                Emitida
+              </span>
             </div>
           ))}
         </div>
@@ -479,38 +467,32 @@ function TabCopias() {
   )
 }
 
-// ── Página principal ──────────────────────────────────────────────────
-
 export default function PrestamosCopiasCertificadasPage() {
+  const { T } = useTheme()
   const [tab, setTab] = useState<'prestamos' | 'copias'>('prestamos')
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-      {/* Header */}
       <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: '#0a1628', margin: 0 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 700, color: T.rowTxt, margin: 0 }}>
           Préstamo documental y copias certificadas
         </h1>
-        <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+        <p style={{ fontSize: 12, color: T.rowSub, marginTop: 4 }}>
           Gestión de préstamos y emisión de copias conforme Art. 60-63 de la Regla Técnica Nacional
         </p>
       </div>
 
-      {/* Tabs */}
-      <div style={{
-        display: 'flex', background: '#fff', borderRadius: 14,
-        border: '0.5px solid #e5e7eb', overflow: 'hidden', marginBottom: 16,
-      }}>
+      <div style={{ display: 'flex', background: T.ctHdrBg, borderRadius: 14, border: `0.5px solid ${T.rowBd}`, overflow: 'hidden', marginBottom: 16 }}>
         {[
-          { key: 'prestamos', label: 'Préstamo documental', icon: BookOpen, color: '#002f6c' },
+          { key: 'prestamos', label: 'Préstamo documental', icon: BookOpen,  color: T.accentDk },
           { key: 'copias',    label: 'Copias certificadas', icon: FileCheck, color: '#15803d' },
         ].map(({ key, label, icon: Icon, color }) => (
           <button key={key} onClick={() => setTab(key as any)}
             style={{
               flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               padding: '14px 20px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-              background: tab === key ? '#fff' : '#f9fafb',
-              color: tab === key ? color : '#9ca3af',
+              background: tab === key ? T.ctHdrBg : T.rowHv,
+              color: tab === key ? color : T.rowSub,
               borderBottom: `2px solid ${tab === key ? color : 'transparent'}`,
               transition: 'all .15s',
             }}>
@@ -520,11 +502,7 @@ export default function PrestamosCopiasCertificadasPage() {
         ))}
       </div>
 
-      {/* Contenido */}
-      <div style={{
-        background: '#fff', borderRadius: 14,
-        border: '0.5px solid #e5e7eb', padding: '20px 20px',
-      }}>
+      <div style={{ background: T.ctHdrBg, borderRadius: 14, border: `0.5px solid ${T.rowBd}`, padding: 20 }}>
         {tab === 'prestamos' ? <TabPrestamos /> : <TabCopias />}
       </div>
     </div>

@@ -166,7 +166,9 @@ def mis_permisos(request):
     roles    = list(request.user.roles.filter(activo=True).values_list('rol__codigo', flat=True))
     return Response({
         'usuario_id': request.user.id,
-        'es_admin':   request.user.is_superuser,
+        'es_admin':   request.user.is_superuser or request.user.roles.filter(
+            rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
+        ).exists(),
         'roles':      roles,
         'permisos':   permisos,
     })

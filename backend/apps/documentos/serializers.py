@@ -3,7 +3,8 @@ from .models import (
     TipoDocumento, Documento, Destinatario,
     FlujoAprobacion, VersionDocumento,
     BandejaDocumento, SeguimientoDocumento,
-    Tarea, DestinatarioExterno, AdjuntoDocumento
+    Tarea, DestinatarioExterno, AdjuntoDocumento,
+    ListaDistribucion, ListaDistribucionMiembro,
 )
 class TipoDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -100,6 +101,7 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
     destinatarios_ids = serializers.ListField(
         child=serializers.IntegerField(), write_only=True, required=False
     )
+    remitente_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model  = Documento
@@ -110,22 +112,38 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
             'prioridad', 'confidencial', 'requiere_respuesta',
             'fecha_limite_resp', 'responde_a', 'relacionado_con',
             'remitente_nombre', 'remitente_email', 'remitente_entidad',
-            'destinatarios_ids',
+            'destinatarios_ids', 'remitente_id',
         ]
         read_only_fields = ['id', 'numero_documento', 'uuid']
 
     def create(self, validated_data):
         from django.utils import timezone
+        from apps.usuarios.models import Usuario
         destinatarios_ids = validated_data.pop('destinatarios_ids', [])
+        remitente_id = validated_data.pop('remitente_id', None)
         doc = Documento(**validated_data)
         doc.anio = timezone.now().year
+        if remitente_id and remitente_id != getattr(doc, 'creado_por_id', None):
+            try:
+                doc.remitente = Usuario.objects.get(pk=remitente_id)
+            except Usuario.DoesNotExist:
+                pass
         doc.generar_numero()
         doc.save()
+        # Bandeja principal: va al remitente (o al creador si no hay remitente)
+        titular_bandeja = doc.remitente if doc.remitente else doc.creado_por
         BandejaDocumento.objects.create(
             documento=doc,
-            usuario=doc.creado_por,
+            usuario=titular_bandeja,
             bandeja='en_elaboracion',
         )
+        # Si el creador es distinto del titular también lo ve en su borrador
+        if doc.remitente and doc.remitente != doc.creado_por:
+            BandejaDocumento.objects.get_or_create(
+                documento=doc,
+                usuario=doc.creado_por,
+                bandeja='en_elaboracion',
+            )
         from apps.usuarios.models import Usuario
         dest_nombres = []
         for uid in destinatarios_ids:
@@ -136,12 +154,7 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
                     usuario=dest_user,
                     unidad=dest_user.unidad,
                 )
-                BandejaDocumento.objects.get_or_create(
-                    documento=doc,
-                    usuario=dest_user,
-                    bandeja='recibidos',
-                    defaults={'es_urgente': doc.prioridad != 'normal'},
-                )
+                # NO crear recibidos aquí; se crean al enviar el documento
                 dest_nombres.append(dest_user.nombre_completo)
             except Usuario.DoesNotExist:
                 pass
@@ -174,12 +187,14 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
                         usuario=dest_user,
                         unidad=dest_user.unidad,
                     )
-                    BandejaDocumento.objects.get_or_create(
-                        documento=instance,
-                        usuario=dest_user,
-                        bandeja='recibidos',
-                        defaults={'es_urgente': instance.prioridad != 'normal'},
-                    )
+                    # Solo crear/actualizar recibidos si el doc ya fue enviado
+                    if instance.estado in ('enviado', 'recibido', 'archivado'):
+                        BandejaDocumento.objects.get_or_create(
+                            documento=instance,
+                            usuario=dest_user,
+                            bandeja='recibidos',
+                            defaults={'es_urgente': instance.prioridad != 'normal'},
+                        )
                     dest_nombres.append(dest_user.nombre_completo)
                 except Usuario.DoesNotExist:
                     pass
@@ -206,6 +221,38 @@ class BandejaSerializer(serializers.ModelSerializer):
     remitente_nombre      = serializers.CharField(source='documento.remitente_nombre', read_only=True)
     remitente_email       = serializers.CharField(source='documento.remitente_email', read_only=True)
     remitente_entidad     = serializers.CharField(source='documento.remitente_entidad', read_only=True)
+    # Firmante designado (remitente interno distinto al creador)
+    firmante_nombre       = serializers.SerializerMethodField()
+    firmante_cargo        = serializers.SerializerMethodField()
+
+    # Firmante designado
+    def get_firmante_nombre(self, obj):
+        r = obj.documento.remitente
+        if r and r.pk != obj.documento.creado_por_id:
+            return r.nombre_completo
+        return None
+
+    def get_firmante_cargo(self, obj):
+        r = obj.documento.remitente
+        if r and r.pk != obj.documento.creado_por_id:
+            return getattr(r, 'cargo', '') or ''
+        return None
+
+    # Ventana de recuperación: minutos restantes (negativo = expiró)
+    minutos_para_recuperar = serializers.SerializerMethodField()
+
+    def get_minutos_para_recuperar(self, obj):
+        from django.utils import timezone
+        VENTANA = 10
+        if obj.bandeja not in ('enviados',) and obj.accion_tomada != 'reasignado':
+            return None
+        ultimo = obj.documento.seguimiento_quipux.filter(
+            etapa__in=['enviado', 'reasignado']
+        ).order_by('-creado_en').first()
+        if not ultimo:
+            return None
+        elapsed = (timezone.now() - ultimo.creado_en).total_seconds() / 60
+        return round(VENTANA - elapsed, 1)
 
     class Meta:
         model  = BandejaDocumento
@@ -217,6 +264,7 @@ class BandejaSerializer(serializers.ModelSerializer):
             'tipo_prefijo', 'unidad_origen_nombre', 'unidad_origen_siglas',
             'creado_por_nombre', 'estado_documento', 'fecha_documento', 'prioridad',
             'remitente_nombre', 'remitente_email', 'remitente_entidad',
+            'firmante_nombre', 'firmante_cargo', 'minutos_para_recuperar',
         ]
 
 
@@ -254,3 +302,37 @@ class AdjuntoSerializer(serializers.ModelSerializer):
 
     def get_url_descarga(self, obj):
         return f'/api/v1/documentos/adjuntos/{obj.id}/descargar/'
+
+
+class ListaMiembroSerializer(serializers.ModelSerializer):
+    id               = serializers.IntegerField(source='usuario.id', read_only=True)
+    nombre_completo  = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+    cargo            = serializers.CharField(source='usuario.cargo', read_only=True)
+    titulo           = serializers.CharField(source='usuario.titulo', read_only=True)
+    unidad_nombre    = serializers.CharField(source='usuario.unidad.nombre', read_only=True)
+    unidad_siglas    = serializers.CharField(source='usuario.unidad.siglas', read_only=True)
+    unidad_id        = serializers.IntegerField(source='usuario.unidad_id', read_only=True)
+
+    class Meta:
+        model  = ListaDistribucionMiembro
+        fields = ['id', 'nombre_completo', 'cargo', 'titulo', 'unidad_nombre', 'unidad_siglas', 'unidad_id', 'orden']
+
+
+class ListaDistribucionSerializer(serializers.ModelSerializer):
+    miembros         = ListaMiembroSerializer(many=True, read_only=True)
+    total_miembros   = serializers.SerializerMethodField()
+    preview_miembros = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = ListaDistribucion
+        fields = ['id', 'nombre', 'descripcion', 'activo', 'quipux_id',
+                  'total_miembros', 'preview_miembros', 'miembros']
+
+    def get_total_miembros(self, obj):
+        return obj.miembros.count()
+
+    def get_preview_miembros(self, obj):
+        return list(
+            obj.miembros.select_related('usuario')
+               .values_list('usuario__apellidos', flat=True)[:3]
+        )

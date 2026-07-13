@@ -82,7 +82,9 @@ class UsuarioResumenSerializer(serializers.ModelSerializer):
         ]
 
     def get_is_admin(self, obj):
-        return obj.is_superuser or obj.roles.filter(rol__codigo__in=['ADMIN', 'ARCHIVO'], activo=True).exists()
+        return obj.is_superuser or obj.roles.filter(
+            rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
+        ).exists()
 
 
 class UsuarioListSerializer(serializers.ModelSerializer):

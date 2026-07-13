@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
 import { usePermisosStore } from '@/store/permisosStore'
 import { useThemeStore } from '@/store/themeStore'
@@ -9,7 +10,8 @@ import NotificacionesPanel from '@/components/ui/NotificacionesPanel'
 import {
   FileText, ClipboardList,
   Archive, Users, Settings, LogOut, ChevronRight,
-  Building2, Menu, X, BarChart2, FolderTree, ArrowRight, Trash2, BookOpen, Shield, ScanLine
+  Building2, Menu, X, BarChart2, FolderTree, ArrowRight, Trash2, BookOpen, Shield, ScanLine,
+  LayoutGrid
 } from 'lucide-react'
 
 const NAV = [
@@ -57,13 +59,14 @@ export default function MainLayout() {
   const T                         = THEMES[tema].vars
   const navigate                  = useNavigate()
   const location                  = useLocation()
+  const queryClient               = useQueryClient()
 
   useEffect(() => {
     if (usuario && !cargado) cargar()
   }, [usuario, cargado])
 
   const handleLogout = async () => {
-    try { await logout() } finally { navigate('/login') }
+    try { await logout() } finally { queryClient.clear(); navigate('/login') }
   }
 
   const iniciales    = `${usuario?.nombres?.[0] ?? ''}${usuario?.apellidos?.[0] ?? ''}`.toUpperCase()
@@ -71,15 +74,17 @@ export default function MainLayout() {
     ?? NAV.flatMap(s => s.items).find(i => location.pathname.startsWith(i.to))?.label
     ?? 'SGD'
 
-  const itemsVisiblesTotales = NAV.flatMap(s => s.items).filter(
-    ({ modulo, accion }: any) => !modulo || puede(modulo, accion ?? 'ver')
-  )
-  const soloDocumentos = cargado && itemsVisiblesTotales.every(i => i.to.startsWith('/documentos'))
-  const enDocumentos   = location.pathname.startsWith('/documentos')
-  const ocultarSidebar = enDocumentos && soloDocumentos
+  const enDocumentos      = location.pathname.startsWith('/documentos')
+  // Solo ADMIN_ARCHIVO y ADMIN_GENERAL tienen 'usuarios → ver'.
+  // USUARIO y ARCHIVO no tienen acceso a usuarios → sidebar oculto.
+  const ocultarSidebar    = !puede('usuarios', 'ver')
+  const fullscreenContent = enDocumentos
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: T.pageBg, overflow: 'hidden' }}>
+    <div
+      className={T.bgAnimation === 'gradientShift' ? 'bg-gradient-animated' : ''}
+      style={{ display: 'flex', height: '100vh', background: T.gradientPrimary, overflow: 'hidden' }}
+    >
 
       {/* ── Sidebar oscuro institucional ── */}
       <aside style={{
@@ -292,10 +297,12 @@ export default function MainLayout() {
       {/* ── Contenido principal ── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* Topbar */}
+        {/* Topbar — glass effect */}
         <header style={{
-          background: T.tbBg,
-          borderBottom: `1px solid ${T.tbBorder}`,
+          background: T.glassBackground,
+          backdropFilter: T.glassBackdrop,
+          WebkitBackdropFilter: T.glassBackdrop,
+          borderBottom: T.glassBorder,
           padding: '0 20px',
           height: 56,
           display: 'flex', alignItems: 'center', gap: 12,
@@ -311,6 +318,24 @@ export default function MainLayout() {
                 flexShrink: 0,
               }}>
               {collapsed ? <Menu size={16} /> : <X size={16} />}
+            </button>
+          )}
+
+          {/* Botón "← Inicio" — visible cuando el usuario está fuera de /documentos */}
+          {!enDocumentos && (
+            <button
+              onClick={() => navigate('/documentos')}
+              title="Volver a Documentos"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 10px', borderRadius: 8,
+                border: `1px solid ${T.tbBorder}`,
+                background: T.ctHdrBg ?? '#f4f6fb',
+                cursor: 'pointer', color: T.tbSub, fontSize: 11, flexShrink: 0,
+              }}
+            >
+              <LayoutGrid size={13} />
+              <span>Inicio</span>
             </button>
           )}
 
@@ -348,9 +373,34 @@ export default function MainLayout() {
               </p>
             </div>
           </div>
+
+          {/* Botón cerrar sesión — siempre visible en topbar */}
+          <button
+            onClick={handleLogout}
+            title="Cerrar sesión"
+            style={{
+              width: 32, height: 32, borderRadius: 8,
+              border: `1px solid ${T.tbBorder}`,
+              background: T.tbBg, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: T.tbSub, flexShrink: 0, transition: 'all .15s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'rgba(218,41,28,.12)'
+              e.currentTarget.style.color = '#da291c'
+              e.currentTarget.style.borderColor = 'rgba(218,41,28,.4)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = T.tbBg
+              e.currentTarget.style.color = T.tbSub
+              e.currentTarget.style.borderColor = T.tbBorder
+            }}
+          >
+            <LogOut size={15} />
+          </button>
         </header>
 
-        <main style={{ flex: 1, overflow: ocultarSidebar ? 'hidden' : 'auto', padding: ocultarSidebar ? 0 : '20px 24px' }}>
+        <main style={{ flex: 1, overflow: fullscreenContent ? 'hidden' : 'auto', padding: fullscreenContent ? 0 : '20px 24px' }}>
           <Outlet />
         </main>
       </div>

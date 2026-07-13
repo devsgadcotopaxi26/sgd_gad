@@ -135,6 +135,14 @@ export const quipuxService = {
     URL.revokeObjectURL(link.href)
   },
 
+  obtenerUrlPDF: async (radiId: string, firmado = false): Promise<string> => {
+    const response = await api.get(`/quipux/documentos/${radiId}/pdf/`, {
+      params: firmado ? { firmado: 'true' } : {},
+      responseType: 'blob',
+    })
+    return URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }))
+  },
+
   reasignar: (radiId: string, data: { usuario_id: number; instrucciones?: string }) =>
     api.post(`/quipux/documentos/${radiId}/reasignar/`, data).then(r => r.data),
 

@@ -1,5 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/authStore'
+import { useThemeStore } from '@/store/themeStore'
+import { THEMES } from '@/constants/themes'
+import GlassCard from '@/components/ui/GlassCard'
 import { dashboardService } from '@/services/dashboard.service'
 import {
   FileText, Clock, CheckCircle, Mail, Plus,
@@ -25,10 +28,12 @@ const ESTADOS: Record<string, { bg: string; text: string; label: string }> = {
   rechazado:     { bg: '#fef2f2', text: '#dc2626', label: 'Rechazado' },
 }
 
-function KpiCard({ valor, label, color, bgColor, icono: Icon, delta, deltaType, loading }: {
+function KpiCard({ valor, label, color, bgColor, icono: Icon, delta, deltaType, loading, index = 0 }: {
   valor: number | string; label: string; color: string; bgColor: string
-  icono: any; delta: string; deltaType: 'up' | 'down' | 'warn'; loading?: boolean
+  icono: any; delta: string; deltaType: 'up' | 'down' | 'warn'; loading?: boolean; index?: number
 }) {
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
   const dc = {
     up:   { bg: '#e8f5ee', text: '#1d6a3a' },
     down: { bg: '#fef2f2', text: '#991b1b' },
@@ -36,19 +41,28 @@ function KpiCard({ valor, label, color, bgColor, icono: Icon, delta, deltaType, 
   }[deltaType]
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 p-4 relative overflow-hidden">
-      <div className="absolute top-0 left-0 w-1 h-full rounded-l-2xl" style={{ background: color }} />
-      <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-3" style={{ background: bgColor }}>
+    <div className={`kpi-card-${index} btn-liquid`} style={{
+      background: T.glassBackground,
+      backdropFilter: T.glassBackdrop,
+      WebkitBackdropFilter: T.glassBackdrop,
+      border: T.glassBorder,
+      boxShadow: T.glassShadow,
+      borderRadius: 18,
+      padding: 16,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, width: 3, height: '100%', borderRadius: '18px 0 0 18px', background: color }} />
+      <div style={{ width: 36, height: 36, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12, background: bgColor }}>
         <Icon size={17} style={{ color }} />
       </div>
       {loading ? (
-        <div className="h-8 w-16 bg-gray-100 rounded animate-pulse mb-1" />
+        <div className="shimmer" style={{ height: 32, width: 64, borderRadius: 8, marginBottom: 4 }} />
       ) : (
-        <p className="text-2xl font-bold text-gray-900 leading-none">{valor}</p>
+        <p style={{ fontSize: 24, fontWeight: 700, color: T.rowTxt, lineHeight: 1 }}>{valor}</p>
       )}
-      <p className="text-xs text-gray-400 font-medium mt-1">{label}</p>
-      <span className="inline-flex items-center text-[10px] font-bold mt-2 px-2 py-0.5 rounded-full"
-        style={{ background: dc.bg, color: dc.text }}>
+      <p style={{ fontSize: 11, color: T.rowSub, fontWeight: 500, marginTop: 4 }}>{label}</p>
+      <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: 10, fontWeight: 700, marginTop: 8, padding: '2px 8px', borderRadius: 20, background: dc.bg, color: dc.text }}>
         {delta}
       </span>
     </div>
@@ -56,17 +70,19 @@ function KpiCard({ valor, label, color, bgColor, icono: Icon, delta, deltaType, 
 }
 
 function BarChart({ data }: { data: { label: string; value: number; color: string }[] }) {
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
   const max = Math.max(...data.map(d => d.value), 1)
   return (
     <div>
       {data.map(({ label, value, color }) => (
-        <div key={label} className="flex items-center gap-3 mb-2.5 last:mb-0">
-          <span className="text-xs text-gray-500 text-right" style={{ minWidth: 100 }}>{label}</span>
-          <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div className="h-full rounded-full transition-all duration-700"
-              style={{ width: `${Math.round(value / max * 100)}%`, background: color }} />
+        <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+          <span style={{ fontSize: 11, color: T.rowSub, textAlign: 'right', minWidth: 100, flexShrink: 0 }}>{label}</span>
+          <div style={{ flex: 1, height: 8, borderRadius: 999, overflow: 'hidden', background: T.rowBd }}>
+            <div className="transition-all duration-700"
+              style={{ width: `${Math.round(value / max * 100)}%`, height: '100%', borderRadius: 999, background: color }} />
           </div>
-          <span className="text-xs font-semibold text-gray-700" style={{ minWidth: 24 }}>{value}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: T.rowTxt, minWidth: 24 }}>{value}</span>
         </div>
       ))}
     </div>
@@ -84,6 +100,8 @@ const ACCIONES = [
 
 export default function DashboardPage() {
   const { usuario } = useAuthStore()
+  const { tema } = useThemeStore()
+  const T = THEMES[tema].vars
   const now    = new Date()
   const hora   = now.getHours()
   const saludo = hora < 12 ? 'Buenos días' : hora < 19 ? 'Buenas tardes' : 'Buenas noches'
@@ -106,17 +124,16 @@ export default function DashboardPage() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <h1 className="text-xl font-bold text-gray-900">{saludo}, {usuario?.nombres}</h1>
-          <p className="text-sm text-gray-400 mt-0.5">{fecha}</p>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: T.rowTxt }}>{saludo}, {usuario?.nombres}</h1>
+          <p style={{ fontSize: 14, color: T.rowSub, marginTop: 2 }}>{fecha}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 12, fontWeight: 600, color: T.rowSub, background: T.ctHdrBg, border: `1px solid ${T.rowBd}`, borderRadius: 12, cursor: 'pointer' }}>
             <TrendingUp size={14} /> Actualizar
           </button>
-          <button className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white rounded-xl"
-            style={{ background: '#002f6c' }}>
+          <button style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 12, fontWeight: 700, color: '#fff', background: T.accentDk, borderRadius: 12, cursor: 'pointer', border: 'none' }}>
             <Plus size={14} /> Nuevo documento
           </button>
         </div>
@@ -124,16 +141,16 @@ export default function DashboardPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard valor={stats?.kpis.tramites_pendientes ?? '—'} label="Trámites pendientes"
+        <KpiCard index={0} valor={stats?.kpis.tramites_pendientes ?? '—'} label="Trámites pendientes"
           color="#002f6c" bgColor="#e8f1fd" icono={ClipboardList}
           delta="Activos en sistema" deltaType="warn" loading={isLoading} />
-        <KpiCard valor={stats?.kpis.tramites_vencen_hoy ?? '—'} label="Vencen hoy"
+        <KpiCard index={1} valor={stats?.kpis.tramites_vencen_hoy ?? '—'} label="Vencen hoy"
           color="#da291c" bgColor="#fef2f2" icono={Clock}
           delta="⚠ Requieren atención" deltaType="warn" loading={isLoading} />
-        <KpiCard valor={stats?.kpis.tramites_resueltos_mes ?? '—'} label="Resueltos este mes"
+        <KpiCard index={2} valor={stats?.kpis.tramites_resueltos_mes ?? '—'} label="Resueltos este mes"
           color="#0f6e56" bgColor="#e1f5ee" icono={CheckCircle}
           delta="Últimos 30 días" deltaType="up" loading={isLoading} />
-        <KpiCard valor={stats?.kpis.correos_sin_atender ?? '—'} label="Correos sin atender"
+        <KpiCard index={3} valor={stats?.kpis.correos_sin_atender ?? '—'} label="Correos sin atender"
           color="#854f0b" bgColor="#faeeda" icono={Mail}
           delta="Pendientes de respuesta" deltaType="down" loading={isLoading} />
       </div>
@@ -141,22 +158,22 @@ export default function DashboardPage() {
       {/* Métricas secundarias */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Docs. en revisión', value: stats?.kpis.docs_pendientes, icon: FileText,   color: '#5b3a8c', bg: '#f0ebf9' },
-          { label: 'Cumplimiento plazo', value: stats?.kpis.cumplimiento_plazo ? `${stats.kpis.cumplimiento_plazo}%` : '—', icon: Target, color: '#0f6e56', bg: '#e1f5ee' },
-          { label: 'Satisfacción ciudadana', value: stats?.kpis.satisfaccion ? `${stats.kpis.satisfaccion}/5` : '—', icon: Star, color: '#854f0b', bg: '#faeeda' },
-        ].map(({ label, value, icon: Icon, color, bg }) => (
-          <div key={label} className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: bg }}>
+          { label: 'Docs. en revisión',      value: stats?.kpis.docs_pendientes, icon: FileText, color: '#5b3a8c', bg: '#f0ebf9' },
+          { label: 'Cumplimiento plazo',      value: stats?.kpis.cumplimiento_plazo ? `${stats.kpis.cumplimiento_plazo}%` : '—', icon: Target, color: '#0f6e56', bg: '#e1f5ee' },
+          { label: 'Satisfacción ciudadana',  value: stats?.kpis.satisfaccion ? `${stats.kpis.satisfaccion}/5` : '—', icon: Star, color: '#854f0b', bg: '#faeeda' },
+        ].map(({ label, value, icon: Icon, color, bg }, idx) => (
+          <GlassCard key={label} className={`kpi-card-${idx + 4}`} padding="16px" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: bg }}>
               <Icon size={17} style={{ color }} />
             </div>
             <div>
               {isLoading
-                ? <div className="h-6 w-12 bg-gray-100 rounded animate-pulse mb-1" />
-                : <p className="text-xl font-bold text-gray-900">{value ?? '—'}</p>
+                ? <div className="shimmer" style={{ height: 24, width: 48, borderRadius: 6, marginBottom: 4 }} />
+                : <p style={{ fontSize: 20, fontWeight: 700, color: T.rowTxt }}>{value ?? '—'}</p>
               }
-              <p className="text-xs text-gray-400">{label}</p>
+              <p style={{ fontSize: 11, color: T.rowSub }}>{label}</p>
             </div>
-          </div>
+          </GlassCard>
         ))}
       </div>
 
@@ -164,99 +181,94 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
         {/* Gráfico categorías */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-            <span className="text-sm font-bold text-gray-900 flex items-center gap-2">
-              <BarChart2 size={15} style={{ color: '#002f6c' }} /> Trámites por categoría (últimos 30 días)
+        <GlassCard className="lg:col-span-2 animate-fade-in-up" padding="0" style={{ overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: T.glassBorder }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <BarChart2 size={15} style={{ color: T.accentDk }} /> Trámites por categoría (últimos 30 días)
             </span>
           </div>
-          <div className="p-5">
+          <div style={{ padding: 20 }}>
             {isLoading ? (
-              <div className="space-y-3">
-                {[1,2,3,4].map(i => <div key={i} className="h-4 bg-gray-100 rounded animate-pulse" />)}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {[1,2,3,4].map(i => <div key={i} className="shimmer" style={{ height: 16, borderRadius: 8 }} />)}
               </div>
             ) : categoriasData.length > 0 ? (
               <BarChart data={categoriasData} />
             ) : (
-              <p className="text-sm text-gray-400 text-center py-6">Sin datos de trámites aún</p>
+              <p style={{ fontSize: 13, color: T.rowSub, textAlign: 'center', padding: '24px 0' }}>Sin datos de trámites aún</p>
             )}
           </div>
-
-          {/* Mini chart docs 7 días */}
-          <div className="px-5 pb-5">
-            <p className="text-xs font-bold text-gray-500 mb-3 flex items-center gap-2">
+          <div style={{ padding: '0 20px 20px' }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: T.rowSub, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
               <TrendingUp size={13} /> Documentos creados últimos 7 días
             </p>
-            <div className="flex items-end gap-2 h-16">
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 64 }}>
               {(stats?.docs_7d ?? Array(7).fill({ dia: '—', total: 0 })).map((d, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                  <div className="w-full rounded-t-md transition-all"
-                    style={{
-                      height: `${Math.round(d.total / docs7dMax * 100)}%`,
-                      minHeight: 4,
-                      background: i === 6 ? '#002f6c' : '#b5d4f4',
-                    }} />
-                  <span className="text-[9px] text-gray-400">{d.dia}</span>
+                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                  <div style={{
+                    width: '100%', borderRadius: '4px 4px 0 0', transition: 'height .7s ease',
+                    height: `${Math.round(d.total / docs7dMax * 100)}%`, minHeight: 4,
+                    background: i === 6 ? T.accentDk : T.rowBlNr,
+                  }} />
+                  <span style={{ fontSize: 9, color: T.rowSub }}>{d.dia}</span>
                 </div>
               ))}
             </div>
           </div>
-        </div>
+        </GlassCard>
 
         {/* Panel derecho */}
-        <div className="flex flex-col gap-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
           {/* Acciones rápidas */}
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="flex items-center gap-2 px-5 py-3.5 border-b border-gray-50">
-              <Zap size={14} style={{ color: '#002f6c' }} />
-              <span className="text-sm font-bold text-gray-900">Acciones rápidas</span>
+          <GlassCard padding="0" style={{ overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 20px', borderBottom: T.glassBorder }}>
+              <Zap size={14} style={{ color: T.accentDk }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt }}>Acciones rápidas</span>
             </div>
-            <div className="grid grid-cols-2 gap-2 p-3">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: 12 }}>
               {ACCIONES.map(({ label, icon: Icon, bg, color }) => (
-                <button key={label}
-                  className="flex items-center gap-2 p-2.5 rounded-xl text-left transition-colors hover:opacity-80"
-                  style={{ background: bg }}>
-                  <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ background: 'rgba(255,255,255,0.7)' }}>
+                <button key={label} className="btn-liquid"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 10, borderRadius: 12, border: 'none', cursor: 'pointer', background: bg }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: 'rgba(255,255,255,0.7)' }}>
                     <Icon size={14} style={{ color }} />
                   </div>
-                  <span className="text-xs font-semibold leading-tight" style={{ color }}>{label}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color, textAlign: 'left', lineHeight: 1.3 }}>{label}</span>
                 </button>
               ))}
             </div>
-          </div>
+          </GlassCard>
 
           {/* Próximos a vencer */}
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden flex-1">
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-              <span className="text-sm font-bold text-gray-900 flex items-center gap-2">
+          <GlassCard padding="0" style={{ overflow: 'hidden', flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', padding: '14px 20px', borderBottom: T.glassBorder }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <AlertTriangle size={14} style={{ color: '#da291c' }} /> Próximos a vencer
               </span>
             </div>
             {isLoading ? (
-              <div className="p-4 space-y-3">
-                {[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />)}
+              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {[1,2,3].map(i => <div key={i} className="shimmer" style={{ height: 40, borderRadius: 10 }} />)}
               </div>
             ) : (stats?.proximos_vencer ?? []).length === 0 ? (
-              <div className="flex items-center justify-center py-8 text-gray-400">
-                <p className="text-xs">Sin vencimientos próximos</p>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 0' }}>
+                <p style={{ fontSize: 11, color: T.rowSub }}>Sin vencimientos próximos</p>
               </div>
             ) : (
               (stats?.proximos_vencer ?? []).map(({ numero, titulo, unidad, dias }) => (
-                <div key={numero} className="flex items-center gap-3 px-5 py-2.5 border-b border-gray-50 last:border-0">
-                  <div className="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold flex-shrink-0"
-                    style={{ background: dias <= 0 ? '#fef2f2' : '#fff7ed', color: dias <= 0 ? '#991b1b' : '#92400e' }}>
+                <div key={numero} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', borderBottom: `1px solid ${T.pnMetaBd}` }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0,
+                    background: dias <= 0 ? '#fef2f2' : '#fff7ed', color: dias <= 0 ? '#991b1b' : '#92400e' }}>
                     {dias <= 0 ? 'Hoy' : `${dias}d`}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-gray-900 truncate">{titulo}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">{unidad}</p>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 11, fontWeight: 500, color: T.rowTxt, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titulo}</p>
+                    <p style={{ fontSize: 10, color: T.rowSub, marginTop: 2 }}>{unidad}</p>
                   </div>
                 </div>
               ))
             )}
-          </div>
+          </GlassCard>
         </div>
       </div>
 
@@ -264,85 +276,95 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
         {/* Trámites recientes */}
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-            <span className="text-sm font-bold text-gray-900 flex items-center gap-2">
-              <ClipboardList size={14} style={{ color: '#002f6c' }} /> Trámites recientes
+        <GlassCard padding="0" style={{ overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', padding: '14px 20px', borderBottom: T.glassBorder }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ClipboardList size={14} style={{ color: T.accentDk }} /> Trámites recientes
             </span>
           </div>
           {isLoading ? (
-            <div className="p-4 space-y-3">{[1,2,3].map(i => <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />)}</div>
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {[1,2,3].map(i => <div key={i} className="shimmer" style={{ height: 48, borderRadius: 10 }} />)}
+            </div>
           ) : (stats?.tramites_recientes ?? []).length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-gray-400 text-xs">Sin trámites registrados</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 0' }}>
+              <p style={{ fontSize: 11, color: T.rowSub }}>Sin trámites registrados</p>
+            </div>
           ) : (
             (stats?.tramites_recientes ?? []).map(t => {
               const s = ESTADOS[t.estado] ?? ESTADOS.ingresado
               return (
-                <div key={t.id} className="flex items-center gap-3 px-5 py-3 border-b border-gray-50 last:border-0">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold font-mono" style={{ color: '#002f6c' }}>{t.numero}</p>
-                    <p className="text-xs font-medium text-gray-900 truncate mt-0.5">{t.asunto}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">{t.persona} · {t.unidad}</p>
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: `1px solid ${T.pnMetaBd}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: T.accentDk }}>{t.numero}</p>
+                    <p style={{ fontSize: 11, fontWeight: 500, color: T.rowTxt, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{t.asunto}</p>
+                    <p style={{ fontSize: 10, color: T.rowSub, marginTop: 2 }}>{t.persona} · {t.unidad}</p>
                   </div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                    style={{ background: s.bg, color: s.text }}>{s.label}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, flexShrink: 0, background: s.bg, color: s.text }}>{s.label}</span>
                 </div>
               )
             })
           )}
-        </div>
+        </GlassCard>
 
         {/* Documentos recientes */}
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-50">
-            <span className="text-sm font-bold text-gray-900 flex items-center gap-2">
-              <FileText size={14} style={{ color: '#002f6c' }} /> Documentos recientes
+        <GlassCard padding="0" style={{ overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', padding: '14px 20px', borderBottom: T.glassBorder }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FileText size={14} style={{ color: T.accentDk }} /> Documentos recientes
             </span>
           </div>
           {isLoading ? (
-            <div className="p-4 space-y-3">{[1,2,3].map(i => <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />)}</div>
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {[1,2,3].map(i => <div key={i} className="shimmer" style={{ height: 48, borderRadius: 10 }} />)}
+            </div>
           ) : (stats?.docs_recientes ?? []).length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-gray-400 text-xs">Sin documentos registrados</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 0' }}>
+              <p style={{ fontSize: 11, color: T.rowSub }}>Sin documentos registrados</p>
+            </div>
           ) : (
             (stats?.docs_recientes ?? []).map(d => {
               const s = ESTADOS[d.estado] ?? ESTADOS.borrador
               return (
-                <div key={d.id} className="flex items-center gap-3 px-5 py-3 border-b border-gray-50 last:border-0">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold font-mono" style={{ color: '#002f6c' }}>{d.numero}</p>
-                    <p className="text-xs font-medium text-gray-900 truncate mt-0.5">{d.asunto}</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">{d.tipo} · {d.unidad}</p>
+                <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: `1px solid ${T.pnMetaBd}` }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: T.accentDk }}>{d.numero}</p>
+                    <p style={{ fontSize: 11, fontWeight: 500, color: T.rowTxt, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{d.asunto}</p>
+                    <p style={{ fontSize: 10, color: T.rowSub, marginTop: 2 }}>{d.tipo} · {d.unidad}</p>
                   </div>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                    style={{ background: s.bg, color: s.text }}>{s.label}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, flexShrink: 0, background: s.bg, color: s.text }}>{s.label}</span>
                 </div>
               )
             })
           )}
-        </div>
+        </GlassCard>
 
         {/* Actividad reciente */}
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-gray-50">
-            <Activity size={14} style={{ color: '#002f6c' }} />
-            <span className="text-sm font-bold text-gray-900">Actividad reciente</span>
+        <GlassCard padding="0" style={{ overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 20px', borderBottom: T.glassBorder }}>
+            <Activity size={14} style={{ color: T.accentDk }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt }}>Actividad reciente</span>
           </div>
           {isLoading ? (
-            <div className="p-4 space-y-3">{[1,2,3,4].map(i => <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />)}</div>
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {[1,2,3,4].map(i => <div key={i} className="shimmer" style={{ height: 40, borderRadius: 10 }} />)}
+            </div>
           ) : (stats?.actividad ?? []).length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-gray-400 text-xs">Sin actividad reciente</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 0' }}>
+              <p style={{ fontSize: 11, color: T.rowSub }}>Sin actividad reciente</p>
+            </div>
           ) : (
             (stats?.actividad ?? []).map((a, i) => (
-              <div key={i} className="flex items-start gap-3 px-5 py-3 border-b border-gray-50 last:border-0">
-                <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{ background: a.color }} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-700 leading-relaxed truncate">{a.texto}</p>
-                  <p className="text-[10px] text-gray-400 mt-0.5">{a.fecha} · {a.unidad}</p>
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 20px', borderBottom: `1px solid ${T.pnMetaBd}` }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', marginTop: 4, flexShrink: 0, background: a.color }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 11, color: T.rowTxt, lineHeight: 1.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.texto}</p>
+                  <p style={{ fontSize: 10, color: T.rowSub, marginTop: 2 }}>{a.fecha} · {a.unidad}</p>
                 </div>
               </div>
             ))
           )}
-        </div>
+        </GlassCard>
       </div>
     </div>
   )

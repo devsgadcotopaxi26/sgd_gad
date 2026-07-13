@@ -83,7 +83,8 @@ export interface CrearDocumento {
   requiere_respuesta?: boolean
   fecha_limite_resp?: string
   destinatarios_ids?: number[]
-  palabras_clave?: string[] 
+  palabras_clave?: string[]
+  remitente_id?: number | null
 }
 
 export const documentosService = {
@@ -98,6 +99,15 @@ export const documentosService = {
 
   actualizar: (id: number, data: Partial<CrearDocumento>) =>
     api.patch<Documento>(`/documentos/${id}/`, data).then(r => r.data),
+
+  enviar: (id: number) =>
+    api.post(`/documentos/${id}/enviar/`).then(r => r.data),
+
+  reasignarA: (id: number, usuarioId: number, unidadId: number | null) =>
+    api.post(`/documentos/${id}/reasignar_a/`, { usuario_id: usuarioId, unidad_id: unidadId }).then(r => r.data),
+
+  recuperar: (id: number) =>
+    api.post<{ detail: string }>(`/documentos/${id}/recuperar/`).then(r => r.data),
 
   cambiarEstado: (id: number, estado: string) =>
     api.post(`/documentos/${id}/cambiar_estado/`, { estado }).then(r => r.data),
@@ -165,4 +175,45 @@ imprimirPDF: async (id: number) => {
   // Liberar blob URL después de que cargue la ventana
   setTimeout(() => URL.revokeObjectURL(url), 10000)
 },
+}
+
+export interface ListaMiembro {
+  id: number
+  nombre_completo: string
+  cargo: string
+  titulo: string
+  unidad_nombre: string
+  unidad_siglas: string
+  unidad_id: number
+  orden: number
+}
+
+export interface ListaDistribucion {
+  id: number
+  nombre: string
+  descripcion: string
+  activo: boolean
+  quipux_id: number | null
+  total_miembros: number
+  preview_miembros: string[]
+  miembros: ListaMiembro[]
+}
+
+export const listasService = {
+  buscar: (q: string) =>
+    api.get<ListaDistribucion[]>('/documentos/listas-distribucion/buscar/', { params: { q } })
+       .then(r => r.data),
+
+  listar: () =>
+    api.get<{ results: ListaDistribucion[] }>('/documentos/listas-distribucion/')
+       .then(r => r.data.results),
+
+  crear: (data: { nombre: string; descripcion?: string }) =>
+    api.post<ListaDistribucion>('/documentos/listas-distribucion/', data).then(r => r.data),
+
+  actualizar: (id: number, data: Partial<{ nombre: string; descripcion: string; activo: boolean }>) =>
+    api.patch<ListaDistribucion>(`/documentos/listas-distribucion/${id}/`, data).then(r => r.data),
+
+  eliminar: (id: number) =>
+    api.delete(`/documentos/listas-distribucion/${id}/`).then(r => r.data),
 }

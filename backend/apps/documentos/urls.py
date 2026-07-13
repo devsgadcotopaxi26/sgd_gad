@@ -5,14 +5,16 @@ from .views import (
     BandejaViewSet, EnviarDocumentoView,
     DocumentoPDFView, AdjuntoViewSet, DigitalizacionMasivaView,
     GenerarTokenFirmaECView, FirmaECCallbackView, FirmaFisicaView,
+    ListaDistribucionViewSet,
 )
 
 router = DefaultRouter()
-router.register('tipos',   TipoDocumentoViewSet, basename='tipo-documento')
-router.register('bandeja', BandejaViewSet,        basename='bandeja')
-router.register('enviar',  EnviarDocumentoView,   basename='enviar-documento')
-router.register('adjuntos', AdjuntoViewSet, basename='adjunto')
-router.register('',        DocumentoViewSet,      basename='documento')
+router.register('tipos',               TipoDocumentoViewSet,    basename='tipo-documento')
+router.register('bandeja',             BandejaViewSet,          basename='bandeja')
+router.register('enviar',              EnviarDocumentoView,     basename='enviar-documento')
+router.register('adjuntos',            AdjuntoViewSet,          basename='adjunto')
+router.register('listas-distribucion', ListaDistribucionViewSet, basename='lista-distribucion')
+router.register('',                    DocumentoViewSet,        basename='documento')
 
 urlpatterns = [
     # PDF

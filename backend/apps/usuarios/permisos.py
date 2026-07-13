@@ -3,7 +3,34 @@ Sistema de permisos por rol para el SGD GAD Cotopaxi
 """
 
 PERMISOS_ROL = {
-    'ADMIN': {
+    # ── Rol 1: USUARIO — crea y gestiona documentos, sin menús de módulos ──
+    'USUARIO': {
+        'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
+    },
+
+    # ── Rol 2: ARCHIVO — funcionario que trabaja con trámites y archivo ────
+    'ARCHIVO': {
+        'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
+        'tramites':      ['ver', 'crear', 'reasignar'],
+        'archivo':       ['ver', 'crear', 'editar', 'transferir'],
+        'organigrama':   ['ver'],
+        'reportes':      ['ver'],
+        'ajustes':       [],
+    },
+
+    # ── Rol 3: ADMIN_ARCHIVO — administrador del módulo de archivo ─────────
+    'ADMIN_ARCHIVO': {
+        'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
+        'tramites':      ['ver', 'crear', 'editar', 'resolver', 'reasignar'],
+        'archivo':       ['ver', 'crear', 'editar', 'eliminar', 'transferir'],
+        'organigrama':   ['ver', 'editar'],
+        'usuarios':      ['ver'],
+        'reportes':      ['ver', 'generar'],
+        'ajustes':       [],
+    },
+
+    # ── Rol 4: ADMIN_GENERAL — administrador completo del sistema ──────────
+    'ADMIN_GENERAL': {
         'documentos':    ['ver', 'crear', 'editar', 'eliminar', 'firmar', 'enviar', 'archivar'],
         'tramites':      ['ver', 'crear', 'editar', 'eliminar', 'resolver', 'reasignar'],
         'archivo':       ['ver', 'crear', 'editar', 'eliminar', 'transferir'],
@@ -12,78 +39,7 @@ PERMISOS_ROL = {
         'reportes':      ['ver', 'generar'],
         'ajustes':       ['ver', 'editar'],
     },
-    'PREFECTO': {
-        'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
-        'tramites':      ['ver', 'resolver', 'reasignar'],
-        'archivo':       ['ver'],
-        'usuarios':      ['ver'],
-        'organigrama':   ['ver'],
-        'reportes':      ['ver', 'generar'],
-        'ajustes':       [],
-    },
-    'SECRETARIO': {
-        'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
-        'tramites':      ['ver', 'crear', 'reasignar'],
-        'archivo':       ['ver', 'crear', 'archivar'],
-        'usuarios':      ['ver'],
-        'organigrama':   ['ver'],
-        'reportes':      ['ver', 'generar'],
-        'ajustes':       [],
-    },
-    'DIRECTOR': {
-        'documentos':    ['ver', 'crear', 'editar', 'firmar', 'enviar', 'archivar'],
-        'tramites':      ['ver', 'crear', 'editar', 'resolver', 'reasignar'],
-        'archivo':       ['ver', 'crear'],
-        'usuarios':      ['ver'],
-        'organigrama':   ['ver'],
-        'reportes':      ['ver', 'generar'],
-        'ajustes':       [],
-    },
-    'ANALISTA': {
-        'documentos':    ['ver', 'crear', 'editar', 'enviar'],
-        'tramites':      ['ver', 'crear', 'editar', 'resolver'],
-        'archivo':       ['ver', 'crear'],
-        'usuarios':      ['ver'],
-        'organigrama':   ['ver'],
-        'reportes':      ['ver'],
-        'ajustes':       [],
-    },
-    'ASISTENTE': {
-        'documentos':    ['ver', 'crear', 'editar'],
-        'tramites':      ['ver', 'crear'],
-        'archivo':       ['ver'],
-        'usuarios':      ['ver'],
-        'organigrama':   ['ver'],
-        'reportes':      ['ver'],
-        'ajustes':       [],
-    },
-    'RECEPCION': {
-        'documentos':    ['ver'],
-        'tramites':      ['ver', 'crear'],
-        'archivo':       ['ver'],
-        'usuarios':      [],
-        'organigrama':   ['ver'],
-        'reportes':      [],
-        'ajustes':       [],
-    },
-    'ARCHIVO': {
-        'documentos':    ['ver', 'archivar'],
-        'tramites':      ['ver'],
-        'archivo':       ['ver', 'crear', 'editar', 'transferir'],
-        'usuarios':      [],
-        'organigrama':   ['ver'],
-        'reportes':      ['ver', 'generar'],
-        'ajustes':       [],
-    },
-    'SOLO_LECTURA': {
-        'documentos':    ['ver'],
-        'tramites':      ['ver'],
-        'archivo':       ['ver'],
-        'usuarios':      [],
-        'organigrama':   ['ver'],
-        'reportes':      ['ver'],
-        'ajustes':       [],
-    },
+
 }
 
 
@@ -99,16 +55,15 @@ def get_permisos_usuario(usuario) -> dict:
                 permisos[modulo] = set()
             permisos[modulo].update(acciones)
 
-    # Admin siempre tiene todo
+    # Superusuario Django siempre tiene todos los permisos de ADMIN_GENERAL
     if usuario.is_superuser:
-        for modulo in PERMISOS_ROL['ADMIN']:
-            permisos[modulo] = set(PERMISOS_ROL['ADMIN'][modulo])
+        for modulo, acciones in PERMISOS_ROL['ADMIN_GENERAL'].items():
+            permisos[modulo] = set(acciones)
 
-    # Fallback: cualquier funcionario sin roles asignados recibe solo
-    # acceso de lectura a documentos (Documentos + Quipux Histórico).
-    # El admin debe asignar roles explícitos para dar más acceso.
-    if not permisos and getattr(usuario, 'tipo', '') == 'funcionario':
-        permisos['documentos'] = {'ver'}
+    # Fallback: cualquier usuario sin roles asignados recibe permisos de USUARIO.
+    if not permisos:
+        for modulo, acciones in PERMISOS_ROL['USUARIO'].items():
+            permisos[modulo] = set(acciones)
 
     return {modulo: list(acciones) for modulo, acciones in permisos.items()}
 

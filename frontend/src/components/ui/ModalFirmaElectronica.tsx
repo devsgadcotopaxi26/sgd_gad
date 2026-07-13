@@ -145,7 +145,7 @@ export default function ModalFirmaElectronica({ documentoId, numeroDocumento, on
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.40)', backdropFilter: 'blur(8px)' }}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl flex flex-col">
 
         {/* Header */}

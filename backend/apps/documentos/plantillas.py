@@ -1,51 +1,51 @@
 """
-Plantillas de documentos oficiales con membrete institucional
-GAD Provincial de Cotopaxi — Hoja membretada 2023-2027
-
-Logos incrustados como data-URI para que WeasyPrint no dependa
-de URLs externas que pueden fallar en generacion de PDF.
+Plantilla oficial SGD-GAD Cotopaxi — formato Quipux.
+Medidas obtenidas del PDF Quipux original:
+  - Fuente: Times New Roman / Liberation Serif 11pt, line-height 1.18
+  - Margen izquierdo: 40mm, derecho: 30mm
+  - Número/Fecha: derecha, NEGRILLA
+  - PARA: span label + div.dest con padding-left 56pt
+  - Párrafos: margin-bottom 11pt
+  - Firma electrónica: rojo #c00000, negrilla cursiva, margin-top 22pt
+  - Firma cargo: negrilla (sin mayúsculas forzadas)
 """
 import base64
 import os
 
 from django.utils import timezone
 
-# ── Logos embebidos como data-URI ──────────────────────────────────────────
+# ── Logos ──────────────────────────────────────────────────────────────────
 _LOGOS_DIR = os.path.join(os.path.dirname(__file__), 'logos')
 
 
 def _file_uri(filename: str) -> str:
-    """Devuelve URI file:// absoluta para que WeasyPrint cargue el archivo sin red."""
     p = os.path.join(_LOGOS_DIR, filename)
     return f'file://{p}' if os.path.exists(p) else ''
 
 
 def _b64(path: str, mime: str) -> str:
     try:
-        data = open(path, 'rb').read()
-        return f'data:{mime};base64,{base64.b64encode(data).decode()}'
+        return f'data:{mime};base64,{base64.b64encode(open(path,"rb").read()).decode()}'
     except Exception:
         return ''
 
 
-# WeasyPrint carga file:// sin problema; data-URI como fallback
-ESCUDO_SRC    = _file_uri('escudo_gad.png')      or _b64(os.path.join(_LOGOS_DIR, 'escudo_gad.png'), 'image/png')
-LOGO_PREF_SRC = _file_uri('logo_prefectura.svg') or _b64(os.path.join(_LOGOS_DIR, 'logo_prefectura.svg'), 'image/svg+xml')
+ESCUDO_SRC      = _file_uri('escudo_gad.png') or _b64(
+    os.path.join(_LOGOS_DIR, 'escudo_gad.png'), 'image/png')
+LOGO_PREF_SRC   = _file_uri('logo_prefectura.svg') or _b64(
+    os.path.join(_LOGOS_DIR, 'logo_prefectura.svg'), 'image/svg+xml')
+MARCA_AGUA_SRC  = _file_uri('marca_agua_quipux.png') or _b64(
+    os.path.join(_LOGOS_DIR, 'marca_agua_quipux.png'), 'image/png')
 
-# ── Constantes de tipo de documento ───────────────────────────────────────
-ACENTO_TIPO = {
-    'OFI': '#002f6c', 'MEM': '#854f0b', 'CIR': '#da291c',
-    'RES': '#534ab7', 'INF': '#0f6e56', 'CON': '#15803d',
-    'CER': '#92400e', 'ACT': '#0369a1',
+# ── Constantes ─────────────────────────────────────────────────────────────
+# Primera letra mayúscula — igual que Quipux
+NOMBRE_TIPO = {
+    'OFI': 'Oficio',       'MEM': 'Memorando',    'CIR': 'Circular',
+    'RES': 'Resolución',   'INF': 'Informe',       'CON': 'Convocatoria',
+    'CER': 'Certificado',  'ACT': 'Acta',
 }
 
-NOMBRE_TIPO_LARGO = {
-    'OFI': 'OFICIO',       'MEM': 'MEMORANDO',    'CIR': 'CIRCULAR',
-    'RES': 'RESOLUCIÓN',   'INF': 'INFORME',       'CON': 'CONVOCATORIA',
-    'CER': 'CERTIFICADO',  'ACT': 'ACTA',
-}
-
-# Tipos que usan formato PARA/ASUNTO (internos), el resto usa Señor/a (externos)
+# Internos solo muestran tabla PARA/ASUNTO (sin DE:)
 TIPOS_INTERNOS = {'MEM', 'CIR', 'INF', 'CON', 'ACT'}
 
 MESES_ES = {
@@ -65,329 +65,326 @@ def _fecha_es(dt) -> str:
     return s
 
 
+def _iniciales(usuario) -> str:
+    nombres   = (getattr(usuario, 'nombres',   '') or '').strip().split()
+    apellidos = (getattr(usuario, 'apellidos', '') or '').strip().split()
+    ini_n = nombres[0][0].lower()   if nombres   else ''
+    ini_a = apellidos[0][0].lower() if apellidos else ''
+    return f'{ini_n}{ini_a}'
+
+
+# ── CSS ────────────────────────────────────────────────────────────────────
+# Todas las medidas en mm/pt para que WeasyPrint las respete exactamente.
+_CSS = """
+  @page {
+    size: A4;
+    /* 44mm = 5mm pad-top + ~25mm logo + 3mm pad-bot + 2pt línea + ~10mm respiro */
+    margin: 44mm 0 24mm 0;
+    @top-center {
+      content: element(page-header);
+    }
+    @bottom-center {
+      content: element(page-footer);
+    }
+    @bottom-right {
+      content: counter(page) "/" counter(pages);
+      font-family: 'Liberation Sans', Carlito, Arial, sans-serif;
+      font-size: 8pt;
+      color: #666;
+      padding-right: 10mm;
+      padding-bottom: 4mm;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { margin: 0; padding: 0; }
+
+  /* ── MARCA DE AGUA (fixed → aparece en todas las páginas) ── */
+  .marca-agua {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 11cm;
+    opacity: 0.04;
+    z-index: 0;
+  }
+
+  /* ── ENCABEZADO (running element → se repite en cada página) ── */
+  /* width: 210mm forzado porque @top-center en WeasyPrint puede acotar el ancho */
+  .page-header {
+    position: running(page-header);
+    width: 210mm;
+    display: block;
+  }
+  .encabezado {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5mm 10mm 3mm 10mm;
+  }
+  /* Altura máxima explícita para que el logo no desborde el margen @page */
+  .enc-izq { width: 20mm; max-height: 22mm; object-fit: contain; flex-shrink: 0; }
+  .enc-der { width: 45mm; max-height: 22mm; object-fit: contain; flex-shrink: 0; }
+
+  /* ── PIE DE PÁGINA (running element → se repite en cada página) ── */
+  .page-footer {
+    position: running(page-footer);
+    width: 210mm;
+    display: block;
+    padding: 0 10mm 3mm 10mm;
+  }
+
+  /* ── LÍNEA SEPARADORA ──
+     Encabezado: de borde a borde (margin: 0 en .page-header sin padding).
+     Pie:        con 10mm de margen a cada lado (hereda el padding del .page-footer).
+     Orden: roja izquierda | pequeño separador | azul derecha  */
+  .lineas   { display: flex; margin: 0; }
+  .lin-roja { height: 2pt; flex: 1; background: #da291c; }
+  .lin-gap  { flex: 0 0 3pt; }
+  .lin-azul { height: 2pt; flex: 1; background: #002f6c; }
+
+  /* ── CONTENIDO (flujo normal; los márgenes @page evitan el solapamiento) ── */
+  .contenido {
+    padding: 5mm 30mm 5mm 40mm;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ── CUERPO DEL DOCUMENTO (formato Quipux exacto) ── */
+  .memo-body {
+    font-family: "Times New Roman", "Liberation Serif", Times, serif;
+    font-size: 11pt;
+    line-height: 1.18;
+    text-align: justify;
+    color: #000;
+  }
+  .memo-body p { margin: 0 0 11pt 0; }
+
+  /* Número de documento y fecha: derecha, NEGRILLA */
+  .memo-body .enc { text-align: right; font-weight: bold; }
+
+  /* PARA: bloque con sangría izquierda 56pt (medida exacta Quipux) */
+  .memo-body .para { margin-top: 22pt; }
+  .memo-body .para .lbl { font-weight: bold; }
+  .memo-body .dest { padding-left: 56pt; margin-top: 2pt; }
+  .memo-body .dest .item { margin-bottom: 11pt; }
+  .memo-body .dest .item:last-child { margin-bottom: 0; }
+  .memo-body .dest .cargo { font-weight: bold; }
+
+  /* ASUNTO */
+  .memo-body .asunto { margin: 14pt 0; }
+  .memo-body .asunto .lbl { font-weight: bold; }
+
+  /* Listas dentro del cuerpo */
+  .memo-body ul, .memo-body ol { margin: 0 0 11pt 20pt; }
+  .memo-body li { margin-bottom: 4pt; }
+
+  /* Cuerpo: espacio inferior antes del bloque firma */
+  .cuerpo-doc { margin-bottom: 11pt; }
+
+  /* ── BLOQUE SEÑOR/A (oficios externos) ── */
+  .bloque-senor { margin-bottom: 14pt; line-height: 1.18; }
+  .presente { font-style: normal; }
+  .dest-nombre { font-weight: normal; }
+  .dest-cargo  { font-weight: bold; }
+  .asunto-ofi  { margin-bottom: 14pt; }
+
+  /* ── FIRMA ── */
+  /* Línea manual para firma física (docs sin firma electrónica) */
+  .linea-firma {
+    width: 55mm;
+    border-top: 1pt solid #000;
+    margin: 38pt 0 4pt;
+  }
+
+  /* "Documento firmado electrónicamente": AZUL institucional, NEGRILLA, CURSIVA */
+  .firma-elec-texto {
+    color: #002f6c;
+    font-weight: bold;
+    font-style: italic;
+    margin-top: 22pt;
+    margin-bottom: 4pt;
+  }
+
+  /* Nombre firmante: regular */
+  .firma-nombre { font-weight: normal; margin: 0; line-height: 1.18; }
+  /* Cargo y unidad: negrilla */
+  .firma-cargo  { font-weight: bold;   margin: 0; line-height: 1.18; }
+
+  /* Iniciales del redactor */
+  .iniciales {
+    font-size: 8pt;
+    color: #888;
+    margin-top: 20pt;
+    letter-spacing: 1pt;
+  }
+
+  .pie-texto {
+    font-family: 'Liberation Sans', Carlito, Arial, sans-serif;
+    font-size: 7pt;
+    color: #333;
+    text-align: center;
+    line-height: 1.6;
+    margin-top: 3pt;
+  }
+"""
+
+
 def html_documento_oficial(doc, pre_firma: bool = False) -> str:
     prefijo     = doc.tipo_documento.prefijo_numeracion or 'OFI'
-    acento      = ACENTO_TIPO.get(prefijo, '#002f6c')
-    nombre_tipo = NOMBRE_TIPO_LARGO.get(prefijo, doc.tipo_documento.nombre.upper())
+    nombre_tipo = NOMBRE_TIPO.get(prefijo, doc.tipo_documento.nombre)
     es_interno  = prefijo in TIPOS_INTERNOS
 
-    fecha_doc   = _fecha_es(doc.fecha_elaboracion)
-    firmante    = doc.firmado_por.nombre_completo if doc.firmado_por else doc.creado_por.nombre_completo
-    cargo_fir   = getattr(doc.firmado_por or doc.creado_por, 'cargo', '') or ''
-    unidad_orig = doc.unidad_origen.nombre if doc.unidad_origen else ''
+    fecha_doc = _fecha_es(doc.fecha_elaboracion)
 
-    destino_nombre = (
-        doc.unidad_destino.nombre if doc.unidad_destino else (doc.remitente_entidad or 'A quien corresponda')
+    # Firmante: remitente > firmado_por > creado_por
+    firmante_obj = doc.remitente or doc.firmado_por or doc.creado_por
+    firmante     = firmante_obj.nombre_completo if firmante_obj else ''
+    cargo_fir    = getattr(firmante_obj, 'cargo', '') or ''
+    unidad_orig  = doc.unidad_origen.nombre if doc.unidad_origen else ''
+
+    # Iniciales redactor (solo si es distinto al firmante)
+    creador_obj = doc.creado_por
+    iniciales   = (
+        _iniciales(creador_obj)
+        if (firmante_obj and creador_obj and firmante_obj.pk != creador_obj.pk)
+        else ''
     )
 
-    # ── Bloque de destinatario/asunto según tipo ──────────────────────────
+    # ── Destinatarios ─────────────────────────────────────────────────────
+    destinatarios_qs = list(
+        doc.destinatarios.select_related('usuario', 'usuario__unidad').all()
+    )
+
+    # ── Bloque PARA/ASUNTO ─────────────────────────────────────────────────
     if es_interno:
-        # Formato memorando: PARA / ASUNTO centrado con tabla
-        bloque_dest = f"""
-        <table class="tabla-encabezado">
-          <tr>
-            <td class="lbl">PARA:</td>
-            <td><strong>{destino_nombre}</strong></td>
-          </tr>
-          <tr>
-            <td class="lbl">ASUNTO:</td>
-            <td>{doc.asunto}</td>
-          </tr>
-        </table>"""
-    else:
-        # Formato oficio: Señor/a → nombre → Presente
-        bloque_dest = f"""
-        <div class="destinatario">
-          <p>Señor/a</p>
-          <p><strong>{destino_nombre}</strong></p>
-          <p class="presente">Presente.-</p>
+        if destinatarios_qs:
+            items_html = ''
+            for i, d in enumerate(destinatarios_qs):
+                u      = d.usuario
+                nombre = u.nombre_completo if u else ''
+                cargo  = getattr(u, 'cargo', '') or ''
+                unid   = u.unidad.nombre if (u and u.unidad) else ''
+                inner  = nombre
+                if cargo:
+                    inner += f'<br><span class="cargo">{cargo}</span>'
+                if unid:
+                    inner += f'<br><span class="cargo">{unid}</span>'
+                last   = ' style="margin-bottom:0"' if i == len(destinatarios_qs) - 1 else ''
+                items_html += f'<div class="item"{last}>{inner}</div>'
+        else:
+            fb = (doc.unidad_destino.nombre if doc.unidad_destino
+                  else (doc.remitente_entidad or 'A quien corresponda'))
+            items_html = f'<div class="item" style="margin-bottom:0">{fb}</div>'
+
+        bloque_dest = f"""<div class="para">
+          <span class="lbl">PARA:</span>
+          <div class="dest">{items_html}</div>
         </div>
-        <div class="asunto-bloque">
-          <span class="asunto-label">ASUNTO:</span>
-          {doc.asunto}
-        </div>"""
+        <div class="asunto"><span class="lbl">ASUNTO:</span> {doc.asunto}</div>"""
 
-    # ── Bloque firma electrónica (estilo Quipux) ─────────────────────────
-    firma_bce_inline = ''
-    atte_margin      = 'margin-bottom:40px'   # espacio para firma física
-    if doc.firma_bce_info or pre_firma:
-        atte_margin     = 'margin-bottom:18px'
-        firma_bce_inline = """<p class="firma-electronica">Documento firmado electr&#xF3;nicamente</p>"""
+    else:
+        # Oficio: bloque Señor/a por destinatario
+        bloques = ''
+        if destinatarios_qs:
+            for d in destinatarios_qs:
+                u      = d.usuario
+                nombre = u.nombre_completo if u else ''
+                cargo  = getattr(u, 'cargo', '') or ''
+                unid   = u.unidad.nombre if (u and u.unidad) else ''
+                bloques += f"""<div class="bloque-senor">
+                  <div>Señor/a</div>
+                  <div class="dest-nombre">{nombre}</div>
+                  {f'<div class="dest-cargo">{cargo}</div>'  if cargo else ''}
+                  {f'<div class="dest-cargo">{unid}</div>'   if unid  else ''}
+                  <div class="presente">Presente.-</div>
+                </div>"""
+        else:
+            fb = (doc.unidad_destino.nombre if doc.unidad_destino
+                  else (doc.remitente_entidad or 'A quien corresponda'))
+            bloques = f"""<div class="bloque-senor">
+              <div>Señor/a</div>
+              <div class="dest-nombre">{fb}</div>
+              <div class="presente">Presente.-</div>
+            </div>"""
 
-    cuerpo_html = doc.cuerpo if doc.cuerpo else '<p style="color:#999;font-style:italic">[Sin contenido]</p>'
+        bloque_dest = f"""{bloques}
+        <div class="asunto-ofi"><strong>ASUNTO:</strong>&nbsp; {doc.asunto}</div>"""
+
+    # ── Bloque firma ──────────────────────────────────────────────────────
+    tiene_firma = bool(doc.firma_bce_info) or pre_firma
+
+    if tiene_firma:
+        separador_firma = '<div class="firma-elec-texto">Documento firmado electr&#xF3;nicamente</div>'
+    else:
+        separador_firma = '<div class="linea-firma"></div>'
+
+    cuerpo_html   = doc.cuerpo or '<p style="color:#999;font-style:italic">[Sin contenido]</p>'
+    pie_iniciales = f'<div class="iniciales">{iniciales}</div>' if iniciales else ''
 
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<style>
-  @page {{
-    size: A4;
-    margin: 0;
-    @bottom-right {{
-      content: counter(page) "/" counter(pages);
-      font-size: 8pt;
-      color: #666;
-      font-family: Arial, sans-serif;
-      padding-right: 30px;
-    }}
-  }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    font-family: 'Times New Roman', Times, serif;
-    font-size: 11pt;
-    color: #1a1a1a;
-    line-height: 1.6;
-  }}
-
-  /* ── PÁGINA ── */
-  .pagina {{
-    width: 21cm;
-    min-height: 29.7cm;
-    padding: 0;
-    position: relative;
-  }}
-
-  /* ── MARCA DE AGUA ── */
-  .marca-agua {{
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 12cm;
-    opacity: 0.04;
-    z-index: 0;
-  }}
-
-  /* ── ENCABEZADO ── */
-  .encabezado {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 28px 10px 28px;
-    position: relative;
-    z-index: 1;
-  }}
-  .enc-izq {{
-    width: 80px;
-    flex-shrink: 0;
-  }}
-  .enc-der {{
-    width: 180px;
-    flex-shrink: 0;
-  }}
-
-  /* ── LÍNEAS SEPARADORAS (igual que Quipux) ── */
-  /* Dos segmentos: izquierdo (azul 58%) + gap + derecho (rojo 38%) */
-  .lineas-sep {{
-    display: flex;
-    align-items: center;
-    padding: 0 28px;
-    gap: 0;
-    margin-bottom: 1px;
-  }}
-  .lin-azul  {{ height: 3px; flex: 58; background: #002f6c; }}
-  .lin-gap   {{ flex: 4; }}
-  .lin-roja  {{ height: 3px; flex: 38; background: #da291c; }}
-
-  .lineas-sep2 {{
-    display: flex;
-    padding: 0 28px;
-    margin-bottom: 0;
-    gap: 0;
-  }}
-  .lin2-azul {{ height: 1px; flex: 58; background: #da291c; }}
-  .lin2-gap  {{ flex: 4; }}
-  .lin2-roja {{ height: 1px; flex: 38; background: #da291c; }}
-
-  /* ── CONTENIDO ── */
-  .contenido {{
-    padding: 28px 50px 80px 50px;
-    position: relative;
-    z-index: 1;
-  }}
-
-  /* Número y fecha centrados (estilo Quipux) */
-  .num-doc {{
-    text-align: center;
-    font-family: Arial, sans-serif;
-    font-size: 11.5pt;
-    font-weight: bold;
-    margin-bottom: 4px;
-  }}
-  .fecha-doc {{
-    text-align: center;
-    font-family: Arial, sans-serif;
-    font-size: 11pt;
-    font-weight: bold;
-    margin-bottom: 24px;
-  }}
-
-  /* Tabla PARA/ASUNTO (memorandos) */
-  .tabla-encabezado {{
-    width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 20px;
-    font-family: Arial, sans-serif;
-    font-size: 11pt;
-  }}
-  .tabla-encabezado .lbl {{
-    font-weight: bold;
-    width: 90px;
-    vertical-align: top;
-    padding-top: 2px;
-  }}
-  .tabla-encabezado td {{ padding: 2px 0; vertical-align: top; }}
-
-  /* Bloque destinatario (oficios externos) */
-  .destinatario {{
-    margin-bottom: 16px;
-    font-size: 11pt;
-  }}
-  .presente {{ font-style: italic; color: #555; margin-top: 2px; }}
-
-  .asunto-bloque {{
-    background: #f8faff;
-    border-left: 3px solid {acento};
-    padding: 7px 12px;
-    margin-bottom: 20px;
-    font-family: Arial, sans-serif;
-    font-size: 11pt;
-  }}
-  .asunto-label {{
-    font-weight: bold;
-    margin-right: 6px;
-  }}
-
-  /* Cuerpo */
-  .cuerpo-doc {{
-    text-align: justify;
-    margin-bottom: 40px;
-    font-size: 11pt;
-  }}
-  .cuerpo-doc p {{ margin-bottom: 10px; }}
-
-  /* ── FIRMA ── */
-  .bloque-firma {{
-    margin-top: 36px;
-    font-size: 10.5pt;
-  }}
-  .atte         {{ margin-bottom: 40px; }}
-  .firma-nombre {{ font-weight: bold; font-family: Arial, sans-serif; font-size: 10.5pt; }}
-  .firma-cargo  {{ font-size: 9.5pt; color: #555; margin-top: 2px; font-family: Arial, sans-serif; }}
-
-  /* ── FIRMA ELECTRÓNICA (estilo Quipux) ── */
-  .firma-electronica {{
-    font-style: italic;
-    font-weight: bold;
-    color: #002f6c;
-    font-family: Arial, sans-serif;
-    font-size: 9.5pt;
-    margin-bottom: 12px;
-  }}
-
-  /* ── PIE DE PÁGINA (posición fija para todas las páginas) ── */
-  .pie-pagina {{
-    position: fixed;
-    bottom: 0;
-    left: 0; right: 0;
-    padding: 0 28px 10px 28px;
-    z-index: 1;
-  }}
-  .pie-texto {{
-    font-family: Arial, sans-serif;
-    font-size: 7.5pt;
-    color: #333;
-    text-align: center;
-    line-height: 1.7;
-    margin-top: 5px;
-  }}
-  .pie-texto strong {{ color: #111; }}
-
-  .quipux-tag {{
-    font-family: Arial, sans-serif;
-    font-size: 7pt;
-    color: #aaa;
-    position: fixed;
-    bottom: 3px;
-    left: 28px;
-  }}
-</style>
+<style>{_CSS}</style>
 </head>
 <body>
-<div class="pagina">
 
-  <!-- Marca de agua -->
-  <img src="{ESCUDO_SRC}" class="marca-agua" alt="">
+  <img src="{MARCA_AGUA_SRC}" class="marca-agua" alt="">
 
-  <!-- ── ENCABEZADO ── -->
-  <div class="encabezado">
-    <img src="{ESCUDO_SRC}" class="enc-izq" alt="GAD Provincial de Cotopaxi">
-    <img src="{LOGO_PREF_SRC}" class="enc-der" alt="Prefectura COTOPAXI">
-  </div>
-
-  <!-- Líneas separadoras (igual que Quipux) -->
-  <div class="lineas-sep">
-    <div class="lin-azul"></div>
-    <div class="lin-gap"></div>
-    <div class="lin-roja"></div>
-  </div>
-  <div class="lineas-sep2">
-    <div class="lin2-azul"></div>
-    <div class="lin2-gap"></div>
-    <div class="lin2-roja"></div>
-  </div>
-
-  <!-- ── CONTENIDO ── -->
-  <div class="contenido">
-
-    <!-- Número de documento y fecha (centrados, negrita, igual que Quipux) -->
-    <p class="num-doc">{nombre_tipo} Nro. {doc.numero_documento or '(por asignar)'}</p>
-    <p class="fecha-doc">Latacunga, {fecha_doc}</p>
-
-    <!-- Destinatario / PARA+ASUNTO según tipo -->
-    {bloque_dest}
-
-    <!-- Cuerpo del documento -->
-    <div class="cuerpo-doc">
-      {cuerpo_html}
+  <!-- ENCABEZADO (running element → se repite en cada página) -->
+  <div class="page-header">
+    <div class="encabezado">
+      <img src="{ESCUDO_SRC}"    class="enc-izq" alt="GAD Cotopaxi">
+      <img src="{LOGO_PREF_SRC}" class="enc-der" alt="Prefectura COTOPAXI">
     </div>
-
-    <!-- Firma -->
-    <div class="bloque-firma">
-      <p class="atte" style="{atte_margin}">Atentamente,</p>
-      {firma_bce_inline}
-      <p class="firma-nombre">{firmante}</p>
-      {f'<p class="firma-cargo">{cargo_fir}</p>' if cargo_fir else ''}
-      {f'<p class="firma-cargo">{unidad_orig}</p>' if unidad_orig else ''}
-    </div>
-
-  </div>
-
-  <!-- ── PIE DE PÁGINA (fijo en todas las páginas) ── -->
-  <div class="pie-pagina">
-    <div class="lineas-sep" style="padding:0;">
-      <div class="lin-azul"></div>
-      <div class="lin-gap"></div>
+    <div class="lineas">
       <div class="lin-roja"></div>
+      <div class="lin-gap"></div>
+      <div class="lin-azul"></div>
     </div>
-    <div class="lineas-sep2" style="padding:0;margin-bottom:4px;">
-      <div class="lin2-azul"></div>
-      <div class="lin2-gap"></div>
-      <div class="lin2-roja"></div>
+  </div>
+
+  <!-- PIE DE PÁGINA (running element → se repite en cada página) -->
+  <div class="page-footer">
+    <div class="lineas">
+      <div class="lin-roja"></div>
+      <div class="lin-gap"></div>
+      <div class="lin-azul"></div>
     </div>
     <div class="pie-texto">
-      <strong>Dir:</strong> Calle Tarqui N° 507 y Quito &nbsp;•&nbsp;
-      <strong>Telf:</strong> (03) 2800 416 - 2800 418 &nbsp;•&nbsp;
-      <strong>Telefax:</strong> 2800 411<br>
-      <strong>E-mail:</strong> info@cotopaxi.gob.ec &nbsp;•&nbsp;
-      www.cotopaxi.gob.ec &nbsp;•&nbsp; Cotopaxi - Ecuador
+      <strong>Dir:</strong> Calle Tarqui N&#xB0; 507 y Quito &nbsp;&bull;&nbsp;
+      <strong>Telf:</strong> (03) 2800&nbsp;416 - 2800&nbsp;418 &nbsp;&bull;&nbsp;
+      <strong>Telefax:</strong> 2800&nbsp;411<br>
+      <strong>E-mail:</strong> info@cotopaxi.gob.ec &nbsp;&bull;&nbsp;
+      www.cotopaxi.gob.ec &nbsp;&bull;&nbsp; Cotopaxi - Ecuador
     </div>
   </div>
 
-  <div class="quipux-tag">* Documento generado por SGD-GAD</div>
+  <!-- CONTENIDO -->
+  <div class="contenido">
+    <div class="memo-body">
 
-</div>
+      <div class="enc">{nombre_tipo} Nro. {doc.numero_documento or '(por asignar)'}</div>
+      <div class="enc">Latacunga, {fecha_doc}</div>
+
+      {bloque_dest}
+
+      <div class="cuerpo-doc">{cuerpo_html}</div>
+
+      <div class="bloque-firma">
+        <p>Atentamente,</p>
+        {separador_firma}
+        <div class="firma-nombre">{firmante}</div>
+        {f'<div class="firma-cargo">{cargo_fir}</div>'   if cargo_fir   else ''}
+        {f'<div class="firma-cargo">{unidad_orig}</div>' if unidad_orig else ''}
+        {pie_iniciales}
+      </div>
+
+    </div>
+  </div>
+
+
 </body>
 </html>
 """

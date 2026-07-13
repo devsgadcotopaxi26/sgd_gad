@@ -40,7 +40,7 @@ export default function ModalEnviarEmail({ documentoId, numeroDocumento, asuntoD
   const destinatariosValidos = destinatarios.filter(d => d.trim() && d.includes('@'))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.40)', backdropFilter: 'blur(8px)' }}>
       <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
 
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">

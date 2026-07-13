@@ -73,6 +73,11 @@ class Documento(models.Model):
         'usuarios.Usuario', null=True, blank=True,
         on_delete=models.PROTECT, related_name='documentos_firmados'
     )
+    remitente           = models.ForeignKey(
+        'usuarios.Usuario', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='documentos_como_remitente',
+        help_text='Firmante previsto cuando es distinto al creador'
+    )
     estado              = models.CharField(max_length=30, choices=ESTADO_CHOICES, default='borrador')
     prioridad           = models.CharField(max_length=20, choices=PRIORIDAD_CHOICES, default='normal')
     confidencial        = models.BooleanField(default=False)
@@ -263,6 +268,7 @@ class SeguimientoDocumento(models.Model):
         ('comentado',   'Comentado'),
         ('archivado',   'Archivado'),
         ('respondido',  'Respondido'),
+        ('recuperado',  'Recuperado'),
     ]
 
     documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='seguimiento_quipux')
@@ -485,3 +491,38 @@ class QuipuxContenidoPDF(models.Model):
 
     def __str__(self):
         return self.radi_nume_text
+
+
+class ListaDistribucion(models.Model):
+    nombre       = models.CharField(max_length=250)
+    descripcion  = models.CharField(max_length=500, blank=True)
+    creado_por   = models.ForeignKey(
+        'usuarios.Usuario', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='listas_distribucion'
+    )
+    activo       = models.BooleanField(default=True)
+    quipux_id    = models.IntegerField(null=True, blank=True, unique=True,
+                                       help_text='lista_codi en Quipux (para deduplicar importaciones)')
+    creado_en    = models.DateTimeField(auto_now_add=True)
+    modificado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'doc_lista_distribucion'
+        ordering = ['nombre']
+
+    def __str__(self):
+        return self.nombre
+
+
+class ListaDistribucionMiembro(models.Model):
+    lista    = models.ForeignKey(ListaDistribucion, on_delete=models.CASCADE, related_name='miembros')
+    usuario  = models.ForeignKey('usuarios.Usuario', on_delete=models.CASCADE, related_name='listas_como_miembro')
+    orden    = models.SmallIntegerField(default=0)
+
+    class Meta:
+        db_table = 'doc_lista_distribucion_miembro'
+        unique_together = ('lista', 'usuario')
+        ordering = ['orden', 'usuario__apellidos']
+
+    def __str__(self):
+        return f'{self.lista.nombre} → {self.usuario.nombre_completo}'
