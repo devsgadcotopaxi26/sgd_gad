@@ -1,3 +1,59 @@
 quipux_trans_dump.backup
 
 frontend/node_modules/
+# Variables y secretos
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# IDE y temporales
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Base de datos y respaldos
+*.dump
+*.sql
+*.backup
+*.bak
+respaldos/
+
+# Archivos generados y cargados
+backend/media/
+media/
+uploads/
+
+# Documentos y archivos de prueba
+*.pdf
+*.doc
+*.docx
+*.zip
+
+# Archivos temporales específicos
+test_*
+formato_actual.docx
+formato_referencia.docx
+referencia_quipux.pdf
+frontend.zip
+
+# Código fuente externo de referencia (Quipux oficial), sistema distinto al proyecto
+_quipux/
