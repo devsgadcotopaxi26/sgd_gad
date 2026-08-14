@@ -76,7 +76,11 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     ordering           = ['apellidos']
 
     def get_queryset(self):
-        return Usuario.objects.select_related('unidad').all()
+        qs  = Usuario.objects.select_related('unidad').all()
+        rol = self.request.query_params.get('rol')
+        if rol:
+            qs = qs.filter(roles__rol__codigo=rol, roles__activo=True).distinct()
+        return qs
 
     def get_serializer_class(self):
         if self.action == 'create':

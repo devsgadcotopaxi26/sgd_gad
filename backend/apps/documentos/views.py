@@ -295,6 +295,122 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         )
         return Response({'detail': 'Documento recuperado. Ya puede editarlo en "En elaboración".'})
 
+    @action(detail=True, methods=['post'], url_path='eliminar_borrador')
+    def eliminar_borrador(self, request, pk=None):
+        """
+        Envía un borrador (bandeja 'en_elaboracion') a la papelera ('eliminados').
+        Permitido para el autor del documento o un administrador.
+        """
+        doc = self.get_object()
+        if request.user.id != doc.creado_por_id and not _es_admin_bandeja(request.user):
+            return Response({'detail': 'No tiene permiso para eliminar este borrador.'}, status=403)
+
+        comentario = (request.data.get('comentario') or '').strip()
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        item = BandejaDocumento.objects.filter(documento=doc, usuario_id=doc.creado_por_id).first()
+        if not item or item.bandeja != 'en_elaboracion':
+            return Response({'detail': 'Solo se pueden eliminar borradores en "En elaboración".'}, status=400)
+
+        item.bandeja       = 'eliminados'
+        item.accion_tomada = 'eliminado'
+        item.save()
+
+        doc.eliminado_en       = timezone.now()
+        doc.eliminado_por      = request.user
+        doc.motivo_eliminacion = comentario
+        doc.save(update_fields=['eliminado_en', 'eliminado_por', 'motivo_eliminacion'])
+
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'eliminado',
+            usuario     = request.user,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = comentario,
+        )
+        return Response({'detail': 'Borrador enviado a la papelera.'})
+
+    @action(detail=True, methods=['post'], url_path='restaurar_eliminado')
+    def restaurar_eliminado(self, request, pk=None):
+        """
+        Restaura un documento desde la papelera ('eliminados') a 'en_elaboracion'.
+        Permitido para el autor del documento o un administrador.
+        """
+        doc = self.get_object()
+        if request.user.id != doc.creado_por_id and not _es_admin_bandeja(request.user):
+            return Response({'detail': 'No tiene permiso para restaurar este documento.'}, status=403)
+
+        comentario = (request.data.get('comentario') or '').strip()
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        item = BandejaDocumento.objects.filter(documento=doc, usuario_id=doc.creado_por_id).first()
+        if not item or item.bandeja != 'eliminados':
+            return Response({'detail': 'Este documento no está en la papelera.'}, status=400)
+
+        item.bandeja       = 'en_elaboracion'
+        item.accion_tomada = 'pendiente'
+        item.save()
+
+        doc.estado             = 'borrador'
+        doc.eliminado_en       = None
+        doc.eliminado_por      = None
+        doc.motivo_eliminacion = ''
+        doc.save(update_fields=['estado', 'eliminado_en', 'eliminado_por', 'motivo_eliminacion'])
+
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'restaurado',
+            usuario     = request.user,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = comentario,
+        )
+        return Response({'detail': 'Documento restaurado a "En elaboración".'})
+
+    @action(detail=True, methods=['post'], url_path='eliminar_definitivo')
+    def eliminar_definitivo(self, request, pk=None):
+        """
+        Hard-delete definitivo de un borrador en papelera. Solo el autor del
+        documento puede ejecutarlo — sin excepción para administradores, y
+        sin importar si el autor está activo o inactivo.
+        """
+        doc = self.get_object()
+        if request.user.id != doc.creado_por_id:
+            return Response(
+                {'detail': 'Solo el autor del documento puede eliminarlo definitivamente.'}, status=403
+            )
+
+        comentario = (request.data.get('comentario') or '').strip()
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        item = BandejaDocumento.objects.filter(documento=doc, usuario_id=doc.creado_por_id).first()
+        if not item or item.bandeja != 'eliminados':
+            return Response(
+                {'detail': 'Solo se pueden eliminar definitivamente documentos en la papelera.'}, status=400
+            )
+
+        from apps.archivo.models import ExpedienteDocumento
+        if ExpedienteDocumento.objects.filter(documento=doc).exists():
+            return Response(
+                {'detail': 'Este documento está vinculado a un expediente de archivo y no puede eliminarse definitivamente.'},
+                status=400,
+            )
+
+        # Capturar referencias a los archivos físicos ANTES del borrado en cascada
+        # (AdjuntoDocumento.archivo no se elimina del storage automáticamente).
+        archivos_a_borrar = [a.archivo for a in doc.archivos_adjuntos.all() if a.archivo]
+
+        doc.delete()  # cascada: Destinatario, FlujoAprobacion, VersionDocumento,
+                      # BandejaDocumento, SeguimientoDocumento, Tarea,
+                      # DestinatarioExterno, AdjuntoDocumento
+
+        for f in archivos_a_borrar:
+            f.delete(save=False)
+
+        return Response({'detail': 'Documento eliminado definitivamente.'})
+
     @action(detail=True, methods=['post'], url_path='enviar_email')
     def enviar_email(self, request, pk=None):
         from django.core.mail import EmailMessage

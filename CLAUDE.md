@@ -78,8 +78,7 @@ tramites/TramitesPage.tsx
 tramites/ConfiguracionTramitesPage.tsx
 usuarios/OrganigramaPage.tsx
 usuarios/PerfilPage.tsx
-usuarios/PermisosPage.tsx                        # Asignación de roles + matriz de permisos
-usuarios/UsuariosPage.tsx
+usuarios/UsuariosPage.tsx                        # Asignación/revocación de roles + filtro por rol (antes en PermisosPage.tsx, eliminada por duplicidad)
 ```
 
 ## Componentes UI principales (src/components/ui/)

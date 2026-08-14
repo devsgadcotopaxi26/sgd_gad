@@ -215,6 +215,7 @@ class BandejaSerializer(serializers.ModelSerializer):
     unidad_origen_nombre  = serializers.CharField(source='documento.unidad_origen.nombre', read_only=True)
     unidad_origen_siglas  = serializers.CharField(source='documento.unidad_origen.siglas', read_only=True)
     creado_por_nombre     = serializers.CharField(source='documento.creado_por.nombre_completo', read_only=True)
+    creado_por_id         = serializers.IntegerField(source='documento.creado_por_id', read_only=True)
     estado_documento      = serializers.CharField(source='documento.estado', read_only=True)
     fecha_documento       = serializers.DateTimeField(source='documento.creado_en', read_only=True)
     prioridad             = serializers.CharField(source='documento.prioridad', read_only=True)
@@ -262,7 +263,7 @@ class BandejaSerializer(serializers.ModelSerializer):
             'fecha_limite', 'creado_en',
             'numero_documento', 'asunto', 'tipo_nombre', 'tipo_codigo',
             'tipo_prefijo', 'unidad_origen_nombre', 'unidad_origen_siglas',
-            'creado_por_nombre', 'estado_documento', 'fecha_documento', 'prioridad',
+            'creado_por_nombre', 'creado_por_id', 'estado_documento', 'fecha_documento', 'prioridad',
             'remitente_nombre', 'remitente_email', 'remitente_entidad',
             'firmante_nombre', 'firmante_cargo', 'minutos_para_recuperar',
         ]

@@ -20,7 +20,8 @@ import {
   ArrowRightLeft, MessageSquare, Signature,
   CheckCircle, Filter, RefreshCw, Globe2, Database,
   FileText, FileSpreadsheet, FileImage, File, User,
-  Lock, BookUser, Settings, Users, BarChart2, Eye
+  Lock, BookUser, Settings, Users, BarChart2, Eye,
+  Trash2, RotateCcw
 } from 'lucide-react'
 
 // Bandejas SGD → nombre de bandeja Quipux equivalente
@@ -35,16 +36,17 @@ const QUIPUX_BANDEJA_MAP: Record<string, string> = {
 }
 
 const BANDEJAS = [
+  { key: 'en_elaboracion',   label: 'En Elaboración',    icon: Edit3,            seccion: 'bandejas' },
   { key: 'recibidos',        label: 'Recibidos',         icon: Inbox,            seccion: 'bandejas' },
-  { key: 'en_elaboracion',   label: 'En elaboracion',    icon: Edit3,            seccion: 'bandejas' },
+  { key: 'no_enviados',      label: 'No Enviados',       icon: Clock,            seccion: 'bandejas' },
   { key: 'enviados',         label: 'Enviados',          icon: Send,             seccion: 'bandejas' },
-  { key: 'no_enviados',      label: 'No enviados',       icon: Clock,            seccion: 'bandejas' },
-  { key: 'reasignados',      label: 'Reasignados',       icon: ArrowRightLeft,   seccion: 'bandejas' },
-  { key: 'tareas_recibidas', label: 'Tareas recibidas',  icon: CheckSquare,      seccion: 'bandejas' },
-  { key: 'tareas_enviadas',  label: 'Tareas enviadas',   icon: CheckSquare,      seccion: 'bandejas' },
+  { key: 'tareas_recibidas', label: 'Tareas Recibidas',  icon: CheckSquare,      seccion: 'bandejas' },
+  { key: 'tareas_enviadas',  label: 'Tareas Enviadas',   icon: CheckSquare,      seccion: 'bandejas' },
+  { key: 'eliminados',       label: 'Eliminados',        icon: Trash2,           seccion: 'otras' },
+  { key: 'reasignados',      label: 'Reasignados',       icon: ArrowRightLeft,   seccion: 'otras' },
   { key: 'archivados',       label: 'Archivados',        icon: Archive,          seccion: 'otras' },
-  { key: 'carpetas',         label: 'Carpetas virtuales',icon: Folder,           seccion: 'otras' },
-  { key: 'por_imprimir',     label: 'Por imprimir',      icon: Printer,          seccion: 'otras' },
+  { key: 'carpetas',         label: 'Carpetas Virtuales',icon: Folder,           seccion: 'otras' },
+  { key: 'por_imprimir',     label: 'Por Imprimir',      icon: Printer,          seccion: 'otras' },
 ]
 
 const TIPO_COLORS: Record<string, { bg: string; text: string }> = {
@@ -76,6 +78,7 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const qc = useQueryClient()
   const { tema } = useThemeStore()
   const T = THEMES[tema].vars
+  const authUsuario = useAuthStore(s => s.usuario)
   const [comentario, setComentario] = useState('')
   const [tabActiva, setTab] = useState<'preview' | 'info' | 'adjuntos' | 'seguimiento'>('preview')
   const [mostrarVincular, setMostrarVincular] = useState(false)
@@ -92,6 +95,13 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const [enviandoDirecto, setEnviandoDirecto] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
   const [errorRecuperar, setErrorRecuperar] = useState('')
+  const [mostrarEliminarBorrador, setMostrarEliminarBorrador] = useState(false)
+  const [comentarioEliminar, setComentarioEliminar] = useState('')
+  const [mostrarRestaurar, setMostrarRestaurar] = useState(false)
+  const [comentarioRestaurar, setComentarioRestaurar] = useState('')
+  const [mostrarEliminarDefinitivo, setMostrarEliminarDefinitivo] = useState(false)
+  const [comentarioEliminarDefinitivo, setComentarioEliminarDefinitivo] = useState('')
+  const [errorEliminarDefinitivo, setErrorEliminarDefinitivo] = useState('')
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [pdfCargando, setPdfCargando] = useState(false)
   const [pdfEsFirmado, setPdfEsFirmado] = useState(false)
@@ -213,6 +223,42 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
     },
     onError: (e: any) => {
       setErrorRecuperar(e.response?.data?.error || 'No se pudo recuperar el documento.')
+    },
+  })
+
+  const eliminarBorrador = useMutation({
+    mutationFn: () => bandejaService.eliminarBorrador(item.documento_id, comentarioEliminar),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      setMostrarEliminarBorrador(false)
+      setComentarioEliminar('')
+      onClose()
+    },
+  })
+
+  const restaurarEliminado = useMutation({
+    mutationFn: () => bandejaService.restaurarEliminado(item.documento_id, comentarioRestaurar),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      setMostrarRestaurar(false)
+      setComentarioRestaurar('')
+      onClose()
+    },
+  })
+
+  const eliminarDefinitivo = useMutation({
+    mutationFn: () => bandejaService.eliminarDefinitivo(item.documento_id, comentarioEliminarDefinitivo),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      setMostrarEliminarDefinitivo(false)
+      setComentarioEliminarDefinitivo('')
+      onClose()
+    },
+    onError: (e: any) => {
+      setErrorEliminarDefinitivo(e.response?.data?.detail || 'No se pudo eliminar definitivamente el documento.')
     },
   })
 
@@ -396,6 +442,148 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
         </div>
       )}
 
+      {/* Eliminar borrador overlay */}
+      {mostrarEliminarBorrador && (
+        <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 14px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Trash2 size={14} style={{ color: '#da291c' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Eliminar borrador</span>
+            <button onClick={() => setMostrarEliminarBorrador(false)}
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
+              <X size={14} />
+            </button>
+          </div>
+          <div style={{ padding: '10px 14px', flex: 1 }}>
+            <p style={{ fontSize: 11, color: T.rowSub, marginBottom: 8 }}>
+              El documento se moverá a la papelera ("Eliminados"). Podrás restaurarlo más adelante.
+            </p>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.rowSub, display: 'block', marginBottom: 4 }}>Comentario (obligatorio):</label>
+            <textarea
+              value={comentarioEliminar}
+              onChange={e => setComentarioEliminar(e.target.value)}
+              placeholder="Motivo de la eliminación..."
+              rows={3}
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }}
+            />
+          </div>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setMostrarEliminarBorrador(false)}
+              style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => comentarioEliminar.trim() && eliminarBorrador.mutate()}
+              disabled={!comentarioEliminar.trim() || eliminarBorrador.isPending}
+              style={{
+                padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
+                cursor: comentarioEliminar.trim() ? 'pointer' : 'not-allowed',
+                background: comentarioEliminar.trim() ? '#da291c' : T.rowBd,
+                color: comentarioEliminar.trim() ? '#fff' : T.rowSub,
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}>
+              <Trash2 size={12} /> {eliminarBorrador.isPending ? 'Eliminando...' : 'Eliminar'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Restaurar desde papelera overlay */}
+      {mostrarRestaurar && (
+        <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 14px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <RotateCcw size={14} style={{ color: '#16a34a' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Restaurar documento</span>
+            <button onClick={() => setMostrarRestaurar(false)}
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
+              <X size={14} />
+            </button>
+          </div>
+          <div style={{ padding: '10px 14px', flex: 1 }}>
+            <p style={{ fontSize: 11, color: T.rowSub, marginBottom: 8 }}>
+              El documento regresará a "En elaboración" como borrador.
+            </p>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.rowSub, display: 'block', marginBottom: 4 }}>Comentario (obligatorio):</label>
+            <textarea
+              value={comentarioRestaurar}
+              onChange={e => setComentarioRestaurar(e.target.value)}
+              placeholder="Motivo de la restauración..."
+              rows={3}
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }}
+            />
+          </div>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setMostrarRestaurar(false)}
+              style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => comentarioRestaurar.trim() && restaurarEliminado.mutate()}
+              disabled={!comentarioRestaurar.trim() || restaurarEliminado.isPending}
+              style={{
+                padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
+                cursor: comentarioRestaurar.trim() ? 'pointer' : 'not-allowed',
+                background: comentarioRestaurar.trim() ? '#16a34a' : T.rowBd,
+                color: comentarioRestaurar.trim() ? '#fff' : T.rowSub,
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}>
+              <RotateCcw size={12} /> {restaurarEliminado.isPending ? 'Restaurando...' : 'Restaurar'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Eliminar definitivamente overlay */}
+      {mostrarEliminarDefinitivo && (
+        <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 14px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Trash2 size={14} style={{ color: '#da291c' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Eliminar definitivamente</span>
+            <button onClick={() => setMostrarEliminarDefinitivo(false)}
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
+              <X size={14} />
+            </button>
+          </div>
+          <div style={{ padding: '10px 14px', flex: 1 }}>
+            <div style={{ padding: '8px 10px', borderRadius: 8, background: 'rgba(218,41,28,.1)', border: '0.5px solid rgba(218,41,28,.3)', marginBottom: 10 }}>
+              <p style={{ fontSize: 11, color: '#da291c', fontWeight: 600, margin: 0 }}>
+                Esta acción es irreversible. El documento y sus adjuntos se eliminarán por completo y no podrán recuperarse.
+              </p>
+            </div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.rowSub, display: 'block', marginBottom: 4 }}>Comentario (obligatorio):</label>
+            <textarea
+              value={comentarioEliminarDefinitivo}
+              onChange={e => setComentarioEliminarDefinitivo(e.target.value)}
+              placeholder="Confirma el motivo de la eliminación definitiva..."
+              rows={3}
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }}
+            />
+            {errorEliminarDefinitivo && (
+              <div style={{ marginTop: 8, padding: '5px 10px', borderRadius: 6, background: 'rgba(218,41,28,.15)', color: '#da291c', fontSize: 11 }}>
+                {errorEliminarDefinitivo}
+              </div>
+            )}
+          </div>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setMostrarEliminarDefinitivo(false)}
+              style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => { setErrorEliminarDefinitivo(''); comentarioEliminarDefinitivo.trim() && eliminarDefinitivo.mutate() }}
+              disabled={!comentarioEliminarDefinitivo.trim() || eliminarDefinitivo.isPending}
+              style={{
+                padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
+                cursor: comentarioEliminarDefinitivo.trim() ? 'pointer' : 'not-allowed',
+                background: comentarioEliminarDefinitivo.trim() ? '#da291c' : T.rowBd,
+                color: comentarioEliminarDefinitivo.trim() ? '#fff' : T.rowSub,
+                display: 'flex', alignItems: 'center', gap: 5,
+              }}>
+              <Trash2 size={12} /> {eliminarDefinitivo.isPending ? 'Eliminando...' : 'Eliminar definitivamente'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ padding: '14px 16px', borderBottom: 'none', background: T.pnHdr }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -464,6 +652,12 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               visible: b === 'por_imprimir',                                          action: handleImprimir },
             { label: 'Ya impreso', icon: CheckCircle,    accent: false, warn: false,
               visible: b === 'por_imprimir',                                          action: () => marcarImpreso.mutate() },
+            { label: 'Eliminar',   icon: Trash2,         accent: false, warn: true,
+              visible: enElab && !anulado,                                            action: () => setMostrarEliminarBorrador(true) },
+            { label: 'Restaurar',  icon: RotateCcw,      accent: false, warn: false,
+              visible: b === 'eliminados',                                            action: () => setMostrarRestaurar(true) },
+            { label: 'Eliminar definitivamente', icon: Trash2, accent: false, warn: true,
+              visible: b === 'eliminados' && authUsuario?.id === item.creado_por_id,  action: () => setMostrarEliminarDefinitivo(true) },
           ].filter(btn => btn.visible)
 
           if (botones.length === 0) return null
@@ -517,8 +711,8 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
           {([
             ['preview',     'Vista previa', FileText],
             ['info',        'Información',  Eye],
+            ['adjuntos',    'Anexos',     Folder],
             ['seguimiento', 'Recorrido',    Clock],
-            ['adjuntos',    'Adjuntos',     Folder],
           ] as [string, string, any][]).map(([k, l, TabIcon]) => (
             <button key={k} onClick={() => setTab(k as any)}
               style={{
@@ -633,6 +827,8 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                 comentado:  'Comentario registrado',
                 archivado:  'Archivado',
                 respondido: 'Respondido',
+                eliminado:  'Enviado a la papelera',
+                restaurado: 'Restaurado desde la papelera',
               }
               const ETAPA_COLOR: Record<string, string> = {
                 elaborado:  '#f59e0b',
@@ -643,6 +839,8 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                 comentado:  '#6b7280',
                 archivado:  '#9ca3af',
                 respondido: '#0f6e56',
+                eliminado:  '#dc2626',
+                restaurado: '#16a34a',
               }
               const seg = docDetalle?.seguimiento ?? []
               if (!seg.length) return (

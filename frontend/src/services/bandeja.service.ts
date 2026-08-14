@@ -20,6 +20,7 @@ export interface BandejaItem {
   unidad_origen_nombre: string
   unidad_origen_siglas: string
   creado_por_nombre: string
+  creado_por_id: number
   estado_documento: string
   fecha_documento: string
   prioridad: string
@@ -67,4 +68,13 @@ export const bandejaService = {
 
   marcarImpreso: (id: number) =>
     api.post(`/documentos/bandeja/${id}/marcar_impreso/`).then(r => r.data),
+
+  eliminarBorrador: (documentoId: number, comentario: string) =>
+    api.post(`/documentos/${documentoId}/eliminar_borrador/`, { comentario }).then(r => r.data),
+
+  restaurarEliminado: (documentoId: number, comentario: string) =>
+    api.post(`/documentos/${documentoId}/restaurar_eliminado/`, { comentario }).then(r => r.data),
+
+  eliminarDefinitivo: (documentoId: number, comentario: string) =>
+    api.post(`/documentos/${documentoId}/eliminar_definitivo/`, { comentario }).then(r => r.data),
 }

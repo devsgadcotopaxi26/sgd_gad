@@ -377,24 +377,46 @@ export default function UsuariosPage() {
   const [busqueda, setBusqueda]     = useState('')
   const [filtroTipo, setFiltroTipo] = useState('')
   const [filtroActivo, setFiltroActivo] = useState<'' | 'true' | 'false'>('')
+  const [filtroRol, setFiltroRol]   = useState('')
   const [mostrarModal, setMostrarModal] = useState(false)
   const [seleccionado, setSeleccionado] = useState<Usuario | null>(null)
   const [page, setPage] = useState(1)
   const qc = useQueryClient()
 
-  useEffect(() => { setPage(1) }, [busqueda, filtroTipo, filtroActivo])
+  useEffect(() => { setPage(1) }, [busqueda, filtroTipo, filtroActivo, filtroRol])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['usuarios', busqueda, filtroTipo, filtroActivo, page],
+    queryKey: ['usuarios', busqueda, filtroTipo, filtroActivo, filtroRol, page],
     queryFn: () => usuariosService.listar({
       ...(busqueda     ? { search: busqueda }       : {}),
       ...(filtroTipo   ? { tipo: filtroTipo }        : {}),
       ...(filtroActivo ? { activo: filtroActivo }    : {}),
+      ...(filtroRol    ? { rol: filtroRol }          : {}),
       page: String(page),
     }),
   })
 
+  const { data: rolesDisp } = useQuery({ queryKey: ['roles'], queryFn: usuariosService.roles })
+
   const usuarios = data?.results ?? []
+
+  const hayFiltrosActivos = Boolean(busqueda || filtroTipo || filtroActivo || filtroRol)
+
+  const limpiarFiltros = () => {
+    setBusqueda('')
+    setFiltroTipo('')
+    setFiltroActivo('')
+    setFiltroRol('')
+  }
+
+  const rolLabel = rolesDisp?.find(r => r.codigo === filtroRol)?.nombre ?? filtroRol
+
+  const filtrosActivos: { key: string; label: string; onRemove: () => void }[] = [
+    ...(busqueda    ? [{ key: 'busqueda', label: `Búsqueda: "${busqueda}"`, onRemove: () => setBusqueda('') }] : []),
+    ...(filtroTipo  ? [{ key: 'tipo',     label: `Tipo: ${filtroTipo.charAt(0).toUpperCase()}${filtroTipo.slice(1)}`, onRemove: () => setFiltroTipo('') }] : []),
+    ...(filtroActivo ? [{ key: 'activo',  label: `Estado: ${filtroActivo === 'true' ? 'Activo' : 'Inactivo'}`, onRemove: () => setFiltroActivo('') }] : []),
+    ...(filtroRol   ? [{ key: 'rol',      label: `Rol: ${rolLabel}`, onRemove: () => setFiltroRol('') }] : []),
+  ]
 
   const toggleActivo = useMutation({
     mutationFn: ({ id, activo }: { id: number; activo: boolean }) => activo ? usuariosService.desactivar(id) : usuariosService.activar(id),
@@ -415,7 +437,7 @@ export default function UsuariosPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <div>
               <h1 style={{ fontSize: 17, fontWeight: 700, color: T.rowTxt, margin: 0 }}>Usuarios del sistema</h1>
-              <p style={{ fontSize: 12, color: T.rowSub, margin: '2px 0 0' }}>{data?.count ?? 0} usuarios registrados</p>
+              <p style={{ fontSize: 12, color: T.rowSub, margin: '2px 0 0' }}>{data?.count ?? 0} usuarios {hayFiltrosActivos ? 'encontrados' : 'registrados'}</p>
             </div>
             <button onClick={() => setMostrarModal(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 10, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13, background: T.accentDk, color: '#fff' }}>
@@ -435,6 +457,11 @@ export default function UsuariosPage() {
               <option value="">Todos los tipos</option>
               {TIPOS.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
+            <select value={filtroRol} onChange={e => setFiltroRol(e.target.value)}
+              style={{ padding: '8px 10px', fontSize: 12, border: `1px solid ${T.rowBd}`, borderRadius: 10, outline: 'none', background: T.rowBg, color: T.rowTxt }}>
+              <option value="">Todos los roles</option>
+              {(rolesDisp ?? []).map(r => <option key={r.id} value={r.codigo}>{r.nombre}</option>)}
+            </select>
             <div style={{ display: 'flex', borderRadius: 10, border: `1px solid ${T.rowBd}`, overflow: 'hidden' }}>
               {([['', 'Todos'], ['true', 'Activos'], ['false', 'Inactivos']] as const).map(([val, label]) => (
                 <button key={val} onClick={() => setFiltroActivo(val)}
@@ -446,6 +473,26 @@ export default function UsuariosPage() {
               ))}
             </div>
           </div>
+
+          {hayFiltrosActivos && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.rowSub }}>Filtros activos:</span>
+              {filtrosActivos.map(f => (
+                <span key={f.key}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 500, padding: '3px 6px 3px 10px', borderRadius: 999, background: T.rowSel, color: T.rowTxt }}>
+                  {f.label}
+                  <button onClick={f.onRemove} title="Quitar filtro"
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, border: 'none', borderRadius: '50%', background: 'transparent', cursor: 'pointer', color: T.rowTxt, opacity: 0.7, padding: 0 }}>
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+              <button onClick={limpiarFiltros}
+                style={{ fontSize: 11, fontWeight: 600, color: T.accentDk, background: 'transparent', border: 'none', cursor: 'pointer', padding: '3px 4px' }}>
+                Limpiar filtros
+              </button>
+            </div>
+          )}
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -453,7 +500,16 @@ export default function UsuariosPage() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, fontSize: 13, color: T.rowSub }}>Cargando...</div>
           ) : usuarios.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 120, color: T.rowSub }}>
-              <Users size={28} style={{ marginBottom: 8, opacity: 0.4 }} /><p style={{ fontSize: 13 }}>Sin resultados</p>
+              <Users size={28} style={{ marginBottom: 8, opacity: 0.4 }} />
+              <p style={{ fontSize: 13 }}>
+                {hayFiltrosActivos ? 'No se encontraron usuarios con los filtros seleccionados.' : 'Sin resultados'}
+              </p>
+              {hayFiltrosActivos && (
+                <button onClick={limpiarFiltros}
+                  style={{ marginTop: 10, padding: '5px 12px', fontSize: 12, fontWeight: 600, borderRadius: 8, border: `1px solid ${T.rowBd}`, background: T.rowBg, cursor: 'pointer', color: T.rowTxt }}>
+                  Limpiar filtros
+                </button>
+              )}
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>

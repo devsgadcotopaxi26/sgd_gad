@@ -251,7 +251,7 @@ export default function AdjuntosPanel({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         <Paperclip size={14} style={{ color: '#002f6c' }} />
         <span style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>
-          Adjuntos {adjuntos.length > 0 && `(${adjuntos.length})`}
+          Archivos Anexos al documento {adjuntos.length > 0 && `(${adjuntos.length})`}
         </span>
       </div>
 

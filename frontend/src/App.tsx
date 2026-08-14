@@ -14,7 +14,6 @@ import MainLayout     from '@/components/layout/MainLayout'
 import PerfilPage from '@/pages/usuarios/PerfilPage'
 import AjustesPage from '@/pages/ajustes/AjustesPage'
 import DigitalizacionMasivaPage from '@/pages/archivo/DigitalizacionMasivaPage'
-import PermisosPage from '@/pages/usuarios/PermisosPage'
 import OrganigramaPage from '@/pages/usuarios/OrganigramaPage'
 import CuadroClasificacionPage from '@/pages/archivo/CuadroClasificacionPage'
 import CicloVitalPage from '@/pages/archivo/CicloVitalPage'
@@ -82,7 +81,6 @@ export default function App() {
           <Route path="archivo/prestamos" element={<RutaArchivoAdmin><PrestamosCopiasCertificadasPage /></RutaArchivoAdmin>} />
           <Route path="archivo/digitalizacion-masiva" element={<RutaArchivoAdmin><DigitalizacionMasivaPage /></RutaArchivoAdmin>} />
           <Route path="usuarios"   element={<RutaArchivoAdmin><UsuariosPage /></RutaArchivoAdmin>} />
-          <Route path="permisos"   element={<RutaArchivoAdmin><PermisosPage /></RutaArchivoAdmin>} />
           <Route path="reportes"   element={<RutaArchivoAdmin><ReportesPage /></RutaArchivoAdmin>} />
           <Route path="auditoria"  element={<RutaArchivoAdmin><AuditoriaPage /></RutaArchivoAdmin>} />
           <Route path="organigrama" element={<RutaArchivoAdmin><OrganigramaPage /></RutaArchivoAdmin>} />
