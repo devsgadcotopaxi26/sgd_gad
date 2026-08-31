@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -108,18 +109,32 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def asignar_rol(self, request, pk=None):
+        """
+        Un usuario tiene un único rol funcional activo. Asignar un rol nuevo
+        desactiva atómicamente cualquier otro rol activo del usuario — la
+        exclusividad queda garantizada aquí (backend), no solo en la UI, para
+        que no pueda evitarse llamando a la API directamente.
+        """
         serializer = AsignarRolSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        UsuarioRol.objects.update_or_create(
-            usuario=self.get_object(),
-            rol=serializer.validated_data['rol'],
-            unidad=serializer.validated_data.get('unidad'),
-            defaults={
-                'activo':       True,
-                'asignado_por': request.user,
-                'hasta':        serializer.validated_data.get('hasta'),
-            }
-        )
+        usuario  = self.get_object()
+        nuevo_rol = serializer.validated_data['rol']
+
+        with transaction.atomic():
+            UsuarioRol.objects.filter(
+                usuario=usuario, activo=True
+            ).exclude(rol=nuevo_rol).update(activo=False)
+
+            UsuarioRol.objects.update_or_create(
+                usuario=usuario,
+                rol=nuevo_rol,
+                unidad=serializer.validated_data.get('unidad'),
+                defaults={
+                    'activo':       True,
+                    'asignado_por': request.user,
+                    'hasta':        serializer.validated_data.get('hasta'),
+                }
+            )
         return Response({'detail': 'Rol asignado.'})
 
     @action(detail=True, methods=['post'])
@@ -170,8 +185,12 @@ def mis_permisos(request):
     roles    = list(request.user.roles.filter(activo=True).values_list('rol__codigo', flat=True))
     return Response({
         'usuario_id': request.user.id,
+        # es_admin habilita el bypass total de permisos (usePermisosStore.puede
+        # siempre true) y controla el acceso a /usuarios y /ajustes en el
+        # frontend — debe quedar exclusivo de ADMIN_GENERAL. RESPONSABLE_ARCHIVO
+        # es una autoridad funcional de archivo, no un administrador general.
         'es_admin':   request.user.is_superuser or request.user.roles.filter(
-            rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
+            rol__codigo='ADMIN_GENERAL', activo=True
         ).exists(),
         'roles':      roles,
         'permisos':   permisos,

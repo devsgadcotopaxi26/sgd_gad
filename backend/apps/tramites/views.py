@@ -1,28 +1,49 @@
 import uuid
 from datetime import date, timedelta
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.views import APIView
+from apps.usuarios.permisos import get_permisos_usuario
 from .models import Categoria, TipoTramite, Persona, Tramite, Seguimiento
 from .serializers import (
     CategoriaSerializer, TipoTramiteListSerializer, TipoTramiteDetalleSerializer,
     PersonaResumenSerializer, PersonaDetalleSerializer, PersonaCrearSerializer,
+    PersonaSnapshotInlineSerializer,
     TramiteListSerializer, TramiteDetalleSerializer, TramiteCrearSerializer,
+    TramiteEditarSerializer,
     SeguimientoSerializer,
 )
 
 
+PLAZO_DEFAULT_DIAS = 15  # dias_plazo por defecto cuando el trámite aún no tiene tipo_tramite clasificado
+
+
 def generar_numero_tramite():
+    """Corrección PROVISIONAL: usa el correlativo máximo existente en vez de
+    COUNT(), que fallaba con huecos (ver auditoría RF-TRAM-003). Mismo
+    formato y mismo ámbito (por año) que antes. NO es la solución
+    definitiva — no resuelve concurrencia ni reutilización de números tras
+    eliminar el trámite con el correlativo máximo (ver reporte)."""
     anio = timezone.now().year
-    ultimo = Tramite.objects.filter(
-        numero_tramite__startswith=f'T-{anio}-'
-    ).count()
-    return f'T-{anio}-{str(ultimo + 1).zfill(6)}'
+    prefijo = f'T-{anio}-'
+    numeros = Tramite.objects.filter(
+        numero_tramite__startswith=prefijo
+    ).values_list('numero_tramite', flat=True)
+
+    maximo = 0
+    for numero in numeros:
+        sufijo = numero[len(prefijo):]
+        if sufijo.isdigit():
+            maximo = max(maximo, int(sufijo))
+
+    return f'{prefijo}{str(maximo + 1).zfill(6)}'
 
 
 def calcular_fecha_limite(dias_plazo: int) -> date:
@@ -103,37 +124,179 @@ class TramiteViewSet(viewsets.ModelViewSet):
     ordering           = ['-fecha_ingreso']
 
     def get_queryset(self):
+        # unidad_receptora/usuario_receptor se agregan aquí (no solo
+        # unidad_responsable/usuario_asignado) para que la sección "Gestión"
+        # del detalle (unidad_receptora_nombre, receptor_nombre) no dispare
+        # una consulta adicional por trámite.
         return Tramite.objects.select_related(
             'persona', 'tipo_tramite__categoria',
             'unidad_responsable', 'usuario_asignado',
+            'unidad_receptora', 'usuario_receptor',
         )
 
     def get_serializer_class(self):
         if self.action == 'create':
             return TramiteCrearSerializer
+        if self.action in ('update', 'partial_update'):
+            return TramiteEditarSerializer
         if self.action == 'retrieve':
             return TramiteDetalleSerializer
         return TramiteListSerializer
 
     def perform_create(self, serializer):
-        tipo = serializer.validated_data['tipo_tramite']
+        # No basta con que el frontend oculte el selector de canal: se valida
+        # aquí que el usuario realmente tenga "crear" habilitado para el
+        # canal solicitado (p. ej. ASISTENTE_ARCHIVO solo lo tiene en
+        # 'ventanilla' — ver PERMISOS_ROL). No es la implementación completa
+        # de RF-TRAM-011 (eso cubriría también update/delete y otros
+        # endpoints); aquí solo se cierra la puerta de creación por canal.
+        canal = serializer.validated_data.get('canal_ingreso') or 'ventanilla'
+        canales_permitidos = get_permisos_usuario(self.request.user).get('tramites_canales', {})
+        if 'crear' not in canales_permitidos.get(canal, []):
+            raise PermissionDenied(f'No tienes permiso para crear trámites del canal "{canal}".')
+
+        tipo = serializer.validated_data.get('tipo_tramite')
         numero = generar_numero_tramite()
-        limite = calcular_fecha_limite(tipo.dias_plazo)
-        tramite = serializer.save(
-            uuid=uuid.uuid4(),
-            numero_tramite=numero,
-            fecha_limite=limite,
-            usuario_receptor=self.request.user,
-            tipo_resolucion=None,
-        )
-        Seguimiento.objects.create(
-            tramite=tramite,
-            estado_anterior='',
-            estado_nuevo='ingresado',
-            observacion='Trámite ingresado al sistema.',
-            usuario=self.request.user,
-            unidad=tramite.unidad_receptora,
-        )
+        limite = calcular_fecha_limite(tipo.dias_plazo if tipo else PLAZO_DEFAULT_DIAS)
+
+        # Gestión de firmante/contacto: resolver o crear la Persona (si
+        # corresponde) y, si se pidió explícitamente, volcar el contacto de
+        # este trámite a los datos maestros — todo dentro de la misma
+        # transacción que crea el trámite, para no dejar una Persona
+        # huérfana si el trámite falla, ni un trámite sin la Persona que
+        # se acababa de crear para él.
+        persona_datos = serializer.validated_data.pop('persona_datos', None)
+        actualizar_persona = serializer.validated_data.pop('actualizar_persona', False)
+        persona = serializer.validated_data.get('persona')
+
+        with transaction.atomic():
+            if not persona and persona_datos and persona_datos.get('numero_identificacion'):
+                datos = PersonaSnapshotInlineSerializer(data=persona_datos)
+                datos.is_valid(raise_exception=True)
+                datos = dict(datos.validated_data)
+                numero_id = datos.pop('numero_identificacion')
+                persona, _creada = Persona.objects.get_or_create(
+                    numero_identificacion=numero_id,
+                    defaults=datos,
+                )
+                serializer.validated_data['persona'] = persona
+
+            if persona:
+                # cedula_firmante es el snapshot histórico de la identificación
+                # — se toma de Persona en el momento de vincularla/crearla, no
+                # de lo que el cliente haya enviado, para que siempre refleje
+                # la identificación real de la Persona con la que quedó
+                # vinculado este trámite (ver auditoría de firmante/contacto).
+                serializer.validated_data['cedula_firmante'] = persona.numero_identificacion
+
+            if persona and actualizar_persona:
+                telefono = serializer.validated_data.get('telefono_contacto', '')
+                correo   = serializer.validated_data.get('correo_contacto', '')
+                cambios = {}
+                if telefono and telefono != persona.telefono_movil:
+                    cambios['telefono_movil'] = telefono
+                if correo and correo != persona.email:
+                    cambios['email'] = correo
+                if cambios:
+                    Persona.objects.filter(pk=persona.pk).update(**cambios)
+
+            # RN-TRAM-011: unidad_responsable es un concepto distinto de
+            # "quién registra" — nunca se infiere del usuario autenticado,
+            # queda vacía en el registro inicial y se asigna después en el
+            # direccionamiento. unidad_receptora sí se completa, en el mejor
+            # de los casos, con la unidad de quien recibe físicamente la
+            # documentación (si la tiene); si no la tiene, el trámite igual
+            # se registra sin ella.
+            tramite = serializer.save(
+                uuid=uuid.uuid4(),
+                numero_tramite=numero,
+                fecha_limite=limite,
+                usuario_receptor=self.request.user,
+                unidad_receptora=self.request.user.unidad,
+                tipo_resolucion=None,
+            )
+            Seguimiento.objects.create(
+                tramite=tramite,
+                estado_anterior='',
+                estado_nuevo='ingresado',
+                observacion='Trámite ingresado al sistema.',
+                usuario=self.request.user,
+                unidad=tramite.unidad_receptora,
+            )
+
+    def perform_update(self, serializer):
+        # RF-TRAM-009: el backend es la autoridad final — ocultar el botón
+        # "Editar" en el frontend no sustituye esta validación. El canal es
+        # inmutable durante edición (no llega en TramiteEditarSerializer) y
+        # es precisamente lo que determina el permiso requerido, igual que en
+        # perform_create() para 'crear'.
+        instance = serializer.instance
+        canal = instance.canal_ingreso
+        canales_permitidos = get_permisos_usuario(self.request.user).get('tramites_canales', {})
+        if 'editar' not in canales_permitidos.get(canal, []):
+            raise PermissionDenied(f'No tienes permiso para editar trámites del canal "{canal}".')
+
+        persona_datos       = serializer.validated_data.pop('persona_datos', None)
+        actualizar_persona  = serializer.validated_data.pop('actualizar_persona', False)
+        persona_incluida    = 'persona' in serializer.validated_data
+        persona             = serializer.validated_data.get('persona')
+        cedula_anterior     = instance.cedula_firmante
+
+        with transaction.atomic():
+            if not persona and persona_datos and persona_datos.get('numero_identificacion'):
+                datos = PersonaSnapshotInlineSerializer(data=persona_datos)
+                datos.is_valid(raise_exception=True)
+                datos = dict(datos.validated_data)
+                numero_id = datos.pop('numero_identificacion')
+                persona, _creada = Persona.objects.get_or_create(
+                    numero_identificacion=numero_id,
+                    defaults=datos,
+                )
+                serializer.validated_data['persona'] = persona
+                persona_incluida = True
+
+            if not persona_incluida:
+                # El operador no resolvió una Persona en esta edición (no
+                # buscó ni creó una nueva). Si aun así cambió manualmente el
+                # texto de cedula_firmante respecto al valor que ya tenía el
+                # trámite, la Persona vinculada (si la había) ya no
+                # necesariamente corresponde a esa identificación — se
+                # desvincula en vez de dejar un persona_id desincronizado
+                # (RF-TRAM-009 sección 10). Si cedula_firmante no cambió
+                # (incluye el caso de trámites antiguos con NULL que se abren
+                # y guardan sin tocarla — sección 15), no se toca persona.
+                nueva_cedula = serializer.validated_data.get('cedula_firmante', cedula_anterior)
+                if (nueva_cedula or None) != (cedula_anterior or None):
+                    serializer.validated_data['persona'] = None
+                    persona_incluida = True
+                    persona = None
+
+            if persona_incluida and persona:
+                # Igual que en creación: la identificación mostrada como
+                # snapshot siempre proviene de la Persona con la que el
+                # trámite quedó vinculado en esta edición, no de texto suelto.
+                serializer.validated_data['cedula_firmante'] = persona.numero_identificacion
+
+            if persona and actualizar_persona:
+                telefono = serializer.validated_data.get('telefono_contacto', instance.telefono_contacto)
+                correo   = serializer.validated_data.get('correo_contacto', instance.correo_contacto)
+                cambios = {}
+                if telefono and telefono != persona.telefono_movil:
+                    cambios['telefono_movil'] = telefono
+                if correo and correo != persona.email:
+                    cambios['email'] = correo
+                if cambios:
+                    Persona.objects.filter(pk=persona.pk).update(**cambios)
+
+            tramite = serializer.save()
+            Seguimiento.objects.create(
+                tramite=tramite,
+                estado_anterior=tramite.estado,
+                estado_nuevo=tramite.estado,
+                observacion='Edición de trámite: datos del oficio/firmante actualizados.',
+                usuario=self.request.user,
+                unidad=tramite.unidad_receptora,
+            )
 
     @action(detail=True, methods=['post'], url_path='cambiar_estado')
     def cambiar_estado(self, request, pk=None):
@@ -161,7 +324,7 @@ class TramiteViewSet(viewsets.ModelViewSet):
                 tramite.usuario_asignado_id = request.data['usuario_asignado']
 
         tramite.save()
-        if tramite.persona.notificacion_email and tramite.persona.email:
+        if tramite.persona and tramite.persona.notificacion_email and tramite.persona.email:
             from apps.auditoria.emails import email_notificacion_ciudadano
             email_notificacion_ciudadano(
                 tramite.persona.email,
@@ -241,7 +404,7 @@ class PortalCiudadanoView(APIView):
                             'asunto':          t.asunto,
                             'estado':          t.get_estado_display(),
                             'estado_key':      t.estado,
-                            'categoria':       t.tipo_tramite.categoria.nombre,
+                            'categoria':       t.tipo_tramite.categoria.nombre if t.tipo_tramite_id else None,
                             'fecha_ingreso':   t.fecha_ingreso.strftime('%d/%m/%Y'),
                             'fecha_limite':    t.fecha_limite.strftime('%d/%m/%Y'),
                             'fecha_resolucion': t.fecha_resolucion.strftime('%d/%m/%Y %H:%M') if t.fecha_resolucion else None,
@@ -264,14 +427,14 @@ class PortalCiudadanoView(APIView):
                 'tipo':            'detalle',
                 'numero_tramite':  tramite.numero_tramite,
                 'asunto':          tramite.asunto,
-                'tipo_tramite':    tramite.tipo_tramite.nombre,
-                'categoria':       tramite.tipo_tramite.categoria.nombre,
+                'tipo_tramite':    tramite.tipo_tramite.nombre if tramite.tipo_tramite_id else None,
+                'categoria':       tramite.tipo_tramite.categoria.nombre if tramite.tipo_tramite_id else None,
                 'estado':          tramite.get_estado_display(),
                 'estado_key':      tramite.estado,
                 'prioridad':       tramite.prioridad,
                 'canal_ingreso':   tramite.canal_ingreso,
-                'unidad':          tramite.unidad_responsable.nombre,
-                'unidad_siglas':   tramite.unidad_responsable.siglas,
+                'unidad':          tramite.unidad_responsable.nombre if tramite.unidad_responsable_id else None,
+                'unidad_siglas':   tramite.unidad_responsable.siglas if tramite.unidad_responsable_id else None,
                 'fecha_ingreso':   tramite.fecha_ingreso.strftime('%d/%m/%Y %H:%M'),
                 'fecha_limite':    tramite.fecha_limite.strftime('%d/%m/%Y'),
                 'fecha_resolucion': tramite.fecha_resolucion.strftime('%d/%m/%Y %H:%M') if tramite.fecha_resolucion else None,

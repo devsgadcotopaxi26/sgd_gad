@@ -83,7 +83,11 @@ class Persona(models.Model):
     parroquia             = models.CharField(max_length=80, blank=True)
     direccion             = models.TextField(blank=True)
     fecha_nacimiento      = models.DateField(null=True, blank=True)
-    genero                = models.CharField(max_length=20, blank=True)
+    # null=True (no solo blank=True): la BD tiene un CHECK heredado que solo
+    # acepta 'masculino'/'femenino'/'otro'/'no_indica' o NULL — nunca ''.
+    # Sin null=True, Django intenta guardar '' cuando no se especifica y la
+    # inserción falla para cualquier Persona nueva sin este dato.
+    genero                = models.CharField(max_length=20, null=True, blank=True)
     nacionalidad          = models.CharField(max_length=60, default='Ecuatoriana')
     usuario               = models.ForeignKey(
         'usuarios.Usuario', null=True, blank=True,
@@ -125,10 +129,8 @@ class Tramite(models.Model):
     ]
     CANAL_CHOICES = [
         ('ventanilla', 'Ventanilla'),
-        ('web',        'Portal web'),
         ('email',      'Correo electrónico'),
-        ('oficio',     'Oficio'),
-        ('telefono',   'Teléfono'),
+        ('web',        'Digital / Web'),
     ]
     PRIORIDAD_CHOICES = [
         ('normal',      'Normal'),
@@ -145,14 +147,44 @@ class Tramite(models.Model):
 
     uuid                  = models.UUIDField(unique=True, editable=False)
     numero_tramite        = models.CharField(max_length=30, unique=True)
-    tipo_tramite          = models.ForeignKey(TipoTramite, on_delete=models.PROTECT)
-    persona               = models.ForeignKey(Persona, on_delete=models.PROTECT, related_name='tramites')
+    # tipo_tramite y persona son opcionales: en el registro inicial de
+    # Ventanilla no siempre se conoce la clasificación del trámite ni existe
+    # una Persona identificada — se completan/relacionan después si aplica.
+    tipo_tramite          = models.ForeignKey(TipoTramite, on_delete=models.PROTECT, null=True, blank=True)
+    persona               = models.ForeignKey(Persona, on_delete=models.PROTECT, related_name='tramites', null=True, blank=True)
+
+    # --- Datos del oficio recibido en el registro inicial ---
+    numero_oficio         = models.CharField(max_length=50, blank=True, help_text='Numeración institucional del oficio; puede ser "S/N"')
+    fecha_documento       = models.DateField(null=True, blank=True, help_text='Fecha que consta en el oficio recibido (distinta de fecha_ingreso)')
+    procedencia           = models.CharField(max_length=200, blank=True, help_text='Institución/organización/persona de la que proviene el oficio')
+    firmante_oficio       = models.CharField(max_length=200, blank=True, help_text='Quien firma el oficio, en texto libre — no depende de persona')
+    # Snapshot histórico de la identificación del firmante AL MOMENTO de este
+    # trámite — deliberadamente independiente de Persona.numero_identificacion
+    # (que puede no existir, o cambiar de titular en un caso límite). NO usar
+    # como fuente de verdad para nada distinto de "qué identificación constaba
+    # en este trámite"; nunca reconstruir desde Persona. null=True (y no solo
+    # blank=True) porque debe poder quedar sin valor real cuando no hubo
+    # identificación disponible, no solo cadena vacía.
+    cedula_firmante       = models.CharField(max_length=20, null=True, blank=True, help_text='Identificación (cédula/RUC) del firmante registrada para este trámite — snapshot histórico, no depende de Persona')
+    cargo_firmante        = models.CharField(max_length=150, blank=True, help_text='Cargo de quien firma el oficio')
+    # Snapshot del contacto AL MOMENTO de este trámite — deliberadamente
+    # independientes de Persona.telefono_movil/email, que pueden cambiar con
+    # el tiempo. Actualizar los datos maestros de Persona no debe alterar
+    # estos valores históricos.
+    telefono_contacto     = models.CharField(max_length=20, blank=True, help_text='Teléfono de contacto vigente para este trámite (no depende de Persona)')
+    correo_contacto       = models.EmailField(max_length=200, blank=True, help_text='Correo de contacto vigente para este trámite (no depende de Persona)')
+
     canal_ingreso         = models.CharField(max_length=30, choices=CANAL_CHOICES, default='ventanilla')
+    # Opcionales (RN-TRAM-011): la unidad receptora/responsable no siempre se
+    # conoce al registrar. unidad_responsable en particular es un concepto
+    # distinto de "quién registra" — se asigna después, en el direccionamiento.
     unidad_receptora      = models.ForeignKey(
-        'organizacion.Unidad', on_delete=models.PROTECT, related_name='tramites_recibidos'
+        'organizacion.Unidad', on_delete=models.PROTECT, related_name='tramites_recibidos',
+        null=True, blank=True,
     )
     unidad_responsable    = models.ForeignKey(
-        'organizacion.Unidad', on_delete=models.PROTECT, related_name='tramites_responsables'
+        'organizacion.Unidad', on_delete=models.PROTECT, related_name='tramites_responsables',
+        null=True, blank=True,
     )
     usuario_receptor      = models.ForeignKey(
         'usuarios.Usuario', null=True, blank=True,
@@ -191,6 +223,16 @@ class Tramite(models.Model):
 
     def __str__(self):
         return f'{self.numero_tramite} — {self.asunto[:50]}'
+
+    def save(self, *args, **kwargs):
+        # RN-TRAM-002: numero_oficio siempre debe quedar con un valor —
+        # "S/N" si el usuario lo deja vacío o solo con espacios. Se normaliza
+        # aquí (no en el serializer) para que rija tanto en creación como en
+        # cualquier edición futura, sin depender del frontend.
+        self.numero_oficio = self.numero_oficio.strip() if self.numero_oficio else ''
+        if not self.numero_oficio:
+            self.numero_oficio = 'S/N'
+        super().save(*args, **kwargs)
 
 
 class Seguimiento(models.Model):

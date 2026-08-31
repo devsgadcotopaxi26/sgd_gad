@@ -83,8 +83,10 @@ class UsuarioResumenSerializer(serializers.ModelSerializer):
         ]
 
     def get_is_admin(self, obj):
+        # Mismo criterio que mis_permisos().es_admin: solo ADMIN_GENERAL.
+        # RESPONSABLE_ARCHIVO no es administrador general del sistema.
         return obj.is_superuser or obj.roles.filter(
-            rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
+            rol__codigo='ADMIN_GENERAL', activo=True
         ).exists()
 
 

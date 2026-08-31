@@ -131,8 +131,8 @@ def reporte_tramites(tramites, filtros: dict) -> str:
         <tr>
           <td><strong>{t.numero_tramite}</strong></td>
           <td>{t.asunto[:60]}</td>
-          <td>{t.persona.nombre_completo}</td>
-          <td>{t.unidad_responsable.siglas or t.unidad_responsable.nombre[:15]}</td>
+          <td>{t.persona.nombre_completo if t.persona_id else (t.firmante_oficio or '—')}</td>
+          <td>{(t.unidad_responsable.siglas or t.unidad_responsable.nombre[:15]) if t.unidad_responsable_id else 'Sin asignar'}</td>
           <td>{t.fecha_ingreso.strftime('%d/%m/%Y')}</td>
           <td>{t.fecha_limite.strftime('%d/%m/%Y')}</td>
           <td><span class="badge {badge}">{t.get_estado_display()}</span></td>

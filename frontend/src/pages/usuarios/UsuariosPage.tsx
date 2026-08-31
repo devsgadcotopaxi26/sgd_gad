@@ -236,9 +236,9 @@ function PanelDetalle({ usuario, onClose }: { usuario: Usuario; onClose: () => v
             </button>
 
             <div style={{ marginTop: 8, paddingTop: 12, borderTop: `1px solid ${T.rowBd}` }}>
-              <p style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8 }}>Roles asignados</p>
+              <p style={{ fontSize: 10, fontWeight: 700, color: T.rowSub, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 8 }}>Rol funcional</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                {rolesActivos.length === 0 && <span style={{ fontSize: 12, color: T.rowSub }}>Sin roles</span>}
+                {rolesActivos.length === 0 && <span style={{ fontSize: 12, color: T.rowSub }}>Sin rol asignado</span>}
                 {rolesActivos.map(r => (
                   <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 20, background: '#e8f1fd', color: '#002f6c', fontSize: 12, fontWeight: 600 }}>
                     <Shield size={11} />
@@ -247,12 +247,20 @@ function PanelDetalle({ usuario, onClose }: { usuario: Usuario; onClose: () => v
                   </span>
                 ))}
               </div>
+              {rolesActivos.length > 1 && (
+                <p style={{ fontSize: 10, color: '#d97706', marginBottom: 8 }}>
+                  Este usuario tiene más de un rol activo de una asignación anterior. Elige uno abajo para dejar solo ese activo.
+                </p>
+              )}
               {rolesNoAsignados.length > 0 && (
                 <select className="w-full px-3 py-2 text-sm rounded-xl outline-none" style={inputStyle} defaultValue="" onChange={e => { if (e.target.value) asignarRol.mutate(Number(e.target.value)) }}>
-                  <option value="">+ Asignar rol…</option>
+                  <option value="">Cambiar rol funcional a…</option>
                   {rolesNoAsignados.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
                 </select>
               )}
+              <p style={{ fontSize: 10, color: T.rowSub, marginTop: 6 }}>
+                Un usuario tiene un único rol funcional activo — al elegir uno nuevo, el anterior se desactiva automáticamente.
+              </p>
             </div>
           </div>
         )}

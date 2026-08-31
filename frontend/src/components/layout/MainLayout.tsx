@@ -36,7 +36,7 @@ const NAV = [
   {
     section: 'Administración',
     items: [
-      { to: '/organigrama', label: 'Organigrama', icon: Building2, modulo: 'ajustes'   },
+      { to: '/organigrama', label: 'Organigrama', icon: Building2, modulo: 'organigrama' },
       { to: '/usuarios',    label: 'Usuarios',    icon: Users,     modulo: 'usuarios',  accion: 'editar' },
       { to: '/reportes',    label: 'Reportes',    icon: BarChart2, modulo: 'reportes',  accion: 'generar' },
       { to: '/auditoria',   label: 'Auditoría',   icon: Shield,    modulo: 'ajustes'   },
@@ -55,6 +55,13 @@ export default function MainLayout() {
   const [temaOpen, setTemaOpen]   = useState(false)
   const { usuario, logout }       = useAuthStore()
   const { puede, cargado, cargar } = usePermisosStore()
+  // Sidebar general de módulos: solo tiene sentido si hay MÁS de un módulo
+  // entre los que elegir. Un usuario cuyo único módulo funcional es
+  // Documentos (rol USUARIO) no gana nada con él → se oculta y el workspace
+  // documental ocupa todo el ancho. La condición es por MÓDULOS disponibles,
+  // no por el nombre del rol (ver permisosStore.tieneAccesoGestion).
+  const tieneAccesoGestion = usePermisosStore(s => s.tieneAccesoGestion())
+  const soloDocumentos = cargado && !tieneAccesoGestion
   const { tema, setTema }         = useThemeStore()
   const T                         = THEMES[tema].vars
   const navigate                  = useNavigate()
@@ -75,9 +82,6 @@ export default function MainLayout() {
     ?? 'SGD'
 
   const enDocumentos      = location.pathname.startsWith('/documentos')
-  // Solo ADMIN_ARCHIVO y ADMIN_GENERAL tienen 'usuarios → ver'.
-  // USUARIO y ARCHIVO no tienen acceso a usuarios → sidebar oculto.
-  const ocultarSidebar    = !puede('usuarios', 'ver')
   const fullscreenContent = enDocumentos
 
   return (
@@ -86,10 +90,14 @@ export default function MainLayout() {
       style={{ display: 'flex', height: '100vh', background: T.gradientPrimary, overflow: 'hidden' }}
     >
 
-      {/* ── Sidebar oscuro institucional ── */}
+      {/* ── Sidebar oscuro institucional ──
+         Se omite por completo (no solo se colapsa) cuando el usuario solo
+         tiene acceso al módulo Documentos: la navegación real de ese caso
+         vive en el sidebar de bandejas de DocumentosPage. */}
+      {!soloDocumentos && (
       <aside style={{
-        width: ocultarSidebar ? 0 : collapsed ? 68 : 240,
-        minWidth: ocultarSidebar ? 0 : collapsed ? 68 : 240,
+        width: collapsed ? 68 : 240,
+        minWidth: collapsed ? 68 : 240,
         background: T.sbBg,
         borderRight: 'none',
         display: 'flex',
@@ -293,6 +301,7 @@ export default function MainLayout() {
           )}
         </div>
       </aside>
+      )}
 
       {/* ── Contenido principal ── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -309,7 +318,8 @@ export default function MainLayout() {
           flexShrink: 0,
           boxShadow: T.tbShadow,
         }}>
-          {!ocultarSidebar && (
+          {/* Colapsar/expandir el sidebar general — sin sidebar no aplica. */}
+          {!soloDocumentos && (
             <button onClick={() => setCollapsed(!collapsed)}
               style={{
                 width: 32, height: 32, borderRadius: 8, border: `1px solid ${T.tbBorder}`,

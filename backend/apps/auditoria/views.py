@@ -79,8 +79,8 @@ class DashboardStatsView(APIView):
                 'numero':         t.numero_tramite,
                 'asunto':         t.asunto[:50],
                 'estado':         t.estado,
-                'persona':        t.persona.nombre_completo,
-                'unidad':         t.unidad_responsable.siglas or t.unidad_responsable.nombre[:20],
+                'persona':        t.persona.nombre_completo if t.persona_id else (t.firmante_oficio or '—'),
+                'unidad':         (t.unidad_responsable.siglas or t.unidad_responsable.nombre[:20]) if t.unidad_responsable_id else 'Sin asignar',
                 'fecha_ingreso':  t.fecha_ingreso.strftime('%d/%m/%Y %H:%M'),
                 'dias_restantes': (t.fecha_limite - hoy).days if t.estado not in ('resuelto','archivado','rechazado') else None,
             })
@@ -110,7 +110,7 @@ class DashboardStatsView(APIView):
             actividad.append({
                 'tipo':   'tramite',
                 'texto':  f'Trámite {t.numero_tramite} — {t.get_estado_display()}',
-                'unidad': t.unidad_responsable.siglas or '',
+                'unidad': (t.unidad_responsable.siglas or '') if t.unidad_responsable_id else '',
                 'fecha':  t.modificado_en.strftime('%d/%m %H:%M'),
                 'color':  '#002f6c',
             })
@@ -142,7 +142,7 @@ class DashboardStatsView(APIView):
             proximos_vencer.append({
                 'numero':  t.numero_tramite,
                 'titulo':  t.asunto[:40],
-                'unidad':  t.unidad_responsable.siglas or t.unidad_responsable.nombre[:15],
+                'unidad':  (t.unidad_responsable.siglas or t.unidad_responsable.nombre[:15]) if t.unidad_responsable_id else 'Sin asignar',
                 'dias':    dias,
                 'tipo':    'tramite',
             })

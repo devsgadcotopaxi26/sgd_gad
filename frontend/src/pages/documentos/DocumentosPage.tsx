@@ -14,6 +14,8 @@ import VincularExpedienteModal from '@/components/ui/VincularExpedienteModal'
 import ModalFirmaElectronica from '@/components/ui/ModalFirmaElectronica'
 import ModalEnviarEmail from '@/components/ui/ModalEnviarEmail'
 import EditorDocumento from '@/components/ui/EditorDocumento'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import ModalDetalleDocumento from '@/components/ui/ModalDetalleDocumento'
 import {
   Inbox, Edit3, Send, Clock, CheckSquare, Archive, ClipboardList,
   Folder, Printer, Search, Plus, X, Download,
@@ -49,6 +51,25 @@ const BANDEJAS = [
   { key: 'por_imprimir',     label: 'Por Imprimir',      icon: Printer,          seccion: 'otras' },
 ]
 
+// Bandejas donde "leído" representa realmente algo que otra persona te
+// entregó y todavía no revisaste: Recibidos y Tareas Recibidas (obvio), y
+// En Elaboración porque un ítem puede llegar por reasignación (nueva
+// responsabilidad para el destinatario) o por creación de un tercero como
+// DE — en ambos casos nace `leido=false` (ver DocumentoCrearSerializer.
+// create() / reasignar_a). El resto de bandejas (Enviados, No enviados,
+// Tareas enviadas, Reasignados, Archivados, Eliminados, Por imprimir) son
+// vistas del propio emisor/una acción ya tomada por el usuario — mostrar
+// "no leídos" ahí no aporta información real (§14/§22), así que solo
+// muestran el total.
+const BANDEJAS_CON_NO_LEIDOS = new Set(['en_elaboracion', 'recibidos', 'tareas_recibidas'])
+
+// Formato único del contador de bandeja (estilo Quipux). El primer número
+// (no leídos) solo se muestra cuando representa una alerta real — con cero
+// pendientes, "0/252" no dice nada que "252" no diga ya, así que se omite.
+// Centralizado acá para no repetir la condición en cada bandeja del sidebar.
+const formatBandejaCount = (total: number, noLeidos?: number): string =>
+  noLeidos && noLeidos > 0 ? `${noLeidos}/${total}` : `${total}`
+
 const TIPO_COLORS: Record<string, { bg: string; text: string }> = {
   OFI: { bg: '#e8f1fd', text: '#002f6c' },
   MEM: { bg: '#faeeda', text: '#854f0b' },
@@ -80,7 +101,10 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const T = THEMES[tema].vars
   const authUsuario = useAuthStore(s => s.usuario)
   const [comentario, setComentario] = useState('')
-  const [tabActiva, setTab] = useState<'preview' | 'info' | 'adjuntos' | 'seguimiento'>('preview')
+  // 'info' es ahora la pestaña unificada "Información del documento"
+  // (previsualización + metadatos); ya no existe una pestaña "Vista previa"
+  // independiente.
+  const [tabActiva, setTab] = useState<'info' | 'adjuntos' | 'seguimiento'>('info')
   const [mostrarVincular, setMostrarVincular] = useState(false)
   const [mostrarFirma, setMostrarFirma] = useState(false)
   const [mostrarEmail, setMostrarEmail] = useState(false)
@@ -95,6 +119,7 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const [enviandoDirecto, setEnviandoDirecto] = useState(false)
   const [imprimiendo, setImprimiendo] = useState(false)
   const [errorRecuperar, setErrorRecuperar] = useState('')
+  const [errorEnviarDirecto, setErrorEnviarDirecto] = useState('')
   const [mostrarEliminarBorrador, setMostrarEliminarBorrador] = useState(false)
   const [comentarioEliminar, setComentarioEliminar] = useState('')
   const [mostrarRestaurar, setMostrarRestaurar] = useState(false)
@@ -104,6 +129,7 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const [errorEliminarDefinitivo, setErrorEliminarDefinitivo] = useState('')
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [pdfCargando, setPdfCargando] = useState(false)
+  const [pdfError, setPdfError] = useState(false)
   const [pdfEsFirmado, setPdfEsFirmado] = useState(false)
   const pdfDocIdRef = useRef<number | null>(null)
 
@@ -112,51 +138,51 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
     if (trigger.action === 'reasignar') setMostrarReasignar(true)
     if (trigger.action === 'firmar') setMostrarFirma(true)
     if (trigger.action === 'enviar') setMostrarEnviar(true)
-    if (trigger.action === 'preview') setTab('preview')
-    if (trigger.action === 'comentar') setTab('preview')
+    if (trigger.action === 'preview') setTab('info')
+    if (trigger.action === 'comentar') setTab('info')
   }, [trigger?.t])
 
-  // Limpiar PDF al cambiar de documento
+  // Limpiar PDF al cambiar de documento — evita mostrar el PDF de un
+  // documento distinto mientras carga el nuevo (§13: preview e información
+  // siempre deben corresponder al mismo documento_id).
   useEffect(() => {
     if (pdfDocIdRef.current !== item.documento_id) {
       setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
       setPdfEsFirmado(false)
+      setPdfError(false)
       pdfDocIdRef.current = item.documento_id
     }
   }, [item.documento_id])
 
-  const { data: docDetalle } = useQuery({
+  const { data: docDetalle, isLoading: infoCargando, isError: infoError } = useQuery({
     queryKey: ['doc-detalle', item.documento_id],
     queryFn: () => documentosService.obtener(item.documento_id),
   })
 
   const pdfFirmadoUrl = docDetalle?.pdf_firmado_url ?? null
 
-  // Cargar PDF en la pestaña preview; siempre prefiere el PDF firmado
+  // Carga el PDF preferido (firmado si existe, si no el WeasyPrint base).
+  // Se usa tanto desde el efecto automático como desde "Reintentar".
+  const cargarPdf = () => {
+    setPdfCargando(true)
+    setPdfError(false)
+    const promesa = (pdfFirmadoUrl && !pdfEsFirmado)
+      ? documentosService.obtenerUrlBlobAdjunto(pdfFirmadoUrl).then(url => { setPdfUrl(url); setPdfEsFirmado(true) })
+      : documentosService.obtenerUrlPDF(item.documento_id).then(url => setPdfUrl(url))
+    promesa.catch(() => setPdfError(true)).finally(() => setPdfCargando(false))
+  }
+
+  // Carga el PDF dentro de la pestaña "Información del documento"; siempre
+  // prefiere el PDF firmado. No reintenta solo automáticamente si ya falló
+  // una vez (evita bucles) — el botón "Reintentar" llama a cargarPdf directo.
   useEffect(() => {
-    if (tabActiva !== 'preview' || pdfCargando) return
+    if (tabActiva !== 'info' || pdfCargando || pdfError) return
     // Ya tenemos el PDF correcto cargado
     if (pdfUrl && pdfEsFirmado) return
     if (pdfUrl && !pdfFirmadoUrl) return
-    // Hay PDF firmado disponible pero no está cargado (o está el WeasyPrint)
-    if (pdfFirmadoUrl && !pdfEsFirmado) {
-      setPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null })
-      setPdfCargando(true)
-      documentosService.obtenerUrlBlobAdjunto(pdfFirmadoUrl)
-        .then(url => { setPdfUrl(url); setPdfEsFirmado(true) })
-        .catch(() => {})
-        .finally(() => setPdfCargando(false))
-      return
-    }
-    // No hay PDF firmado: cargar WeasyPrint si no hay nada
-    if (!pdfUrl) {
-      setPdfCargando(true)
-      documentosService.obtenerUrlPDF(item.documento_id)
-        .then(url => setPdfUrl(url))
-        .catch(() => {})
-        .finally(() => setPdfCargando(false))
-    }
-  }, [tabActiva, item.documento_id, pdfUrl, pdfCargando, pdfFirmadoUrl, pdfEsFirmado])
+    // Hay PDF firmado disponible pero no está cargado, o no hay nada cargado
+    if ((pdfFirmadoUrl && !pdfEsFirmado) || !pdfUrl) cargarPdf()
+  }, [tabActiva, item.documento_id, pdfUrl, pdfCargando, pdfError, pdfFirmadoUrl, pdfEsFirmado])
 
   const { data: usuarios } = useQuery({
     queryKey: ['usuarios-reasignar', busquedaUsuario],
@@ -277,11 +303,14 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   const esExterno = !!item.remitente_entidad
 
   return (
+    // Contenido puro: el posicionamiento (antes panel lateral absoluto de
+    // 680px) ahora lo resuelve ModalDetalleDocumento — este div solo llena
+    // la caja del modal y mantiene `position:relative` para que los overlays
+    // internos (Reasignar, Enviar, Eliminar…) sigan anclando con inset:0.
     <div style={{
-      position: 'absolute', right: 0, top: 0, bottom: 0, width: 680,
-      background: T.ctHdrBg, borderLeft: `3px solid ${T.pnBd}`,
-      display: 'flex', flexDirection: 'column', zIndex: 5, overflow: 'hidden',
-      boxShadow: T.pnSh,
+      width: '100%', height: '100%', position: 'relative',
+      background: T.ctHdrBg,
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       {/* Reasignar overlay */}
       {mostrarReasignar && (
@@ -418,6 +447,11 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               <span style={{ color: '#da291c', fontWeight: 600 }}>Marcar como urgente</span>
             </label>
           </div>
+          {enviarDoc.isError && (
+            <div style={{ margin: '0 14px 8px', padding: '6px 10px', borderRadius: 6, background: 'rgba(218,41,28,.12)', color: '#da291c', fontSize: 11 }}>
+              {(enviarDoc.error as any)?.response?.data?.detail || 'No se pudo enviar el documento.'}
+            </div>
+          )}
           <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 10, color: T.rowSub }}>{enviarDestinatarios.length} destinatario(s)</span>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -615,7 +649,14 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
           const b = item.bandeja
           const e = item.estado_documento
           const anulado = e === 'anulado'
-          const enElab  = b === 'en_elaboracion'
+          // `bandeja` sigue siendo 'en_elaboracion' en BD para un ítem ya
+          // reasignado (accion_tomada cambia, no bandeja) — por eso se
+          // excluye explícitamente aquí. Sin este filtro, Firmar/Enviar/
+          // Eliminar (todos derivados de enElab) seguirían apareciendo para
+          // quien ya no es responsable del documento (visto desde
+          // "Reasignados"). Editar no depende de esto: su visibilidad la
+          // decide el prop `onEditar` que ya llega correctamente filtrado.
+          const enElab  = b === 'en_elaboracion' && item.accion_tomada !== 'reasignado'
           const recibido = ['recibidos', 'tareas_recibidas'].includes(b)
 
           const minRec = (item as any).minutos_para_recuperar as number | null | undefined
@@ -634,13 +675,24 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
               visible: (enElab || b === 'no_enviados') && !anulado,
               action: async () => {
                 if (enviandoDirecto) return
+                setErrorEnviarDirecto('')
+                // docDetalle ya trae los destinatarios reales del documento
+                // (item, de la lista de bandeja, no los incluye) — validar
+                // aquí en vez de abrir el editor solo para descubrir que falta.
+                if (!docDetalle || (docDetalle.destinatarios?.length ?? 0) === 0) {
+                  setErrorEnviarDirecto('Este documento no tiene destinatarios. Edítelo para asignar al menos uno antes de enviarlo.')
+                  return
+                }
                 setEnviandoDirecto(true)
                 try {
                   await documentosService.enviar(item.documento_id)
                   qc.invalidateQueries({ queryKey: ['bandeja'] })
                   qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
                   onClose()
-                } catch { setEnviandoDirecto(false) }
+                } catch (e: any) {
+                  setEnviandoDirecto(false)
+                  setErrorEnviarDirecto(e.response?.data?.detail || 'No se pudo enviar el documento.')
+                }
               } },
             { label: 'Distribuir', icon: Send,           accent: false, warn: false,
               visible: ['recibidos', 'enviados'].includes(b) && !anulado,             action: () => setMostrarEnviar(true) },
@@ -683,36 +735,23 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
                   {errorRecuperar}
                 </div>
               )}
+              {errorEnviarDirecto && (
+                <div style={{ marginTop: 6, padding: '5px 10px', borderRadius: 6, background: 'rgba(218,41,28,.15)', color: '#fca5a5', fontSize: 11 }}>
+                  {errorEnviarDirecto}
+                </div>
+              )}
             </>
           )
         })()}
-      </div>
-
-      {/* Meta */}
-      <div style={{ padding: '10px 14px', background: T.pnMeta, borderBottom: `1px solid ${T.pnMetaBd}` }}>
-        {[
-          { label: 'De:',            value: item.unidad_origen_siglas || item.unidad_origen_nombre },
-          ...(esExterno ? [{ label: 'Remitente:', value: item.remitente_entidad }] : []),
-          { label: 'Elaborado por:', value: item.creado_por_nombre },
-          ...((item as any).firmante_nombre ? [{ label: 'Firmará / Enviará:', value: `${(item as any).firmante_nombre}${(item as any).firmante_cargo ? ` — ${(item as any).firmante_cargo}` : ''}` }] : []),
-          { label: 'Fecha:',         value: new Date(item.fecha_documento).toLocaleString('es-EC') },
-          ...(item.fecha_limite ? [{ label: 'Vence:', value: new Date(item.fecha_limite).toLocaleDateString('es-EC'), danger: true }] : []),
-        ].map(({ label, value, danger }: any) => (
-          <div key={label} style={{ display: 'flex', gap: 8, marginBottom: 4, fontSize: 11 }}>
-            <span style={{ color: T.rowSub, minWidth: 80, flexShrink: 0 }}>{label}</span>
-            <span style={{ fontWeight: 500, color: danger ? '#da291c' : T.rowTxt }}>{value}</span>
-          </div>
-        ))}
       </div>
 
       {/* Tabs — segmented control */}
       <div style={{ padding: '8px 12px', borderBottom: `0.5px solid ${T.pnMetaBd}`, flexShrink: 0, background: T.pnMeta }}>
         <div style={{ display: 'flex', background: T.statsBg, borderRadius: 10, padding: 3, gap: 2 }}>
           {([
-            ['preview',     'Vista previa', FileText],
-            ['info',        'Información',  Eye],
-            ['adjuntos',    'Anexos',     Folder],
-            ['seguimiento', 'Recorrido',    Clock],
+            ['info',        'Información del documento', FileText],
+            ['adjuntos',    'Anexos',                    Folder],
+            ['seguimiento', 'Recorrido',                 Clock],
           ] as [string, string, any][]).map(([k, l, TabIcon]) => (
             <button key={k} onClick={() => setTab(k as any)}
               style={{
@@ -733,84 +772,163 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
       {/* Tab content */}
       <div style={{
         flex: 1,
-        padding: tabActiva === 'preview' ? 0 : 14,
-        overflow: tabActiva === 'preview' ? 'hidden' : 'auto',
+        padding: tabActiva === 'info' ? 0 : 14,
+        overflow: tabActiva === 'info' ? 'hidden' : 'auto',
         display: 'flex', flexDirection: 'column',
       }}>
-        {tabActiva === 'preview' ? (
-          pdfCargando ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: T.rowSub }}>
-              <div style={{ width: 28, height: 28, border: `3px solid ${T.rowBd}`, borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-              <span style={{ fontSize: 12 }}>Cargando vista previa…</span>
-            </div>
-          ) : pdfUrl ? (
-            <iframe
-              src={pdfUrl}
-              style={{ flex: 1, width: '100%', border: 'none', display: 'block' }}
-              title="Vista previa del documento"
-            />
-          ) : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.rowSub, fontSize: 12 }}>
-              No se pudo cargar la vista previa
-            </div>
-          )
-        ) : tabActiva === 'info' ? (
-          <div>
-            {(() => {
-              const lR = (l: string, v?: string | null) => v ? (
-                <div style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
-                  <span style={{ fontSize: 10, color: T.rowSub, width: 110, flexShrink: 0 }}>{l}</span>
-                  <span style={{ fontSize: 11, color: T.rowTxt, fontWeight: 500 }}>{v}</span>
+        {tabActiva === 'info' ? (
+          // "Información del documento": previsualización real (izquierda,
+          // desktop) + metadatos (derecha). En pantallas angostas se apilan
+          // (información primero, previsualización debajo — §24). Ambas
+          // columnas leen del mismo documento_id (docDetalle/pdf ya están
+          // re-sincronizados por documento vía pdfDocIdRef / doc-detalle
+          // query key — §13), y cada una tiene su propio estado de carga y
+          // error independiente (§14/§15/§16).
+          <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+            {/* Previsualización */}
+            <div className="flex-1 min-w-0 lg:order-1" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#525659' }}>
+              {pdfCargando ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: '#e5e7eb' }}>
+                  <div style={{ width: 28, height: 28, border: '3px solid rgba(255,255,255,.25)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <span style={{ fontSize: 12 }}>Cargando documento…</span>
                 </div>
-              ) : null
-              const d = docDetalle
-              return (
-                <>
-                  {lR('N° Documento', item.numero_documento)}
-                  {lR('Fecha', new Date(item.fecha_documento).toLocaleString('es-EC'))}
-                  {lR('Estado', ESTADO_COLORS[item.estado_documento]?.label ?? item.estado_documento)}
-                  {lR('Tipo', item.tipo_nombre)}
-                  {lR('Asunto', item.asunto)}
-                  {d?.resumen && lR('Resumen', d.resumen)}
-                  {lR('Unidad origen', item.unidad_origen_nombre)}
-                  {lR('Elaborado por', item.creado_por_nombre)}
-                  {(item as any).firmante_nombre && lR('Firmará / Enviará', `${(item as any).firmante_nombre}${(item as any).firmante_cargo ? ` — ${(item as any).firmante_cargo}` : ''}`)}
-                  {item.remitente_entidad && (
-                    <>
-                      <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Remitente externo</div>
-                      {lR('Entidad', item.remitente_entidad)}
-                      {lR('Nombre', item.remitente_nombre)}
-                      {lR('Email', item.remitente_email)}
-                    </>
-                  )}
-                  {d?.destinatarios?.length > 0 && (
-                    <>
-                      <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Destinatarios</div>
-                      {d.destinatarios.map((dest: any) => (
-                        <div key={dest.id} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 5, padding: '5px 8px', background: T.rowBg, borderRadius: 7, border: `0.5px solid ${T.rowBd}` }}>
-                          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#002f6c', marginTop: 4, flexShrink: 0 }} />
-                          <div>
-                            <p style={{ fontSize: 11, fontWeight: 600, color: T.rowTxt, margin: 0 }}>{dest.usuario_nombre}</p>
-                            {dest.unidad_nombre && <p style={{ fontSize: 10, color: T.rowSub, margin: '1px 0 0' }}>{dest.unidad_nombre}</p>}
-                          </div>
-                        </div>
-                      ))}
-                    </>
-                  )}
-                  {d?.firma_bce_info && (
-                    <>
-                      <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Firma electrónica</div>
-                      <div style={{ background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
-                        <p style={{ fontWeight: 700, color: '#0f6e56', margin: '0 0 3px' }}>✓ {d.firma_bce_info.nombre ?? d.firma_bce_info.subject}</p>
-                        {d.firma_bce_info.cedula && <p style={{ color: T.rowTxt, margin: '0 0 2px' }}>CI: {d.firma_bce_info.cedula}</p>}
-                        {d.firma_bce_info.cargo  && <p style={{ color: T.rowSub, margin: '0 0 2px' }}>{d.firma_bce_info.cargo}</p>}
-                        {d.firma_bce_info.fecha  && <p style={{ color: T.rowSub, margin: 0, fontSize: 10 }}>{d.firma_bce_info.fecha}</p>}
+              ) : pdfError ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: '#e5e7eb', padding: 20, textAlign: 'center' }}>
+                  <span style={{ fontSize: 12 }}>No se pudo cargar la previsualización.</span>
+                  <button onClick={cargarPdf}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,.35)', background: 'rgba(255,255,255,.12)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    <RefreshCw size={12} /> Reintentar
+                  </button>
+                </div>
+              ) : pdfUrl ? (
+                <iframe
+                  src={pdfUrl}
+                  style={{ flex: 1, width: '100%', border: 'none', display: 'block' }}
+                  title="Vista previa del documento"
+                />
+              ) : (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#e5e7eb', fontSize: 12 }}>
+                  Sin previsualización disponible
+                </div>
+              )}
+            </div>
+
+            {/* Información del documento (metadatos) */}
+            <div className="lg:order-2 lg:w-[320px] lg:flex-shrink-0" style={{ overflowY: 'auto', padding: 14, background: T.ctHdrBg }}>
+              {infoError ? (
+                <p style={{ fontSize: 11, color: '#da291c', textAlign: 'center', padding: 16 }}>
+                  No se pudo cargar la información del documento.
+                </p>
+              ) : infoCargando || !docDetalle ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, color: T.rowSub, fontSize: 12 }}>
+                  <div style={{ width: 16, height: 16, border: `2px solid ${T.rowBd}`, borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  Cargando información…
+                </div>
+              ) : (() => {
+                const d = docDetalle
+                const Campo = (l: string, v?: string | number | null) => v != null && v !== '' ? (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
+                    <span style={{ fontSize: 10, color: T.rowSub, width: 100, flexShrink: 0 }}>{l}</span>
+                    <span style={{ fontSize: 11, color: T.rowTxt, fontWeight: 500 }}>{v}</span>
+                  </div>
+                ) : null
+                const Seccion = (t: string) => (
+                  <div style={{ marginTop: 12, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>{t}</div>
+                )
+                // "De" = remitente designado; si no hay remitente distinto, el
+                // titular del documento es quien lo elaboró (mismo criterio
+                // que usa el backend al crear el documento). "Elaborado por"
+                // es SIEMPRE quien redactó/creó el registro — nunca se infiere
+                // desde "De" (§6).
+                const deInfo = d.remitente_detalle ?? d.creado_por_detalle
+                const elaboradoPor = d.creado_por_detalle?.nombre_completo ?? d.creado_por_nombre
+                const para = (d.destinatarios ?? []).filter((x: any) => x.tipo !== 'copia')
+                const copia = (d.destinatarios ?? []).filter((x: any) => x.tipo === 'copia')
+                const estadoInfo = ESTADO_COLORS[d.estado as string] ?? { bg: '#f3f4f6', text: '#6b7280', label: d.estado }
+                return (
+                  <>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, lineHeight: 1.35, marginBottom: 10 }}>{d.asunto}</p>
+
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: estadoInfo.bg, color: estadoInfo.text }}>
+                        {estadoInfo.label}
+                      </span>
+                      {d.confidencial && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: '#fef2f2', color: '#da291c' }}>
+                          <Lock size={10} /> Confidencial
+                        </span>
+                      )}
+                      {d.requiere_respuesta && (
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: '#fffbeb', color: '#92400e' }}>
+                          Requiere respuesta
+                        </span>
+                      )}
+                    </div>
+
+                    {Seccion('Documento')}
+                    {Campo('Tipo', d.tipo_nombre)}
+                    {Campo('Número', d.numero_documento || 'Sin número (borrador)')}
+                    {Campo('Prioridad', d.prioridad === 'muy_urgente' ? 'Muy urgente' : d.prioridad === 'urgente' ? 'Urgente' : 'Normal')}
+                    {Campo('N° Referencia', item.numero_referencia)}
+                    {Campo('Responde a (Quipux)', d.quipux_origen)}
+
+                    {Seccion('Personas')}
+                    {deInfo && Campo('De', `${deInfo.nombre_completo}${deInfo.cargo ? ` — ${deInfo.cargo}` : ''}`)}
+                    {Campo('Elaborado por', elaboradoPor)}
+                    {item.remitente_entidad && (
+                      <>
+                        {Campo('Remitente externo', item.remitente_entidad)}
+                        {Campo('Nombre', item.remitente_nombre)}
+                        {Campo('Email', item.remitente_email)}
+                      </>
+                    )}
+                    {para.length > 0 && (
+                      <div style={{ marginBottom: 5 }}>
+                        <span style={{ fontSize: 10, color: T.rowSub, display: 'block', marginBottom: 3 }}>Para</span>
+                        {para.map((dest: any) => (
+                          <p key={dest.id} style={{ fontSize: 11, color: T.rowTxt, fontWeight: 500, margin: '0 0 2px' }}>
+                            • {dest.usuario_nombre}{dest.unidad_nombre ? ` — ${dest.unidad_nombre}` : ''}
+                          </p>
+                        ))}
                       </div>
-                    </>
-                  )}
-                </>
-              )
-            })()}
+                    )}
+                    {copia.length > 0 && (
+                      <div style={{ marginBottom: 5 }}>
+                        <span style={{ fontSize: 10, color: T.rowSub, display: 'block', marginBottom: 3 }}>Con copia a</span>
+                        {copia.map((dest: any) => (
+                          <p key={dest.id} style={{ fontSize: 11, color: T.rowTxt, fontWeight: 500, margin: '0 0 2px' }}>
+                            • {dest.usuario_nombre}{dest.unidad_nombre ? ` — ${dest.unidad_nombre}` : ''}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    {Seccion('Fechas')}
+                    {Campo('Elaborado', d.fecha_elaboracion ? new Date(d.fecha_elaboracion).toLocaleDateString('es-EC') : null)}
+                    {Campo('Enviado', d.fecha_envio ? new Date(d.fecha_envio).toLocaleString('es-EC') : null)}
+                    {Campo('Firmado', d.fecha_firma ? new Date(d.fecha_firma).toLocaleString('es-EC') : null)}
+                    {item.fecha_limite && (
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 5 }}>
+                        <span style={{ fontSize: 10, color: T.rowSub, width: 100, flexShrink: 0 }}>Vence</span>
+                        <span style={{ fontSize: 11, color: '#da291c', fontWeight: 700 }}>{new Date(item.fecha_limite).toLocaleDateString('es-EC')}</span>
+                      </div>
+                    )}
+
+                    {d.firma_bce_info && (
+                      <>
+                        {Seccion('Firma electrónica')}
+                        <div style={{ background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
+                          <p style={{ fontWeight: 700, color: '#0f6e56', margin: '0 0 3px' }}>✓ {d.firma_bce_info.nombre ?? d.firma_bce_info.subject}</p>
+                          {d.firma_bce_info.cedula && <p style={{ color: T.rowTxt, margin: '0 0 2px' }}>CI: {d.firma_bce_info.cedula}</p>}
+                          {d.firma_bce_info.cargo  && <p style={{ color: T.rowSub, margin: '0 0 2px' }}>{d.firma_bce_info.cargo}</p>}
+                          {d.firma_bce_info.fecha  && <p style={{ color: T.rowSub, margin: 0, fontSize: 10 }}>{d.firma_bce_info.fecha}</p>}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
           </div>
         ) : tabActiva === 'adjuntos' ? (
           <AdjuntosPanel documentoId={item.documento_id} />
@@ -979,9 +1097,13 @@ function PanelDetalleQuipux({
   const qc = useQueryClient()
   const { tema } = useThemeStore()
   const T = THEMES[tema].vars
-  const [tabActiva, setTab]               = useState<'preview' | 'info' | 'recorrido' | 'anexos'>('preview')
+  // 'info' es ahora la pestaña unificada "Información del documento"
+  // (previsualización + metadatos); ya no existe una pestaña "Vista previa"
+  // independiente — mismo criterio que PanelDetalle (SGD).
+  const [tabActiva, setTab]               = useState<'info' | 'recorrido' | 'anexos'>('info')
   const [pdfUrl, setPdfUrl]               = useState<string | null>(null)
   const [pdfCargando, setPdfCargando]     = useState(false)
+  const [pdfError, setPdfError]           = useState(false)
   const pdfRadiRef                        = useRef<string | null>(null)
   const [mostrarReasignar, setReasignar]  = useState(false)
   const [reasignarId, setReasignarId]     = useState<number | null>(null)
@@ -1004,7 +1126,7 @@ function PanelDetalleQuipux({
   const puedeArchivar  = ['recibidos', 'enviados', 'no_enviados', 'en_elaboracion'].includes(bandeja) && !item.es_tarea
   const soloLectura    = ['enviados', 'tareas_enviadas', 'archivados'].includes(bandeja)
 
-  const { data: doc, isLoading } = useQuery({
+  const { data: doc, isLoading: infoCargando, isError: infoError } = useQuery({
     queryKey: ['quipux-detalle', item.radi_nume_radi],
     queryFn: () => quipuxService.detalle(item.radi_nume_radi),
   })
@@ -1098,18 +1220,28 @@ function PanelDetalleQuipux({
     },
   })
 
+  // Carga el PDF preferido (firmado si existe); se usa tanto en el efecto
+  // automático como desde el botón "Reintentar" (§15).
+  const cargarPdfQuipux = () => {
+    if (!item.tiene_pdf && !item.tiene_pdf_firmado) return
+    setPdfCargando(true)
+    setPdfError(false)
+    quipuxService.obtenerUrlPDF(item.radi_nume_radi, !!item.tiene_pdf_firmado)
+      .then(url => setPdfUrl(url))
+      .catch(() => setPdfError(true))
+      .finally(() => setPdfCargando(false))
+  }
+
   useEffect(() => {
     if (!item.tiene_pdf && !item.tiene_pdf_firmado) return
     const radiId = item.radi_nume_radi
     if (pdfRadiRef.current === radiId) return
     pdfRadiRef.current = radiId
-    setPdfCargando(true)
-    const firmado = item.tiene_pdf_firmado
-    quipuxService.obtenerUrlPDF(radiId, firmado).then(url => {
-      setPdfUrl(url)
-      setPdfCargando(false)
-    }).catch(() => setPdfCargando(false))
+    setPdfUrl(null)
+    setPdfError(false)
+    cargarPdfQuipux()
     return () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.radi_nume_radi])
 
   function parsarFirmaHtml(html: string) {
@@ -1198,11 +1330,14 @@ function PanelDetalleQuipux({
   ) : null
 
   return (
+    // Contenido puro: el posicionamiento (antes panel lateral absoluto de
+    // 680px) ahora lo resuelve ModalDetalleDocumento — este div solo llena
+    // la caja del modal y mantiene `position:relative` para que los overlays
+    // internos (Reasignar, Enviar, Eliminar…) sigan anclando con inset:0.
     <div style={{
-      position: 'absolute', right: 0, top: 0, bottom: 0, width: 680,
-      background: T.ctHdrBg, borderLeft: `3px solid ${T.pnBd}`,
-      display: 'flex', flexDirection: 'column', zIndex: 5, overflow: 'hidden',
-      boxShadow: T.pnSh,
+      width: '100%', height: '100%', position: 'relative',
+      background: T.ctHdrBg,
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       {/* Reasignar overlay */}
       {mostrarReasignar && (
@@ -1396,48 +1531,16 @@ function PanelDetalleQuipux({
         )}
       </div>
 
-      {/* Meta */}
-      <div style={{ padding: '10px 14px', background: T.pnMeta, borderBottom: `1px solid ${T.pnMetaBd}` }}>
-        {lRow('De:', item.area_nombre || item.creador_nombre)}
-        {lRow('Elaborado por:', item.creador_nombre)}
-        {lRow('Fecha:', item.radi_fech_radi ? new Date(item.radi_fech_radi).toLocaleString('es-EC') : '')}
-        {lRow('Estado:', item.estado_nombre)}
-        {lRow('N° Cuenta:', item.radi_cuentai)}
-        {item.es_tarea && (
-          <div style={{ marginTop: 8, padding: '8px 10px', background: '#fffbeb', border: '0.5px solid #fcd34d', borderRadius: 8 }}>
-            <p style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.05em', margin: '0 0 5px' }}>Tarea asignada</p>
-            {item.fecha_maxima && lRow('Vence:', new Date(item.fecha_maxima).toLocaleDateString('es-EC'))}
-            {item.tarea_avance != null && (
-              <div style={{ marginTop: 4 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                  <span style={{ fontSize: 10, color: '#92400e' }}>Avance</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e' }}>{item.tarea_avance}%</span>
-                </div>
-                <div style={{ height: 5, background: '#fde68a', borderRadius: 4, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${item.tarea_avance}%`, background: '#d97706', borderRadius: 4, transition: 'width .3s' }} />
-                </div>
-              </div>
-            )}
-            {item.tarea_estado != null && (
-              <p style={{ fontSize: 10, color: T.rowSub, marginTop: 4, margin: '5px 0 0' }}>
-                Estado tarea: {item.tarea_estado === 1 ? 'Pendiente' : item.tarea_estado === 2 ? 'Finalizada' : 'Cancelada'}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Tabs — segmented control */}
       <div style={{ padding: '8px 12px', borderBottom: `0.5px solid ${T.pnMetaBd}`, flexShrink: 0, background: T.pnMeta }}>
         <div style={{ display: 'flex', background: T.statsBg, borderRadius: 10, padding: 3, gap: 2 }}>
           {(([
-            ...(item.tiene_pdf || item.tiene_pdf_firmado ? [['preview', 'Vista previa', Eye]] : []),
-            ['info',      'Información',  FileText],
-            ['recorrido', 'Recorrido',    ArrowRightLeft],
+            ['info',      'Información del documento', FileText],
             ['anexos',    item.num_anexos > 0 ? `Anexos (${item.num_anexos})` : 'Anexos', Folder],
+            ['recorrido', 'Recorrido',    ArrowRightLeft],
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ]) as Array<[string, string, any]>).map(([k, l, TabIcon]) => (
-            <button key={k} onClick={() => setTab(k as 'preview' | 'info' | 'recorrido' | 'anexos')}
+            <button key={k} onClick={() => setTab(k as 'info' | 'recorrido' | 'anexos')}
               style={{
                 flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
                 padding: '6px 4px', borderRadius: 8, fontSize: 11, fontWeight: tabActiva === k ? 700 : 500,
@@ -1454,56 +1557,116 @@ function PanelDetalleQuipux({
       </div>
 
       {/* Tab content */}
-      <div style={{ flex: 1, padding: tabActiva === 'preview' ? 0 : 14, overflow: 'auto' }}>
-        {isLoading && tabActiva !== 'preview' && <div style={{ textAlign: 'center', color: T.rowSub, fontSize: 12, paddingTop: 40 }}>Cargando…</div>}
-
-        {tabActiva === 'preview' && (
-          pdfCargando ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 10, color: T.rowSub }}>
-              <div style={{ width: 32, height: 32, border: `3px solid ${T.pnBd}`, borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-              <span style={{ fontSize: 12 }}>Cargando PDF…</span>
+      <div style={{ flex: 1, padding: tabActiva === 'info' ? 0 : 14, overflow: tabActiva === 'info' ? 'hidden' : 'auto', display: 'flex', flexDirection: 'column' }}>
+        {tabActiva === 'info' ? (
+          // "Información del documento": previsualización real (izquierda,
+          // desktop) + metadatos históricos disponibles (derecha). Solo se
+          // muestran campos que realmente existen en el registro Quipux
+          // (§26) — no hay distinción "De"/"Elaborado por" en el histórico,
+          // solo un creador/remitente único.
+          <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+            {/* Previsualización */}
+            <div className="flex-1 min-w-0 lg:order-1" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#525659' }}>
+              {pdfCargando ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: '#e5e7eb' }}>
+                  <div style={{ width: 28, height: 28, border: '3px solid rgba(255,255,255,.25)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <span style={{ fontSize: 12 }}>Cargando PDF…</span>
+                </div>
+              ) : pdfError ? (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: '#e5e7eb', padding: 20, textAlign: 'center' }}>
+                  <span style={{ fontSize: 12 }}>No se pudo cargar la previsualización.</span>
+                  <button onClick={cargarPdfQuipux}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,.35)', background: 'rgba(255,255,255,.12)', color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    <RefreshCw size={12} /> Reintentar
+                  </button>
+                </div>
+              ) : pdfUrl ? (
+                <iframe src={pdfUrl} style={{ flex: 1, width: '100%', border: 'none', display: 'block' }} title="Vista previa del documento" />
+              ) : (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 8, color: '#e5e7eb' }}>
+                  <Eye size={32} style={{ opacity: 0.3 }} />
+                  <span style={{ fontSize: 12 }}>{item.tiene_pdf || item.tiene_pdf_firmado ? 'Sin previsualización disponible' : 'Este documento no tiene PDF en Quipux'}</span>
+                </div>
+              )}
             </div>
-          ) : pdfUrl ? (
-            <iframe src={pdfUrl} style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} title="Vista previa" />
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 8, color: T.rowSub }}>
-              <Eye size={32} style={{ opacity: 0.3 }} />
-              <span style={{ fontSize: 12 }}>Sin PDF disponible</span>
-            </div>
-          )
-        )}
 
-        {doc && tabActiva === 'info' && (
-          <div>
-            {lRow('N° Radicado', doc.radi_nume_text)}
-            {lRow('Fecha', doc.radi_fech_radi ? new Date(doc.radi_fech_radi).toLocaleString('es-EC') : '')}
-            {lRow('Estado', doc.estado)}
-            {lRow('Asunto', doc.radi_asunto)}
-            {doc.radi_resumen && lRow('Resumen', doc.radi_resumen)}
-            {doc.creador && (
-              <>
-                <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Remitente</div>
-                {lRow('Nombre', doc.creador.nombre)}
-                {lRow('Cargo', doc.creador.cargo)}
-                {lRow('Área', doc.creador.area)}
-              </>
-            )}
-            {doc.radi_nomb_usua_firma && (() => {
-              const firma = parsarFirmaHtml(doc.radi_nomb_usua_firma)
-              return firma ? (
+            {/* Información del documento (metadatos) */}
+            <div className="lg:order-2 lg:w-[300px] lg:flex-shrink-0" style={{ overflowY: 'auto', padding: 14, background: T.ctHdrBg }}>
+              {infoError ? (
+                <p style={{ fontSize: 11, color: '#da291c', textAlign: 'center', padding: 16 }}>
+                  No se pudo cargar la información del documento.
+                </p>
+              ) : infoCargando || !doc ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24, color: T.rowSub, fontSize: 12 }}>
+                  <div style={{ width: 16, height: 16, border: `2px solid ${T.rowBd}`, borderTopColor: '#002f6c', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  Cargando información…
+                </div>
+              ) : (
                 <>
-                  <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Firma electrónica</div>
-                  <div style={{ background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
-                    <p style={{ fontWeight: 700, color: '#0f6e56', margin: '0 0 3px' }}>✓ {firma.nombre}</p>
-                    {firma.cedula && <p style={{ color: T.rowTxt, margin: '0 0 2px' }}>CI: {firma.cedula}</p>}
-                    {firma.cargo  && <p style={{ color: T.rowSub, margin: '0 0 2px' }}>{firma.cargo}</p>}
-                    {firma.fecha  && <p style={{ color: T.rowSub, margin: 0, fontSize: 10 }}>{firma.fecha}</p>}
+                  <p style={{ fontSize: 13, fontWeight: 700, color: T.rowTxt, lineHeight: 1.35, marginBottom: 10 }}>{doc.radi_asunto}</p>
+                  <div style={{ marginBottom: 10 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 10, background: T.statsBg, color: T.rowTxt }}>
+                      {doc.estado}
+                    </span>
                   </div>
+
+                  <div style={{ marginTop: 12, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Documento</div>
+                  {lRow('N° Radicado', doc.radi_nume_text)}
+                  {lRow('N° Cuenta', item.radi_cuentai)}
+                  {lRow('Fecha radicación', doc.radi_fech_radi ? new Date(doc.radi_fech_radi).toLocaleString('es-EC') : '')}
+                  {doc.radi_fech_ofic && lRow('Fecha oficio', new Date(doc.radi_fech_ofic).toLocaleDateString('es-EC'))}
+                  {doc.radi_resumen && lRow('Resumen', doc.radi_resumen)}
+
+                  {item.es_tarea && (
+                    <div style={{ marginTop: 10, padding: '8px 10px', background: '#fffbeb', border: '0.5px solid #fcd34d', borderRadius: 8 }}>
+                      <p style={{ fontSize: 10, fontWeight: 700, color: '#92400e', textTransform: 'uppercase', letterSpacing: '.05em', margin: '0 0 5px' }}>Tarea asignada</p>
+                      {item.fecha_maxima && lRow('Vence', new Date(item.fecha_maxima).toLocaleDateString('es-EC'))}
+                      {item.tarea_avance != null && (
+                        <div style={{ marginTop: 4 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                            <span style={{ fontSize: 10, color: '#92400e' }}>Avance</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e' }}>{item.tarea_avance}%</span>
+                          </div>
+                          <div style={{ height: 5, background: '#fde68a', borderRadius: 4, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${item.tarea_avance}%`, background: '#d97706', borderRadius: 4, transition: 'width .3s' }} />
+                          </div>
+                        </div>
+                      )}
+                      {item.tarea_estado != null && (
+                        <p style={{ fontSize: 10, color: T.rowSub, marginTop: 4, margin: '5px 0 0' }}>
+                          Estado tarea: {item.tarea_estado === 1 ? 'Pendiente' : item.tarea_estado === 2 ? 'Finalizada' : 'Cancelada'}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {doc.creador && (
+                    <>
+                      <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Elaboración</div>
+                      {lRow('Elaborado por', doc.creador.nombre)}
+                      {lRow('Cargo', doc.creador.cargo)}
+                      {lRow('Área', doc.creador.area)}
+                    </>
+                  )}
+                  {doc.radi_nomb_usua_firma && (() => {
+                    const firma = parsarFirmaHtml(doc.radi_nomb_usua_firma)
+                    return firma ? (
+                      <>
+                        <div style={{ marginTop: 10, marginBottom: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, letterSpacing: 1 }}>Firma electrónica</div>
+                        <div style={{ background: '#f0fdf4', border: '0.5px solid #86efac', borderRadius: 8, padding: '8px 10px', fontSize: 11 }}>
+                          <p style={{ fontWeight: 700, color: '#0f6e56', margin: '0 0 3px' }}>✓ {firma.nombre}</p>
+                          {firma.cedula && <p style={{ color: T.rowTxt, margin: '0 0 2px' }}>CI: {firma.cedula}</p>}
+                          {firma.cargo  && <p style={{ color: T.rowSub, margin: '0 0 2px' }}>{firma.cargo}</p>}
+                          {firma.fecha  && <p style={{ color: T.rowSub, margin: 0, fontSize: 10 }}>{firma.fecha}</p>}
+                        </div>
+                      </>
+                    ) : lRow('Firmado por', doc.radi_nomb_usua_firma)
+                  })()}
                 </>
-              ) : lRow('Firmado por', doc.radi_nomb_usua_firma)
-            })()}
+              )}
+            </div>
           </div>
-        )}
+        ) : null}
 
         {doc && tabActiva === 'recorrido' && (
           <div>
@@ -1638,8 +1801,30 @@ export default function DocumentosPage() {
   const [selectedId, setSelectedId]     = useState<number | null>(null)
   const [selectedSnap, setSelectedSnap] = useState<BandejaItem | null>(null)
   const [selectedQuipux, setSelQuipux]  = useState<QuipuxDocumento | null>(null)
-  const [modal, setModal]               = useState(false)
+  // Desacopla "hay una fila resaltada" (selectedId) de "el modal de detalle
+  // está abierto" (verDetalle). Necesario porque un documento abierto
+  // directamente en el editor desde "En Elaboración" vuelve seleccionado/
+  // resaltado al listado al Guardar/Cancelar, pero el modal NO debe
+  // reabrirse solo porque hay selección.
+  const [verDetalle, setVerDetalle]     = useState(false)
+  // --- Panel derecho: modo editor (integrado, sin modal) ---
+  // creando  → EditorDocumento en modo CREAR
+  // docEditar → EditorDocumento en modo EDITAR (payload del documento)
+  // sin ninguno de los dos → detalle (si hay selección) o estado vacío
+  const [creando, setCreando]           = useState(false)
   const [docEditar, setDocEditar]       = useState<any>(null)
+  const [editorSeq, setEditorSeq]       = useState(0)   // fuerza remonte del editor "nuevo"
+  // El editor reporta si tiene cambios sin guardar (respecto de su base).
+  const [editorDirty, setEditorDirty]   = useState(false)
+  // Acción a ejecutar si el usuario confirma "salir sin guardar". Guardar una
+  // función en estado requiere el updater: setAccionPendiente(() => fn).
+  const [accionPendiente, setAccionPendiente] = useState<(() => void) | null>(null)
+  // Documento a seleccionar en el listado una vez que refresque (se resuelve
+  // por documento_id → id de item de bandeja en un efecto).
+  const [pendSelDocId, setPendSelDocId] = useState<number | null>(null)
+  // Selección que había antes de pulsar "Nuevo documento", para restaurarla
+  // si el usuario cancela. Solo estado de interfaz, no se persiste.
+  const selPrevioRef = useRef<{ id: number | null; snap: BandejaItem | null; bandeja: string; verDetalle: boolean } | null>(null)
   const [panelTrigger] = useState<{ action: string; t: number } | null>(null)
   const [busqueda, setBusqueda]       = useState('')
   const [filtroLeido, setFiltroLeido] = useState('')
@@ -1758,20 +1943,68 @@ export default function DocumentosPage() {
     },
   })
 
+  // ── Salir del editor con protección de cambios sin guardar ────────────────
+  // NUNCA se bloquea la navegación: si el editor está abierto y NO hay cambios
+  // se sale en silencio; si los hay, se pide confirmación y solo entonces se
+  // descarta. `accion` corre entonces (cambiar bandeja, seleccionar doc, etc.).
+  const descartarEditor = () => {
+    setCreando(false)
+    setDocEditar(null)
+    setEditorDirty(false)
+  }
+  const salirDelEditor = (accion: () => void) => {
+    const proceder = () => { descartarEditor(); accion() }
+    if ((creando || docEditar) && editorDirty) {
+      setAccionPendiente(() => proceder)   // abre ConfirmDialog
+    } else {
+      proceder()
+    }
+  }
+
+  // Click en fila SGD para bandejas de CONSULTA (Recibidos, Enviados, No
+  // enviados, Reasignados, Archivados, etc.): abre el modal de detalle.
   const handleSelectSGD = (item: BandejaItem) => {
-    setSelectedId(item.id)
-    setSelectedSnap(item)
-    setSelQuipux(null)
-    if (!item.leido) marcarLeido.mutate(item.id)
+    salirDelEditor(() => {
+      setSelectedId(item.id)
+      setSelectedSnap(item)
+      setSelQuipux(null)
+      setVerDetalle(true)
+      if (!item.leido) marcarLeido.mutate(item.id)
+    })
+  }
+
+  // Decisión centralizada al hacer click en una fila SGD (equivalente al
+  // comportamiento real de Quipux): "En Elaboración" es una bandeja de
+  // TRABAJO — abre el documento directo en el editor, sin pasar por el
+  // modal de detalle. El resto de bandejas son de CONSULTA y usan el modal
+  // (handleSelectSGD). Excepción: si un admin/responsable de archivo está
+  // viendo la bandeja de OTRO usuario (adminVer), se conserva el modal
+  // primero — no tiene sentido aterrizar directo en edición de un borrador
+  // ajeno solo por estar revisando esa bandeja.
+  const handleAbrirDocumento = (item: BandejaItem) => {
+    const editableDirecto = bandejaActiva === 'en_elaboracion'
+      && item.estado_documento !== 'anulado'
+      && !adminVer
+    if (!editableDirecto) { handleSelectSGD(item); return }
+    salirDelEditor(() => {
+      setSelectedId(item.id)
+      setSelectedSnap(item)
+      setSelQuipux(null)
+      setVerDetalle(false)
+      if (!item.leido) marcarLeido.mutate(item.id)
+      abrirEdicionDocumento(item)
+    })
   }
 
   const handleSelectQuipux = (item: QuipuxDocumento) => {
-    setSelQuipux(item)
-    setSelectedId(null)
-    setSelectedSnap(null)
-    // Marcar como leída la reasignación SGD si existe
-    quipuxService.marcarLeido(item.radi_nume_radi).catch(() => {})
-    qc.invalidateQueries({ queryKey: ['quipux-conteos'] })
+    salirDelEditor(() => {
+      setSelQuipux(item)
+      setSelectedId(null)
+      setSelectedSnap(null)
+      // Marcar como leída la reasignación SGD si existe
+      quipuxService.marcarLeido(item.radi_nume_radi).catch(() => {})
+      qc.invalidateQueries({ queryKey: ['quipux-conteos'] })
+    })
   }
 
   const items = data?.results ?? []
@@ -1782,16 +2015,133 @@ export default function DocumentosPage() {
     if (live) setSelectedSnap(live)
   }, [selectedId, items])
 
+  // Selección diferida tras crear/enviar: el listado se refresca de forma
+  // asíncrona; en cuanto aparece el item cuyo documento_id coincide, se
+  // selecciona y el panel derecho muestra su detalle.
+  useEffect(() => {
+    if (pendSelDocId == null) return
+    const it = items.find(i => i.documento_id === pendSelDocId)
+    if (it) {
+      setSelectedId(it.id)
+      setSelectedSnap(it)
+      setPendSelDocId(null)
+    }
+  }, [pendSelDocId, items])
+
   const selected = selectedId
     ? (items.find(i => i.id === selectedId) ?? selectedSnap)
     : null
 
-  const cambiarBandeja = (key: string) => {
+  // El cambio de bandeja SIEMPRE está disponible; solo se intercala una
+  // confirmación si el editor tiene cambios sin guardar.
+  const aplicarBandeja = (key: string) => {
     setBandeja(key)
     setSelectedId(null)
     setSelectedSnap(null)
     setSelQuipux(null)
+    setVerDetalle(false)
+    setPendSelDocId(null)
     setQPage(1)
+  }
+  const cambiarBandeja = (key: string) => salirDelEditor(() => aplicarBandeja(key))
+
+  // Navegación a otra ruta desde el sidebar documental — misma protección.
+  const irARuta = (ruta: string) => salirDelEditor(() => navigate(ruta))
+
+  // ── Panel derecho: entrar/salir del modo editor ───────────────────────────
+  const abrirNuevoDocumento = () => {
+    // Ya estoy creando y sin cambios: mantener la instancia (no apilar, §17/§25).
+    if (creando && !docEditar && !editorDirty) return
+    const origen = (creando || docEditar)
+      ? selPrevioRef.current
+      : { id: selectedId, snap: selectedSnap, bandeja: bandejaActiva, verDetalle }
+    salirDelEditor(() => {
+      selPrevioRef.current = origen
+      setSelectedId(null)
+      setSelectedSnap(null)
+      setSelQuipux(null)
+      setVerDetalle(false)
+      setDocEditar(null)
+      setEditorSeq(s => s + 1)   // editor "nuevo" fresco
+      setCreando(true)
+    })
+  }
+
+  const abrirEdicionDocumento = async (item: BandejaItem) => {
+    const detalle = await documentosService.obtener(item.documento_id)
+    setDocEditar(detalle)                      // selectedId se mantiene → al salir vuelve su detalle
+  }
+
+  // Cancelar / X del editor: mismo camino que la navegación (confirma si hay
+  // cambios), y al salir vuelve al contexto previo.
+  const cerrarEditor = () => {
+    const estabaEditando = !!docEditar
+    const prev = selPrevioRef.current
+    salirDelEditor(() => {
+      selPrevioRef.current = null
+      if (estabaEditando) {
+        // selectedId Y verDetalle quedan intactos tal como estaban antes de
+        // entrar a editar: si se abrió el editor desde el modal (verDetalle
+        // true — p. ej. bandeja Reasignados), el modal reaparece con el
+        // detalle recargado. Si se abrió directo desde "En Elaboración"
+        // (verDetalle false), el listado reaparece sin modal — el documento
+        // solo queda resaltado.
+        qc.invalidateQueries({ queryKey: ['bandeja'] })
+      } else if (prev && prev.id != null) {
+        if (prev.bandeja !== bandejaActiva) setBandeja(prev.bandeja)
+        setSelectedId(prev.id)
+        setSelectedSnap(prev.snap)
+        setVerDetalle(prev.verDetalle)
+      }
+    })
+  }
+
+  const editorGuardado = (doc: any) => {
+    qc.invalidateQueries({ queryKey: ['bandeja'] })
+    qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+    qc.invalidateQueries({ queryKey: ['doc-detalle', doc.id] })
+    const modoEdicion = !!docEditar
+    descartarEditor()                          // limpia creando/docEditar + editorDirty (§11)
+    selPrevioRef.current = null
+    if (!modoEdicion) {
+      if (bandejaActiva !== 'en_elaboracion') setBandeja('en_elaboracion')
+      setPendSelDocId(doc.id)                  // se selecciona al refrescar (§11-12)
+    }
+    // No se toca `verDetalle` en ningún caso: "En Elaboración" es bandeja de
+    // trabajo, así que Guardar (nuevo o edición) nunca fuerza la apertura
+    // del modal — el documento vuelve solo resaltado en el listado. Si el
+    // documento se editó desde el modal (verDetalle ya era true, p. ej.
+    // bandeja Reasignados), el modal reaparece igual que antes.
+  }
+
+  const editorEnviado = (docId?: number) => {
+    descartarEditor()
+    selPrevioRef.current = null
+    qc.invalidateQueries({ queryKey: ['bandeja'] })
+    qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+    setBandeja('enviados')
+    // "Enviados" es bandeja de consulta: al enviar (sin importar si se venía
+    // editando directo desde "En Elaboración"), sí queremos mostrar el
+    // detalle de lo recién enviado automáticamente.
+    setVerDetalle(true)
+    if (docId != null) setPendSelDocId(docId)  // documento enviado queda seleccionado (§18)
+  }
+
+  // Guardar y reasignar completó con éxito: el documento SIGUE en
+  // elaboración, pero la responsabilidad pasó a otro usuario — deja de ser
+  // mío. Cierre incondicional (como editorEnviado, no como editorGuardado):
+  // "Reasignados" es bandeja de consulta, así que sí conviene mostrar el
+  // detalle del documento recién transferido automáticamente. Nunca pasa
+  // por salirDelEditor/editorDirty — para cuando esto se llama, el guardado
+  // y la reasignación YA se confirmaron exitosos (ver EditorDocumento).
+  const editorReasignado = (docId?: number) => {
+    descartarEditor()
+    selPrevioRef.current = null
+    qc.invalidateQueries({ queryKey: ['bandeja'] })
+    qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+    setBandeja('reasignados')
+    setVerDetalle(true)
+    if (docId != null) setPendSelDocId(docId)
   }
 
   const SECCIONES = [
@@ -1809,19 +2159,21 @@ export default function DocumentosPage() {
       overflow: 'hidden', border: soloQuipux ? 'none' : `0.5px solid ${T.rowBd}`,
       background: T.ctBg, position: 'relative',
     }}>
-      {modal && (
-        <EditorDocumento
-          onClose={() => setModal(false)}
-          onEnviado={() => { setModal(false); setBandeja('enviados'); }}
-        />
-      )}
-      {docEditar && (
-        <EditorDocumento
-          documentoExistente={docEditar}
-          onClose={() => { setDocEditar(null); qc.invalidateQueries({ queryKey: ['bandeja'] }); }}
-          onEnviado={() => { setDocEditar(null); setBandeja('enviados'); qc.invalidateQueries({ queryKey: ['bandeja'] }); }}
-        />
-      )}
+      {/* Nuevo documento / edición: ya NO es un modal — se integra en el
+          panel derecho del área de contenido (ver más abajo). */}
+
+      {/* Confirmación de "cambios sin guardar" al abandonar el editor.
+          La navegación nunca se bloquea; solo se pide confirmar si editorDirty. */}
+      <ConfirmDialog
+        abierto={accionPendiente != null}
+        titulo="Cambios sin guardar"
+        mensaje="Hay cambios sin guardar. Si continúa, se perderán. ¿Desea salir de todas formas?"
+        textoConfirmar="Salir sin guardar"
+        textoCancelar="Seguir editando"
+        tono="peligro"
+        onConfirmar={() => { const a = accionPendiente; setAccionPendiente(null); a && a() }}
+        onCancelar={() => setAccionPendiente(null)}
+      />
 
       {/* Modal selector de usuario admin */}
       {mostrarSelectorUsuario && (
@@ -2024,7 +2376,7 @@ export default function DocumentosPage() {
               {/* Administración */}
               <p style={{ fontSize: 9, fontWeight: 700, color: T.sbLabel, textTransform: 'uppercase', letterSpacing: '.1em', padding: '10px 4px 4px 6px' }}>Administración</p>
               {([
-                { label: 'Cambio de contraseña', icon: Lock,     action: () => navigate('/perfil') },
+                { label: 'Cambio de contraseña', icon: Lock,     action: () => irARuta('/perfil') },
                 { label: 'Respaldo documentos',  icon: Download, action: () => setSidebarRespaldoAbierto(v => !v) },
               ] as { label: string; icon: any; action: () => void }[]).map(({ label, icon: Icon, action }) => (
                 <div key={label} onClick={action}
@@ -2089,7 +2441,7 @@ export default function DocumentosPage() {
               )}
             </div>
             {/* Perfil al pie */}
-            <div onClick={() => navigate('/perfil')}
+            <div onClick={() => irARuta('/perfil')}
               style={{ padding: '10px 14px', borderTop: `1px solid ${T.sbBorder}`, background: T.sbUser, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#da291c,#ff4d3d)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0, boxShadow: '0 1px 5px rgba(218,41,28,.3)' }}>
                 {`${authUsuario?.nombres?.[0] ?? ''}${authUsuario?.apellidos?.[0] ?? ''}`.toUpperCase()}
@@ -2134,8 +2486,8 @@ export default function DocumentosPage() {
                 </button>
               ) : null}
 
-              <button onClick={() => setModal(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '9px 12px', borderRadius: 10, background: '#002f6c', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none', marginBottom: 4 }}>
+              <button onClick={abrirNuevoDocumento}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '9px 12px', borderRadius: 10, background: creando && !docEditar ? '#1e4785' : '#002f6c', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none', marginBottom: 4 }}>
                 <Plus size={14} /> Nuevo documento
               </button>
             </div>
@@ -2148,15 +2500,21 @@ export default function DocumentosPage() {
                   </p>
                   {BANDEJAS.filter(b => b.seccion === sec.key).map(({ key, label, icon: Icon }) => {
                     const c          = conteos?.[key]
+                    const total      = c?.total ?? 0
                     const noLeidos   = c?.no_leidos ?? 0
-                    const qCount     = quipuxConteos ? (quipuxConteos as any)[key] ?? 0 : 0
+                    // Solo se considera "no leídos" en las bandejas donde leer
+                    // realmente significa algo (§14/§22 de una entrega previa);
+                    // el resto siempre muestra el total simple, aunque el
+                    // backend también les calcule no_leidos.
+                    const conNoLeidos = BANDEJAS_CON_NO_LEIDOS.has(key)
+                    const noLeidosVisibles = conNoLeidos ? noLeidos : 0
+                    const hayAlerta  = noLeidosVisibles > 0
                     const qNoLeidos  = key === 'recibidos'
                       ? (quipuxConteos?.reasig_no_leidas ?? 0)
                       : key === 'copia'
                       ? (quipuxConteos?.copia_no_leidos ?? 0)
                       : 0
                     const isActive   = bandejaActiva === key
-                    const tieneQuipux = !!QUIPUX_BANDEJA_MAP[key] && qCount > 0
                     return (
                       <div key={key} onClick={() => cambiarBandeja(key)}
                         onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = T.sbHover }}
@@ -2172,19 +2530,20 @@ export default function DocumentosPage() {
                         <Icon size={14} style={{ flexShrink: 0, color: isActive ? T.sbIconOn : T.sbIcon }} />
                         <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                          {noLeidos > 0 && (
-                            <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 10, background: isActive ? '#ffd166' : '#da291c', color: isActive ? '#002f6c' : '#fff' }}>
-                              {noLeidos}
+                          {total > 0 && (
+                            <span
+                              title={hayAlerta ? `${noLeidosVisibles} sin leer de ${total} en total` : `${total} en total`}
+                              style={{
+                                fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 10,
+                                background: hayAlerta ? (isActive ? '#ffd166' : '#da291c') : (isActive ? 'rgba(255,255,255,.25)' : T.rowBd),
+                                color: hayAlerta ? (isActive ? '#002f6c' : '#fff') : (isActive ? '#fff' : T.rowSub),
+                              }}>
+                              {formatBandejaCount(total, noLeidosVisibles)}
                             </span>
                           )}
                           {qNoLeidos > 0 && (
                             <span title={`${qNoLeidos} no leídos en Quipux`} style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 10, background: isActive ? '#ffd166' : '#002f6c', color: isActive ? '#002f6c' : '#fff' }}>
                               {qNoLeidos}
-                            </span>
-                          )}
-                          {tieneQuipux && qNoLeidos === 0 && noLeidos === 0 && (
-                            <span title={`${qCount.toLocaleString()} en Quipux`} style={{ fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 8, background: isActive ? 'rgba(255,255,255,.2)' : '#e8f1fd', color: isActive ? '#fff' : '#002f6c' }}>
-                              Q
                             </span>
                           )}
                         </div>
@@ -2197,21 +2556,21 @@ export default function DocumentosPage() {
               {/* ── Sección Administración (igual que Quipux original) ── */}
               <p style={{ fontSize: 9, fontWeight: 700, color: T.sbLabel, textTransform: 'uppercase', letterSpacing: '.1em', padding: '10px 12px 4px' }}>Administración</p>
               {([
-                { label: 'Cambio de contraseña', icon: Lock,       action: () => navigate('/perfil') },
+                { label: 'Cambio de contraseña', icon: Lock,       action: () => irARuta('/perfil') },
                 { label: 'Respaldo documentos',  icon: Download,   action: () => {
                   setSidebarRespaldoAbierto(v => !v)
                 }},
                 ...(puede('tramites', 'ver') ? [
-                  { label: 'Trámites ciudadanos', icon: ClipboardList, action: () => navigate('/tramites') },
+                  { label: 'Trámites ciudadanos', icon: ClipboardList, action: () => irARuta('/tramites') },
                 ] : []),
                 ...(puede('archivo', 'ver') ? [
-                  { label: 'Archivo documental',  icon: Archive,       action: () => navigate('/archivo') },
+                  { label: 'Archivo documental',  icon: Archive,       action: () => irARuta('/archivo') },
                 ] : []),
                 ...(esAdmin || permisosAdmin ? [
-                  { label: 'Usuarios internos',  icon: Users,      action: () => navigate('/usuarios') },
-                  { label: 'Áreas / organigrama',icon: BookUser,   action: () => navigate('/organigrama') },
-                  { label: 'Numeración/Tipos',   icon: Settings,   action: () => navigate('/ajustes') },
-                  { label: 'Estadísticas SGD',   icon: BarChart2,  action: () => navigate('/auditoria/dashboard') },
+                  { label: 'Usuarios internos',  icon: Users,      action: () => irARuta('/usuarios') },
+                  { label: 'Áreas / organigrama',icon: BookUser,   action: () => irARuta('/organigrama') },
+                  { label: 'Numeración/Tipos',   icon: Settings,   action: () => irARuta('/ajustes') },
+                  { label: 'Estadísticas SGD',   icon: BarChart2,  action: () => irARuta('/auditoria/dashboard') },
                 ] : []),
               ] as { label: string; icon: any; action: () => void }[]).map(({ label, icon: Icon, action }) => (
                 <div key={label} onClick={action}
@@ -2250,8 +2609,8 @@ export default function DocumentosPage() {
               <p style={{ fontSize: 9, fontWeight: 700, color: T.sbLabel, textTransform: 'uppercase', letterSpacing: '.1em', padding: '10px 12px 4px' }}>Herramientas</p>
               {([
                 { label: 'Búsqueda avanzada', icon: Search,       action: () => setBusquedaAvanzada(true) },
-                { label: 'Auditoría',          icon: CheckCircle, action: () => navigate('/auditoria') },
-                { label: 'Reportes',           icon: Filter,      action: () => navigate('/reportes') },
+                { label: 'Auditoría',          icon: CheckCircle, action: () => irARuta('/auditoria') },
+                { label: 'Reportes',           icon: Filter,      action: () => irARuta('/reportes') },
               ] as { label: string; icon: any; action: () => void }[]).map(({ label, icon: Icon, action }) => (
                 <div key={label} onClick={action}
                   style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 10px', cursor: 'pointer', fontSize: 12, color: T.sbText, borderRadius: 9, margin: '0 4px 1px', transition: 'background .12s' }}
@@ -2286,9 +2645,26 @@ export default function DocumentosPage() {
         )}
       </div>
 
-      {/* CONTENIDO */}
+      {/* CONTENIDO — un ÚNICO workspace a la derecha de las bandejas (§12).
+          Muestra alternativamente: el editor (crear/editar) O el contenido
+          normal de la bandeja (toolbar + listado + detalle). Nunca ambos. */}
       <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative', background: T.ctBg }}>
 
+        {(creando || docEditar) ? (
+          /* Modo editor: EditorDocumento ocupa TODO el workspace — sin
+             toolbar ni listado detrás. No hay panel absoluto ni tercera
+             columna; el editor participa normalmente en el layout (§4, §13). */
+          <EditorDocumento
+            key={docEditar ? `edit-${docEditar.id}` : `nuevo-${editorSeq}`}
+            documentoExistente={docEditar ?? undefined}
+            onClose={cerrarEditor}
+            onGuardado={editorGuardado}
+            onEnviado={editorEnviado}
+            onReasignado={editorReasignado}
+            onDirtyChange={setEditorDirty}
+          />
+        ) : (
+        <>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderBottom: `1px solid ${T.ctHdrBd}`, flexShrink: 0, background: T.ctHdrBg, boxShadow: T.tbShadow }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: T.accentDk, flexShrink: 0, letterSpacing: '-.01em' }}>
             {BANDEJAS.find(b => b.key === bandejaActiva)?.label ?? 'Documentos'}
@@ -2369,7 +2745,7 @@ export default function DocumentosPage() {
                 const isOn = selected?.id === item.id
                 const esExterno = !!item.remitente_entidad
                 return (
-                  <div key={`sgd-${item.id}`} onClick={() => handleSelectSGD(item)}
+                  <div key={`sgd-${item.id}`} onClick={() => handleAbrirDocumento(item)}
                     className="row-hover-lift"
                     style={{
                       display: 'grid', gridTemplateColumns: '24px 24px 64px 1fr 120px 140px 120px 100px',
@@ -2493,30 +2869,50 @@ export default function DocumentosPage() {
           )}
         </div>
 
-        {/* Panel detalle SGD */}
-        {selected && !selectedQuipux && (
-          <PanelDetalle
-            item={selected}
-            onClose={() => setSelectedId(null)}
-            trigger={panelTrigger}
-            onEditar={selected.bandeja === 'en_elaboracion' ? async () => {
-              const detalle = await documentosService.obtener(selected!.documento_id)
-              setDocEditar(detalle)
-            } : undefined}
-          />
-        )}
-
-        {/* Panel detalle Quipux */}
-        {selectedQuipux && (
-          <PanelDetalleQuipux
-            item={selectedQuipux}
-            bandeja={bandejaActiva}
-            onClose={() => setSelQuipux(null)}
-            onResponderCreado={() => {
-              setSelQuipux(null)
-              cambiarBandeja('en_elaboracion')
-            }}
-          />
+        {/* Detalle del documento (consulta) — modal amplio y centrado sobre
+            el listado, NO panel lateral. Cerrar (X, "Cerrar", backdrop o
+            Escape) solo limpia la selección: nunca cambia bandeja, filtros,
+            búsqueda ni paginación, y no modifica el documento. "Editar"
+            cierra este modal al fijar docEditar, que hace que el workspace
+            cambie a EditorDocumento (rama de arriba) — nunca un editor
+            dentro del modal. Mismo wrapper para SGD y Quipux histórico.
+            `verDetalle` (no solo `selected`) gobierna la apertura: un
+            documento de "En Elaboración" puede quedar seleccionado/
+            resaltado tras Guardar sin que el modal se reabra solo por eso
+            — ver handleAbrirDocumento. */}
+        {selected && !selectedQuipux && verDetalle ? (
+          <ModalDetalleDocumento onClose={() => setSelectedId(null)}>
+            <PanelDetalle
+              item={selected}
+              onClose={() => setSelectedId(null)}
+              trigger={panelTrigger}
+              // "Editar" solo si el item sigue activo en 'en_elaboracion' —
+              // un item ya reasignado conserva bandeja='en_elaboracion' en
+              // BD (por eso se filtra también accion_tomada), pero quien lo
+              // reasignó ya no es responsable: se ve en "Reasignados" y solo
+              // debe poder consultarlo, nunca editarlo (backend además lo
+              // rechaza — ver DocumentoViewSet.perform_update). Mismo criterio
+              // de adminVer que handleAbrirDocumento: viendo la bandeja de
+              // otro usuario no se ofrece editar su borrador.
+              onEditar={selected.bandeja === 'en_elaboracion' && selected.accion_tomada !== 'reasignado' && !adminVer
+                ? () => abrirEdicionDocumento(selected!)
+                : undefined}
+            />
+          </ModalDetalleDocumento>
+        ) : selectedQuipux ? (
+          <ModalDetalleDocumento onClose={() => setSelQuipux(null)}>
+            <PanelDetalleQuipux
+              item={selectedQuipux}
+              bandeja={bandejaActiva}
+              onClose={() => setSelQuipux(null)}
+              onResponderCreado={() => {
+                setSelQuipux(null)
+                cambiarBandeja('en_elaboracion')
+              }}
+            />
+          </ModalDetalleDocumento>
+        ) : null}
+        </>
         )}
       </div>
     </div>
