@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { usePermisosStore } from '@/store/permisosStore'
@@ -16,14 +16,27 @@ import ModalEnviarEmail from '@/components/ui/ModalEnviarEmail'
 import EditorDocumento from '@/components/ui/EditorDocumento'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import ModalDetalleDocumento from '@/components/ui/ModalDetalleDocumento'
+import BulkActionBar from '@/components/ui/BulkActionBar'
+import BulkConfirmDialog from '@/components/ui/BulkConfirmDialog'
+import BulkReasignarModal from '@/components/ui/BulkReasignarModal'
+import BulkInformarModal from '@/components/ui/BulkInformarModal'
+import NuevaTareaModal from '@/components/ui/NuevaTareaModal'
+import TareaPanel from '@/components/ui/TareaPanel'
+import DocumentosAsociadosPanel from '@/components/ui/DocumentosAsociadosPanel'
+import AsociarDocumentoModal from '@/components/ui/AsociarDocumentoModal'
+import CarpetasView from '@/components/ui/CarpetasView'
+import ClasificarCarpetaModal from '@/components/ui/ClasificarCarpetaModal'
+import { carpetaService } from '@/services/carpeta.service'
+import { useBulkSelection } from '@/hooks/useBulkSelection'
+import { accionesDeBandeja, FILA_SELECCIONABLE } from '@/constants/bandejaAcciones'
 import {
   Inbox, Edit3, Send, Clock, CheckSquare, Archive, ClipboardList,
-  Folder, Printer, Search, Plus, X, Download,
+  Folder, Printer, Search, Plus, X, Download, Link2,
   ArrowRightLeft, MessageSquare, Signature,
   CheckCircle, Filter, RefreshCw, Globe2, Database,
   FileText, FileSpreadsheet, FileImage, File, User,
   Lock, BookUser, Settings, Users, BarChart2, Eye,
-  Trash2, RotateCcw
+  Trash2, RotateCcw, GitBranch, FolderTree
 } from 'lucide-react'
 
 // Bandejas SGD → nombre de bandeja Quipux equivalente
@@ -45,6 +58,7 @@ const BANDEJAS = [
   { key: 'tareas_recibidas', label: 'Tareas Recibidas',  icon: CheckSquare,      seccion: 'bandejas' },
   { key: 'tareas_enviadas',  label: 'Tareas Enviadas',   icon: CheckSquare,      seccion: 'bandejas' },
   { key: 'eliminados',       label: 'Eliminados',        icon: Trash2,           seccion: 'otras' },
+  { key: 'informados',       label: 'Informados',        icon: BookUser,         seccion: 'otras' },
   { key: 'reasignados',      label: 'Reasignados',       icon: ArrowRightLeft,   seccion: 'otras' },
   { key: 'archivados',       label: 'Archivados',        icon: Archive,          seccion: 'otras' },
   { key: 'carpetas',         label: 'Carpetas Virtuales',icon: Folder,           seccion: 'otras' },
@@ -61,7 +75,7 @@ const BANDEJAS = [
 // vistas del propio emisor/una acción ya tomada por el usuario — mostrar
 // "no leídos" ahí no aporta información real (§14/§22), así que solo
 // muestran el total.
-const BANDEJAS_CON_NO_LEIDOS = new Set(['en_elaboracion', 'recibidos', 'tareas_recibidas'])
+const BANDEJAS_CON_NO_LEIDOS = new Set(['en_elaboracion', 'recibidos', 'tareas_recibidas', 'informados'])
 
 // Formato único del contador de bandeja (estilo Quipux). El primer número
 // (no leídos) solo se muestra cuando representa una alerta real — con cero
@@ -92,20 +106,36 @@ const ESTADO_COLORS: Record<string, { bg: string; text: string; label: string }>
   firmado:     { bg: '#f0fdf4', text: '#0f6e56', label: 'Firmado' },
 }
 
-function PanelDetalle({ item, onClose, onEditar, trigger }: {
+function PanelDetalle({ item, onClose, onEditar, onRespuestaCreada, onAbrirDoc, trigger }: {
   item: BandejaItem; onClose: () => void; onEditar?: () => void;
+  onRespuestaCreada?: (docId: number, sinDestinatario: boolean) => void;
+  onAbrirDoc?: (docId: number) => void;
   trigger?: { action: string; t: number } | null;
 }) {
   const qc = useQueryClient()
   const { tema } = useThemeStore()
   const T = THEMES[tema].vars
   const authUsuario = useAuthStore(s => s.usuario)
+  // F3-A — "Vincular a expediente" escribe en el módulo Archivo. Sin permiso
+  // `archivo:editar` el backend responde 403, así que se oculta el botón.
+  const puedeArchivoEditar = usePermisosStore(s => s.puede('archivo', 'editar'))
   const [comentario, setComentario] = useState('')
   // 'info' es ahora la pestaña unificada "Información del documento"
   // (previsualización + metadatos); ya no existe una pestaña "Vista previa"
   // independiente.
-  const [tabActiva, setTab] = useState<'info' | 'adjuntos' | 'seguimiento'>('info')
+  const [tabActiva, setTab] = useState<'info' | 'adjuntos' | 'seguimiento' | 'asociados'>('info')
   const [mostrarVincular, setMostrarVincular] = useState(false)
+  // "Archivar" (archivo de gestión personal → bandeja Archivados) es una
+  // acción DISTINTA de "Vincular a expediente" (módulo archivo). Antes estaban
+  // acopladas: Archivar abría el modal de expediente. Ya no.
+  const [mostrarArchivar, setMostrarArchivar] = useState(false)
+  const [obsArchivar, setObsArchivar] = useState('')
+  const [mostrarRestArch, setMostrarRestArch] = useState(false)
+  const [obsRestArch, setObsRestArch] = useState('')
+  const [mostrarInformar, setMostrarInformar] = useState(false)
+  const [mostrarNuevaTarea, setMostrarNuevaTarea] = useState(false)
+  const [mostrarAsociar, setMostrarAsociar] = useState(false)
+  const [mostrarClasificar, setMostrarClasificar] = useState(false)
   const [mostrarFirma, setMostrarFirma] = useState(false)
   const [mostrarEmail, setMostrarEmail] = useState(false)
   const [mostrarReasignar, setMostrarReasignar] = useState(false)
@@ -191,8 +221,14 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
   })
 
   const archivar = useMutation({
-    mutationFn: () => bandejaService.archivar(item.id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bandeja'] }); onClose() },
+    mutationFn: () => bandejaService.archivar(item.id, obsArchivar.trim() || undefined),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      setMostrarArchivar(false)
+      setObsArchivar('')
+      onClose()
+    },
   })
 
   const comentar = useMutation({
@@ -201,6 +237,49 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
       qc.invalidateQueries({ queryKey: ['bandeja'] })
       qc.invalidateQueries({ queryKey: ['doc-detalle', item.documento_id] })
       setComentario('')
+    },
+  })
+
+  const informarDoc = useMutation({
+    mutationFn: (data: { usuarios: number[]; comentario: string }) =>
+      bandejaService.informar(item.documento_id, { usuarios: data.usuarios, comentario: data.comentario || undefined }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      qc.invalidateQueries({ queryKey: ['doc-detalle', item.documento_id] })
+      setMostrarInformar(false)
+    },
+  })
+
+  const quitarInformadoDoc = useMutation({
+    mutationFn: () => bandejaService.quitarInformado(item.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      onClose()
+    },
+  })
+
+  const restaurarArchivadoDoc = useMutation({
+    mutationFn: () => bandejaService.restaurarArchivado(item.id, obsRestArch.trim() || undefined),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      setMostrarRestArch(false)
+      setObsRestArch('')
+      onClose()
+    },
+  })
+
+  const nuevaTareaMut = useMutation({
+    mutationFn: (data: { usuario_id: number; descripcion: string; prioridad: string; fecha_limite: string | null }) =>
+      bandejaService.nuevaTarea(item.id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      qc.invalidateQueries({ queryKey: ['tareas', item.documento_id] })
+      qc.invalidateQueries({ queryKey: ['doc-detalle', item.documento_id] })
+      setMostrarNuevaTarea(false)
     },
   })
 
@@ -229,6 +308,40 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
       qc.invalidateQueries({ queryKey: ['doc-detalle', item.documento_id] })
       setMostrarEnviar(false)
       onClose()
+    },
+  })
+
+  const responderDoc = useMutation({
+    mutationFn: (a_todos: boolean) =>
+      documentosService.responder(item.documento_id, { a_todos }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['doc-asociados', item.documento_id] })
+      qc.invalidateQueries({ queryKey: ['doc-detalle', item.documento_id] })
+      onRespuestaCreada?.(r.documento_id, r.sin_destinatario_auto)
+    },
+  })
+  const asociarDoc = useMutation({
+    mutationFn: (v: { antecedenteId: number; obs: string }) =>
+      documentosService.asociar(item.documento_id, v.antecedenteId, v.obs || undefined),
+    onSuccess: () => {
+      setMostrarAsociar(false)
+      qc.invalidateQueries({ queryKey: ['doc-asociados', item.documento_id] })
+      qc.invalidateQueries({ queryKey: ['doc-detalle', item.documento_id] })
+    },
+  })
+  // Carpeta Virtual actual de este documento (para "reclasificar" en el modal).
+  const { data: carpetaActual } = useQuery({
+    queryKey: ['doc-carpeta', item.documento_id],
+    queryFn: () => carpetaService.deDocumento(item.documento_id),
+    enabled: mostrarClasificar,
+  })
+  const clasificarDoc = useMutation({
+    mutationFn: (carpetaId: number) => carpetaService.clasificar([item.documento_id], carpetaId),
+    onSuccess: () => {
+      setMostrarClasificar(false)
+      qc.invalidateQueries({ queryKey: ['doc-carpeta', item.documento_id] })
+      qc.invalidateQueries({ queryKey: ['carpetas-arbol'] })
+      qc.invalidateQueries({ queryKey: ['carpeta-docs'] })
     },
   })
 
@@ -566,6 +679,93 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
         </div>
       )}
 
+      {/* Archivar overlay — archivo de gestión personal; comentario OPCIONAL
+          (no es una regla de negocio actual, a diferencia de eliminar/restaurar) */}
+      {mostrarArchivar && (
+        <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 14px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Archive size={14} style={{ color: T.pnBd }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Archivar documento</span>
+            <button onClick={() => setMostrarArchivar(false)}
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
+              <X size={14} />
+            </button>
+          </div>
+          <div style={{ padding: '10px 14px', flex: 1 }}>
+            <p style={{ fontSize: 11, color: T.rowSub, marginBottom: 8 }}>
+              El documento pasará a tu bandeja <strong>Archivados</strong>. Esto es archivo de gestión personal; no lo vincula a un expediente de archivo.
+            </p>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.rowSub, display: 'block', marginBottom: 4 }}>Observación (opcional):</label>
+            <textarea
+              value={obsArchivar}
+              onChange={e => setObsArchivar(e.target.value)}
+              placeholder="Motivo o nota del archivado…"
+              rows={3}
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }}
+            />
+          </div>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setMostrarArchivar(false)}
+              style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => !archivar.isPending && archivar.mutate()}
+              disabled={archivar.isPending}
+              style={{
+                padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
+                cursor: archivar.isPending ? 'not-allowed' : 'pointer',
+                background: '#002f6c', color: '#fff', display: 'flex', alignItems: 'center', gap: 5,
+              }}>
+              <Archive size={12} /> {archivar.isPending ? 'Archivando…' : 'Archivar'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Restaurar desde Archivados overlay — vuelve a la bandeja de origen; observación OPCIONAL */}
+      {mostrarRestArch && (
+        <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '12px 14px', borderBottom: `0.5px solid ${T.pnMetaBd}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <RotateCcw size={14} style={{ color: '#16a34a' }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: T.rowTxt }}>Restaurar documento</span>
+            <button onClick={() => setMostrarRestArch(false)}
+              style={{ marginLeft: 'auto', padding: 4, borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', color: T.rowSub }}>
+              <X size={14} />
+            </button>
+          </div>
+          <div style={{ padding: '10px 14px', flex: 1 }}>
+            <p style={{ fontSize: 11, color: T.rowSub, marginBottom: 8 }}>
+              El documento volverá a su bandeja de origen (Recibidos o Enviados). No modifica el documento.
+            </p>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.rowSub, display: 'block', marginBottom: 4 }}>Observación (opcional):</label>
+            <textarea
+              value={obsRestArch}
+              onChange={e => setObsRestArch(e.target.value)}
+              placeholder="Motivo o nota de la restauración…"
+              rows={3}
+              style={{ width: '100%', padding: '8px 10px', border: `0.5px solid ${T.rowBd}`, borderRadius: 8, fontSize: 12, fontFamily: 'inherit', resize: 'none', outline: 'none', color: T.rowTxt, background: T.rowBg }}
+            />
+          </div>
+          <div style={{ padding: '10px 14px', borderTop: `0.5px solid ${T.pnMetaBd}`, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setMostrarRestArch(false)}
+              style={{ padding: '7px 14px', border: `0.5px solid ${T.rowBd}`, borderRadius: 9, fontSize: 11, fontWeight: 500, cursor: 'pointer', background: T.rowBg, color: T.rowSub }}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => !restaurarArchivadoDoc.isPending && restaurarArchivadoDoc.mutate()}
+              disabled={restaurarArchivadoDoc.isPending}
+              style={{
+                padding: '7px 14px', border: 'none', borderRadius: 9, fontSize: 11, fontWeight: 600,
+                cursor: restaurarArchivadoDoc.isPending ? 'not-allowed' : 'pointer',
+                background: '#16a34a', color: '#fff', display: 'flex', alignItems: 'center', gap: 5,
+              }}>
+              <RotateCcw size={12} /> {restaurarArchivadoDoc.isPending ? 'Restaurando…' : 'Restaurar'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Eliminar definitivamente overlay */}
       {mostrarEliminarDefinitivo && (
         <div style={{ position: 'absolute', inset: 0, background: T.ctHdrBg, zIndex: 10, display: 'flex', flexDirection: 'column' }}>
@@ -668,7 +868,36 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
             { label: 'Reasignar',  icon: ArrowRightLeft, accent: false, warn: false,
               visible: recibido && !anulado,                                           action: () => setMostrarReasignar(true) },
             { label: 'Archivar',   icon: Archive,        accent: false, warn: false,
-              visible: (recibido || b === 'enviados') && !anulado,                    action: () => setMostrarVincular(true) },
+              visible: (b === 'recibidos' || b === 'enviados') && !anulado,           action: () => { setObsArchivar(''); setMostrarArchivar(true) } },
+            { label: 'Vincular a expediente', icon: Link2, accent: false, warn: false,
+              visible: puedeArchivoEditar && (recibido || b === 'enviados' || enElab) && !anulado, action: () => setMostrarVincular(true) },
+            { label: 'Informar',   icon: BookUser,       accent: false, warn: false,
+              visible: (recibido || ['enviados','reasignados','archivados'].includes(b)) && !anulado, action: () => setMostrarInformar(true) },
+            { label: 'Nueva tarea', icon: ClipboardList, accent: false, warn: false,
+              visible: (b === 'recibidos' || b === 'enviados' || enElab) && !anulado, action: () => setMostrarNuevaTarea(true) },
+            // Carpeta Virtual — clasificación operativa de la unidad. No cambia
+            // bandeja/estado/responsable. Matriz QUIPUX (F2-F/R5): Recibidos,
+            // Enviados, Archivados, Tareas Recibidas, Tareas Enviadas.
+            // NO: En Elaboración, Reasignados, Informados, No Enviados.
+            // `recibido` ya cubre recibidos + tareas_recibidas.
+            { label: 'Clasificar en carpeta', icon: FolderTree, accent: false, warn: false,
+              visible: (recibido || ['enviados', 'archivados', 'tareas_enviadas'].includes(b)) && !anulado,
+              action: () => setMostrarClasificar(true) },
+            // Solo 'recibidos': un CC (Destinatario tipo='copia') también recibe
+            // el documento en Recibidos (F2-B), así que conserva "Responder".
+            // Se retira de 'informados': un informado posterior (tipo='conocimiento')
+            // NO es un destinatario de copia — que deba poder responder es una
+            // decisión que requiere validación contra el QUIPUX comunitario.
+            { label: 'Responder', icon: Send, accent: false, warn: false,
+              visible: b === 'recibidos' && !anulado,
+              action: () => { if (!responderDoc.isPending) responderDoc.mutate(false) } },
+            { label: 'Responder a todos', icon: Send, accent: false, warn: false,
+              visible: b === 'recibidos' && !anulado,
+              action: () => { if (!responderDoc.isPending) responderDoc.mutate(true) } },
+            { label: 'Quitar de Informados', icon: BookUser, accent: false, warn: true,
+              visible: b === 'informados',                                            action: () => quitarInformadoDoc.mutate() },
+            { label: 'Restaurar',  icon: RotateCcw,      accent: false, warn: false,
+              visible: b === 'archivados',                                            action: () => { setObsRestArch(''); setMostrarRestArch(true) } },
             { label: 'Firmar',     icon: Signature,      accent: false, warn: false,
               visible: (enElab || b === 'no_enviados') && !['firmado','anulado'].includes(e), action: () => setMostrarFirma(true) },
             { label: enviandoDirecto ? 'Enviando…' : 'Enviar', icon: Send, accent: false, warn: false,
@@ -745,13 +974,24 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
         })()}
       </div>
 
+      {/* Panel de tareas — solo en las bandejas de tareas */}
+      {(item.bandeja === 'tareas_recibidas' || item.bandeja === 'tareas_enviadas') && authUsuario && (
+        <TareaPanel
+          documentoId={item.documento_id}
+          rol={item.bandeja === 'tareas_recibidas' ? 'recibidas' : 'enviadas'}
+          usuarioActualId={authUsuario.id}
+          T={T}
+        />
+      )}
+
       {/* Tabs — segmented control */}
       <div style={{ padding: '8px 12px', borderBottom: `0.5px solid ${T.pnMetaBd}`, flexShrink: 0, background: T.pnMeta }}>
         <div style={{ display: 'flex', background: T.statsBg, borderRadius: 10, padding: 3, gap: 2 }}>
           {([
-            ['info',        'Información del documento', FileText],
-            ['adjuntos',    'Anexos',                    Folder],
-            ['seguimiento', 'Recorrido',                 Clock],
+            ['info',        'Información', FileText],
+            ['adjuntos',    'Anexos',     Folder],
+            ['seguimiento', 'Recorrido',  Clock],
+            ['asociados',   'Docs. asociados', GitBranch],
           ] as [string, string, any][]).map(([k, l, TabIcon]) => (
             <button key={k} onClick={() => setTab(k as any)}
               style={{
@@ -932,6 +1172,14 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
           </div>
         ) : tabActiva === 'adjuntos' ? (
           <AdjuntosPanel documentoId={item.documento_id} />
+        ) : tabActiva === 'asociados' ? (
+          <DocumentosAsociadosPanel
+            documentoId={item.documento_id}
+            puedeEditar={item.bandeja === 'en_elaboracion' && item.accion_tomada !== 'reasignado'}
+            onAsociar={() => setMostrarAsociar(true)}
+            onAbrir={onAbrirDoc}
+            T={T}
+          />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             {(() => {
@@ -1070,7 +1318,47 @@ function PanelDetalle({ item, onClose, onEditar, trigger }: {
         <VincularExpedienteModal
           documentoId={item.documento_id}
           onClose={() => setMostrarVincular(false)}
-          onVinculado={() => { archivar.mutate(); onClose() }}
+          onVinculado={() => setMostrarVincular(false)}
+        />
+      )}
+      {mostrarInformar && (
+        <BulkInformarModal
+          count={1}
+          pending={informarDoc.isPending}
+          error={(informarDoc.error as any)?.response?.data?.detail || ''}
+          onConfirm={(data) => informarDoc.mutate(data)}
+          onCancel={() => setMostrarInformar(false)}
+          T={T}
+        />
+      )}
+      {mostrarNuevaTarea && (
+        <NuevaTareaModal
+          pending={nuevaTareaMut.isPending}
+          error={(nuevaTareaMut.error as any)?.response?.data?.detail || ''}
+          onConfirm={(data) => nuevaTareaMut.mutate(data)}
+          onCancel={() => setMostrarNuevaTarea(false)}
+          T={T}
+        />
+      )}
+      {mostrarAsociar && (
+        <AsociarDocumentoModal
+          documentoId={item.documento_id}
+          pending={asociarDoc.isPending}
+          error={(asociarDoc.error as any)?.response?.data?.detail || ''}
+          onConfirm={(antecedenteId, obs) => asociarDoc.mutate({ antecedenteId, obs })}
+          onCancel={() => setMostrarAsociar(false)}
+          T={T}
+        />
+      )}
+      {mostrarClasificar && (
+        <ClasificarCarpetaModal
+          count={1}
+          actual={carpetaActual ?? null}
+          pending={clasificarDoc.isPending}
+          error={(clasificarDoc.error as any)?.response?.data?.detail || ''}
+          onConfirm={(carpetaId) => clasificarDoc.mutate(carpetaId)}
+          onCancel={() => setMostrarClasificar(false)}
+          T={T}
         />
       )}
       {mostrarEmail && (
@@ -1798,6 +2086,13 @@ export default function DocumentosPage() {
 
   const [temaOpen, setTemaOpen] = useState(false)
   const [bandejaActiva, setBandeja]   = useState('recibidos')
+  // Selección múltiple + acciones de lote por bandeja (motor genérico).
+  // `accionConfirmar` = clave de la acción cuyo diálogo de confirmación está
+  // abierto; null = ninguno.
+  const [accionConfirmar, setAccionConfirmar] = useState<string | null>(null)
+  const [comentarioBulk, setComentarioBulk] = useState('')
+  const [errorBulk, setErrorBulk] = useState('')
+  const [okBulk, setOkBulk] = useState('')
   const [selectedId, setSelectedId]     = useState<number | null>(null)
   const [selectedSnap, setSelectedSnap] = useState<BandejaItem | null>(null)
   const [selectedQuipux, setSelQuipux]  = useState<QuipuxDocumento | null>(null)
@@ -2042,7 +2337,245 @@ export default function DocumentosPage() {
     setVerDetalle(false)
     setPendSelDocId(null)
     setQPage(1)
+    // La selección se limpia sola al cambiar `bulkResetKey` (incluye bandeja);
+    // aquí solo se cierra el diálogo/mensajes de lote.
+    setAccionConfirmar(null)
+    setComentarioBulk('')
+    setErrorBulk('')
+    setOkBulk('')
   }
+
+  // ── Selección múltiple + acciones de lote (motor genérico por bandeja) ──
+  // Cada bandeja declara sus acciones en `constants/bandejaAcciones`. El
+  // checkbox está siempre visible en bandejas operables; la barra contextual
+  // solo aparece con selección (§2/§3). Seleccionar 1 documento usa el mismo
+  // motor que seleccionar N (§4).
+  const permisoCtx = useMemo(() => ({ puede, esAdmin: permisosAdmin }), [puede, permisosAdmin])
+  const accionesBandeja = useMemo(
+    () => (soloQuipux ? [] : accionesDeBandeja(bandejaActiva, permisoCtx)),
+    [soloQuipux, bandejaActiva, permisoCtx],
+  )
+  const bandejaSeleccionable = accionesBandeja.length > 0
+  const filaOK = FILA_SELECCIONABLE[bandejaActiva] ?? (() => true)
+  const selectableIds = useMemo(
+    () => (bandejaSeleccionable ? items.filter(filaOK).map(i => i.documento_id) : []),
+    [bandejaSeleccionable, items, bandejaActiva],
+  )
+  const bulkResetKey = `${bandejaActiva}|${busqueda}|${filtroLeido}|${filtroTipo}|${adminVer?.id ?? ''}`
+  const sel = useBulkSelection(selectableIds, bulkResetKey)
+  const selectedItems = useMemo(
+    () => items.filter(i => sel.selected.has(i.documento_id)),
+    [items, sel.selected],
+  )
+
+  const fmtBulkError = (e: any, fallback: string) => {
+    const d = e.response?.data
+    const extra = Array.isArray(d?.errores)
+      ? ' ' + d.errores.map((x: any) => `#${x.documento_id}: ${x.detalle}`).join(' · ')
+      : ''
+    return (d?.detail || fallback) + extra
+  }
+  const finalizarBulk = (msg: string) => {
+    sel.clear()
+    setAccionConfirmar(null)
+    setComentarioBulk('')
+    setErrorBulk('')
+    setOkBulk(msg)
+    window.setTimeout(() => setOkBulk(''), 4000)
+    if (selectedId && !items.find(i => i.id === selectedId)) { setSelectedId(null); setVerDetalle(false) }
+  }
+
+  const enviarPapeleraBulk = useMutation({
+    mutationFn: () => bandejaService.enviarPapelera(sel.ids, comentarioBulk.trim()),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = r?.movidos?.length ?? sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} enviado${n !== 1 ? 's' : ''} a la papelera.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo enviar a la papelera.')),
+  })
+  const restaurarBulk = useMutation({
+    mutationFn: () => bandejaService.restaurarEliminados(sel.ids, comentarioBulk.trim()),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = r?.restaurados?.length ?? sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} restaurado${n !== 1 ? 's' : ''} correctamente.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo restaurar.')),
+  })
+  const comentarBulk = useMutation({
+    mutationFn: () => bandejaService.comentarLote(sel.ids, bandejaActiva, comentarioBulk.trim()),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      qc.invalidateQueries({ queryKey: ['doc-detalle'] })
+      const n = r?.comentados?.length ?? sel.count
+      finalizarBulk(`Comentario registrado en ${n} documento${n !== 1 ? 's' : ''}.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo registrar el comentario.')),
+  })
+  const reasignarBulk = useMutation({
+    mutationFn: (data: { usuario_id: number; unidad_id: number | null; instrucciones: string }) =>
+      bandejaService.reasignarLote(sel.ids, bandejaActiva, data),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = r?.reasignados?.length ?? sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} reasignado${n !== 1 ? 's' : ''}.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo reasignar.')),
+  })
+  const marcarLeidoBulk = useMutation({
+    mutationFn: () => bandejaService.marcarLeidoLote(sel.ids, bandejaActiva),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = r?.leidos?.length ?? sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} marcado${n !== 1 ? 's' : ''} como leído.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudieron marcar como leídos.')),
+  })
+  const archivarBulk = useMutation({
+    mutationFn: () => bandejaService.archivarLote(sel.ids, bandejaActiva, comentarioBulk.trim() || undefined),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = r?.archivados?.length ?? sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} archivado${n !== 1 ? 's' : ''}.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo archivar.')),
+  })
+  const informarBulk = useMutation({
+    mutationFn: (data: { usuarios: number[]; comentario: string }) =>
+      bandejaService.informarLote(sel.ids, data.usuarios, data.comentario || undefined),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} puesto${n !== 1 ? 's' : ''} en conocimiento.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo informar.')),
+  })
+  const quitarInformadosBulk = useMutation({
+    mutationFn: () => bandejaService.quitarInformados(sel.ids),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = r?.retirados?.length ?? sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} retirado${n !== 1 ? 's' : ''} de Informados.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo quitar de Informados.')),
+  })
+  const restaurarArchivadosBulk = useMutation({
+    mutationFn: () => bandejaService.restaurarArchivados(sel.ids, comentarioBulk.trim() || undefined),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['bandeja'] })
+      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+      const n = r?.restaurados?.length ?? sel.count
+      finalizarBulk(`${n} documento${n !== 1 ? 's' : ''} restaurado${n !== 1 ? 's' : ''} correctamente.`)
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo restaurar.')),
+  })
+  const clasificarBulk = useMutation({
+    mutationFn: (carpetaId: number) => carpetaService.clasificar(sel.ids, carpetaId),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['carpetas-arbol'] })
+      qc.invalidateQueries({ queryKey: ['carpeta-docs'] })
+      const n = (r?.clasificados?.length ?? 0) + (r?.reclasificados?.length ?? 0)
+      const sc = r?.sin_cambio?.length ?? 0
+      finalizarBulk(
+        `${n} documento${n !== 1 ? 's' : ''} clasificado${n !== 1 ? 's' : ''} en carpeta` +
+        (sc ? ` · ${sc} ya estaba${sc !== 1 ? 'n' : ''} en esa carpeta.` : '.'),
+      )
+    },
+    onError: (e: any) => setErrorBulk(fmtBulkError(e, 'No se pudo clasificar.')),
+  })
+
+  // Config por acción de CONFIRMACIÓN SIMPLE (BulkConfirmDialog: texto + comentario).
+  // "reasignar" no está aquí: usa su propio modal (BulkReasignarModal).
+  const ACCION_BULK: Record<string, {
+    titulo: (n: number) => string
+    cuerpo: string
+    needsComment: boolean
+    allowComment?: boolean
+    commentLabel?: string
+    confirmLabel: (n: number) => string
+    tone: 'default' | 'warn' | 'danger'
+    mutation: { mutate: () => void; isPending: boolean }
+  }> = {
+    enviar_papelera: {
+      titulo: (n) => n === 1 ? '¿Enviar este documento a la papelera?' : `¿Enviar ${n} documentos a la papelera?`,
+      cuerpo: 'Los documentos podrán recuperarse desde Eliminados.',
+      needsComment: true,
+      confirmLabel: (n) => n === 1 ? 'Enviar a papelera' : `Enviar ${n} a papelera`,
+      tone: 'warn',
+      mutation: enviarPapeleraBulk,
+    },
+    restaurar: {
+      titulo: (n) => n === 1 ? '¿Restaurar este documento?' : `¿Restaurar ${n} documentos?`,
+      cuerpo: 'Los documentos regresarán a "En elaboración" como borrador.',
+      needsComment: true,
+      confirmLabel: (n) => n === 1 ? 'Restaurar' : `Restaurar ${n}`,
+      tone: 'default',
+      mutation: restaurarBulk,
+    },
+    comentar: {
+      titulo: (n) => n === 1 ? 'Comentar documento' : `Comentar ${n} documentos`,
+      cuerpo: 'El mismo comentario se registrará en el recorrido de cada documento seleccionado.',
+      needsComment: true,
+      commentLabel: 'Comentario:',
+      confirmLabel: (n) => n === 1 ? 'Comentar' : `Comentar en ${n} documentos`,
+      tone: 'default',
+      mutation: comentarBulk,
+    },
+    archivar: {
+      titulo: (n) => n === 1 ? '¿Archivar este documento?' : `¿Archivar ${n} documentos?`,
+      cuerpo: 'Pasarán a tu bandeja Archivados (archivo de gestión personal). No se vinculan a ningún expediente.',
+      needsComment: false,
+      allowComment: true,
+      commentLabel: 'Observación (opcional):',
+      confirmLabel: (n) => n === 1 ? 'Archivar' : `Archivar ${n}`,
+      tone: 'default',
+      mutation: archivarBulk,
+    },
+    quitar_informado: {
+      titulo: (n) => n === 1 ? '¿Quitar este documento de Informados?' : `¿Quitar ${n} documentos de Informados?`,
+      cuerpo: 'Se retira la copia de conocimiento de tu bandeja. No elimina el documento ni afecta a otros usuarios.',
+      needsComment: false,
+      confirmLabel: (n) => n === 1 ? 'Quitar de Informados' : `Quitar ${n}`,
+      tone: 'warn',
+      mutation: quitarInformadosBulk,
+    },
+    restaurar_archivado: {
+      titulo: (n) => n === 1 ? '¿Restaurar este documento?' : `¿Restaurar ${n} documentos?`,
+      cuerpo: 'Cada documento vuelve a su bandeja de origen (Recibidos o Enviados). No modifica el documento.',
+      needsComment: false,
+      allowComment: true,
+      commentLabel: 'Observación (opcional):',
+      confirmLabel: (n) => n === 1 ? 'Restaurar' : `Restaurar ${n}`,
+      tone: 'default',
+      mutation: restaurarArchivadosBulk,
+    },
+  }
+  // Punto único de disparo de una acción de lote desde la barra.
+  //  - marcar_leido: acción neutra/idempotente → se ejecuta directo (§9).
+  //  - reasignar: modal propio con formulario.
+  //  - resto: BulkConfirmDialog (texto + comentario obligatorio).
+  const onAccionBulk = (key: string) => {
+    setErrorBulk('')
+    if (key === 'marcar_leido') {
+      if (!marcarLeidoBulk.isPending) marcarLeidoBulk.mutate()
+      return
+    }
+    // 'reasignar', 'informar' y 'clasificar' abren su propio modal con formulario.
+    if (key !== 'reasignar' && key !== 'informar' && key !== 'clasificar') setComentarioBulk('')
+    setAccionConfirmar(key)
+  }
+  const MODALES_PROPIOS = new Set(['reasignar', 'informar', 'clasificar'])
+  const cfgAccion = accionConfirmar && !MODALES_PROPIOS.has(accionConfirmar) ? ACCION_BULK[accionConfirmar] : null
+
   const cambiarBandeja = (key: string) => salirDelEditor(() => aplicarBandeja(key))
 
   // Navegación a otra ruta desde el sidebar documental — misma protección.
@@ -2070,6 +2603,38 @@ export default function DocumentosPage() {
   const abrirEdicionDocumento = async (item: BandejaItem) => {
     const detalle = await documentosService.obtener(item.documento_id)
     setDocEditar(detalle)                      // selectedId se mantiene → al salir vuelve su detalle
+  }
+
+  // Abre un Documento en el editor por su id — sin depender de que exista en la
+  // lista de la bandeja actual (lo usa "Responder": el borrador recién creado).
+  const abrirEdicionPorId = async (docId: number) => {
+    const detalle = await documentosService.obtener(docId)
+    setSelectedId(null); setSelectedSnap(null); setSelQuipux(null)
+    setVerDetalle(false); setPendSelDocId(null)
+    setDocEditar(detalle)
+  }
+
+  // Abre el DETALLE (read-only) de un Documento por su id — transversal a las
+  // bandejas (lo usa el árbol de Docs. asociados). Reutiliza `obtener`, que ya
+  // aplica la ACL de lectura: 403/404 → aviso, sin fuga.
+  const abrirDetallePorId = async (docId: number) => {
+    try {
+      const d = await documentosService.obtener(docId)
+      const sintetico = {
+        id: -docId, documento_id: docId, bandeja: '', accion_tomada: '',
+        leido: true, es_urgente: false, numero_referencia: '',
+        numero_documento: d.numero_documento, asunto: d.asunto,
+        estado_documento: d.estado, creado_por_id: d.creado_por,
+        remitente_entidad: '', fecha_documento: d.fecha_elaboracion ?? d.creado_en,
+      } as unknown as BandejaItem
+      setDocEditar(null); setCreando(false); setSelQuipux(null)
+      setSelectedId(-docId); setSelectedSnap(sintetico); setVerDetalle(true); setPendSelDocId(null)
+    } catch (e: any) {
+      const s = e.response?.status
+      window.alert(s === 403 || s === 404
+        ? 'No tiene acceso a este documento.'
+        : 'No se pudo abrir el documento.')
+    }
   }
 
   // Cancelar / X del editor: mismo camino que la navegación (confirma si hay
@@ -2663,6 +3228,22 @@ export default function DocumentosPage() {
             onReasignado={editorReasignado}
             onDirtyChange={setEditorDirty}
           />
+        ) : bandejaActiva === 'carpetas' ? (
+          /* Carpetas Virtuales — vista transversal (árbol + documentos
+             clasificados). NO es una bandeja: la ACL documental se respeta. */
+          <>
+            <CarpetasView T={T} onAbrirDoc={(id) => abrirDetallePorId(id)} />
+            {selected && !selectedQuipux && verDetalle && (
+              <ModalDetalleDocumento onClose={() => setSelectedId(null)}>
+                <PanelDetalle
+                  item={selected}
+                  onClose={() => setSelectedId(null)}
+                  trigger={panelTrigger}
+                  onAbrirDoc={(docId) => abrirDetallePorId(docId)}
+                />
+              </ModalDetalleDocumento>
+            )}
+          </>
         ) : (
         <>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderBottom: `1px solid ${T.ctHdrBd}`, flexShrink: 0, background: T.ctHdrBg, boxShadow: T.tbShadow }}>
@@ -2721,10 +3302,95 @@ export default function DocumentosPage() {
           )}
         </div>
 
+        {/* Confirmación de éxito (§21) — se autolimpia */}
+        {okBulk && (
+          <div style={{ padding: '7px 14px', background: '#f0fdf4', borderBottom: `1px solid ${T.ctHdrBd}`, fontSize: 11.5, fontWeight: 600, color: '#15803d', flexShrink: 0 }}>
+            {okBulk}
+          </div>
+        )}
+
+        {/* Barra contextual de acciones de lote — aparece solo con selección */}
+        {bandejaSeleccionable && sel.count > 0 && (
+          <BulkActionBar
+            count={sel.count}
+            acciones={accionesBandeja}
+            selectedItems={selectedItems}
+            onAccion={onAccionBulk}
+            onLimpiar={sel.clear}
+            T={T}
+          />
+        )}
+
+        {/* Confirmación simple (papelera / restaurar / comentar) */}
+        {cfgAccion && (
+          <BulkConfirmDialog
+            open
+            title={cfgAccion.titulo(sel.count)}
+            body={cfgAccion.cuerpo}
+            needsComment={cfgAccion.needsComment}
+            allowComment={cfgAccion.allowComment}
+            commentLabel={cfgAccion.commentLabel}
+            comment={comentarioBulk}
+            onComment={setComentarioBulk}
+            confirmLabel={cfgAccion.confirmLabel(sel.count)}
+            tone={cfgAccion.tone}
+            pending={cfgAccion.mutation.isPending}
+            error={errorBulk}
+            onConfirm={() => cfgAccion.mutation.mutate()}
+            onCancel={() => { if (!cfgAccion.mutation.isPending) { setAccionConfirmar(null); setErrorBulk('') } }}
+            T={T}
+          />
+        )}
+
+        {/* Reasignación masiva — modal propio (un solo destino para toda la selección) */}
+        {accionConfirmar === 'reasignar' && (
+          <BulkReasignarModal
+            count={sel.count}
+            pending={reasignarBulk.isPending}
+            error={errorBulk}
+            onConfirm={(data) => reasignarBulk.mutate(data)}
+            onCancel={() => { if (!reasignarBulk.isPending) { setAccionConfirmar(null); setErrorBulk('') } }}
+            T={T}
+          />
+        )}
+
+        {/* Informar masivo — modal propio (mismos usuarios + comentario para toda la selección) */}
+        {accionConfirmar === 'informar' && (
+          <BulkInformarModal
+            count={sel.count}
+            pending={informarBulk.isPending}
+            error={errorBulk}
+            onConfirm={(data) => informarBulk.mutate(data)}
+            onCancel={() => { if (!informarBulk.isPending) { setAccionConfirmar(null); setErrorBulk('') } }}
+            T={T}
+          />
+        )}
+
+        {/* Clasificar en carpeta (masivo) — modal propio con selector de árbol */}
+        {accionConfirmar === 'clasificar' && (
+          <ClasificarCarpetaModal
+            count={sel.count}
+            pending={clasificarBulk.isPending}
+            error={errorBulk}
+            onConfirm={(carpetaId) => clasificarBulk.mutate(carpetaId)}
+            onCancel={() => { if (!clasificarBulk.isPending) { setAccionConfirmar(null); setErrorBulk('') } }}
+            T={T}
+          />
+        )}
+
         <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
           {/* Cabecera de columnas */}
-          <div style={{ display: 'grid', gridTemplateColumns: '24px 24px 64px 1fr 120px 140px 120px 100px', gap: 8, padding: '6px 12px', background: T.colBg, borderBottom: `1px solid ${T.colBd}`, position: 'sticky', top: 0, zIndex: 1 }}>
-            {['','','De','Asunto','Fecha Doc.','N° Documento','N° Referencia','Estado'].map((h, i) => (
+          <div style={{ display: 'grid', gridTemplateColumns: '24px 24px 64px 1fr 120px 140px 120px 100px', gap: 8, padding: '6px 12px', background: T.colBg, borderBottom: `1px solid ${T.colBd}`, position: 'sticky', top: 0, zIndex: 1, alignItems: 'center' }}>
+            <span />
+            {bandejaSeleccionable ? (
+              <input type="checkbox"
+                ref={el => { if (el) el.indeterminate = sel.indeterminate }}
+                checked={sel.allChecked}
+                onChange={() => sel.toggleAll(selectableIds)}
+                title="Seleccionar todos los visibles"
+                style={{ width: 13, height: 13, accentColor: T.accentDk, cursor: 'pointer' }} />
+            ) : <span />}
+            {['De','Asunto','Fecha Doc.','N° Documento','N° Referencia','Estado'].map((h, i) => (
               <span key={i} style={{ fontSize: 10, fontWeight: 700, color: T.colTxt, textTransform: 'uppercase', letterSpacing: '.05em' }}>{h}</span>
             ))}
           </div>
@@ -2757,7 +3423,13 @@ export default function DocumentosPage() {
                     onMouseEnter={e => { if (!isOn) (e.currentTarget as HTMLElement).style.background = !item.leido ? T.rowHvNr : T.rowHv }}
                     onMouseLeave={e => { if (!isOn) (e.currentTarget as HTMLElement).style.background = !item.leido ? T.rowNr : T.rowBg }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: !item.leido ? T.rowBlSel : 'transparent' }} />
-                    <input type="checkbox" onClick={e => e.stopPropagation()} style={{ width: 13, height: 13, accentColor: T.accentDk, cursor: 'pointer' }} />
+                    {bandejaSeleccionable && filaOK(item) ? (
+                      <input type="checkbox"
+                        checked={sel.isSelected(item.documento_id)}
+                        onClick={e => e.stopPropagation()}
+                        onChange={() => sel.toggle(item.documento_id)}
+                        style={{ width: 13, height: 13, accentColor: T.accentDk, cursor: 'pointer' }} />
+                    ) : <span />}
                     <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 5px', borderRadius: 4, background: tc.bg, color: tc.text, textAlign: 'center' }}>
                       {item.tipo_prefijo}
                     </span>
@@ -2897,6 +3569,17 @@ export default function DocumentosPage() {
               onEditar={selected.bandeja === 'en_elaboracion' && selected.accion_tomada !== 'reasignado' && !adminVer
                 ? () => abrirEdicionDocumento(selected!)
                 : undefined}
+              onRespuestaCreada={async (docId, sinDestinatario) => {
+                qc.invalidateQueries({ queryKey: ['bandeja'] })
+                qc.invalidateQueries({ queryKey: ['bandeja-conteos'] })
+                await abrirEdicionPorId(docId)   // termina en el EDITOR del borrador de respuesta
+                if (sinDestinatario) {
+                  window.setTimeout(() => window.alert(
+                    'No fue posible determinar automáticamente el destinatario de la respuesta. Seleccione el destinatario (Para) antes de enviar.'
+                  ), 150)
+                }
+              }}
+              onAbrirDoc={(docId) => abrirDetallePorId(docId)}
             />
           </ModalDetalleDocumento>
         ) : selectedQuipux ? (

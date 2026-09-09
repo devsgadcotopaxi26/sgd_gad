@@ -6,12 +6,11 @@ import { X, FolderTree, Plus, Search, FileText } from 'lucide-react'
 interface Props {
   documentoId?: number
   tramiteId?: number
-  correoId?: number
   onClose: () => void
   onVinculado?: () => void
 }
 
-export default function VincularExpedienteModal({ documentoId, tramiteId, correoId, onClose, onVinculado }: Props) {
+export default function VincularExpedienteModal({ documentoId, tramiteId, onClose, onVinculado }: Props) {
   const qc = useQueryClient()
   const [modo, setModo] = useState<'existente' | 'nuevo'>('existente')
   const [busqueda, setBusqueda] = useState('')
@@ -34,12 +33,12 @@ export default function VincularExpedienteModal({ documentoId, tramiteId, correo
 
   const vincularMutation = useMutation({
     mutationFn: (expedienteId: number) =>
-      archivoService.agregarDocumentoExpediente(expedienteId, {
-        documento_id: documentoId, tramite_id: tramiteId, correo_id: correoId,
+      archivoService.agregarDocumento(expedienteId, {
+        documento_id: documentoId, tramite_id: tramiteId,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['bandeja'] })
-      qc.invalidateQueries({ queryKey: ['correos'] })
+      qc.invalidateQueries({ queryKey: ['expedientes'] })
       onVinculado?.()
       onClose()
     },
@@ -49,13 +48,13 @@ export default function VincularExpedienteModal({ documentoId, tramiteId, correo
   const crearYVincularMutation = useMutation({
     mutationFn: async () => {
       const expediente = await archivoService.crear(formNuevo)
-      return archivoService.agregarDocumentoExpediente(expediente.id, {
-        documento_id: documentoId, tramite_id: tramiteId, correo_id: correoId,
+      return archivoService.agregarDocumento(expediente.id, {
+        documento_id: documentoId, tramite_id: tramiteId,
       })
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['bandeja'] })
-      qc.invalidateQueries({ queryKey: ['correos'] })
+      qc.invalidateQueries({ queryKey: ['expedientes'] })
       onVinculado?.()
       onClose()
     },

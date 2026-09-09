@@ -3,10 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useThemeStore } from '@/store/themeStore'
 import { THEMES } from '@/constants/themes'
 import { organizacionService, Unidad } from '@/services/organizacion.service'
+import { usePermisosStore } from '@/store/permisosStore'
+import ModalNumeracion from '@/components/ui/ModalNumeracion'
 import {
   ChevronRight, ChevronDown, Building2,
   Search, CheckCircle, XCircle, RefreshCw,
-  Plus, Save, X, Edit2,
+  Plus, Save, X, Edit2, Hash,
 } from 'lucide-react'
 
 const TIPO_CHOICES = [
@@ -221,6 +223,8 @@ export default function OrganigramaPage() {
   const [selected, setSelected]     = useState<any>(null)
   const [busqueda, setBusqueda]     = useState('')
   const [modalConfig, setModalConfig] = useState<{ modo: 'crear' | 'editar'; inicial?: Unidad; padreId?: number } | null>(null)
+  const [numeracionUnidad, setNumeracionUnidad] = useState<{ id: number; siglas: string } | null>(null)
+  const puedeAjustes = usePermisosStore(s => s.puede('ajustes', 'editar'))
 
   const { data: arbol, isLoading, refetch } = useQuery({ queryKey: ['organigrama-arbol'], queryFn: organizacionService.arbol })
 
@@ -246,6 +250,13 @@ export default function OrganigramaPage() {
     <div>
       {modalConfig && (
         <ModalUnidad modo={modalConfig.modo} inicial={modalConfig.inicial} padreId={modalConfig.padreId} onClose={() => { setModalConfig(null); refetch() }} />
+      )}
+      {numeracionUnidad && (
+        <ModalNumeracion
+          unidadId={numeracionUnidad.id}
+          unidadSiglas={numeracionUnidad.siglas}
+          onClose={() => setNumeracionUnidad(null)}
+        />
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -336,6 +347,12 @@ export default function OrganigramaPage() {
                   <button onClick={() => activar.mutate(selected.id)} disabled={activar.isPending}
                     style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 11px', borderRadius: 8, border: '0.5px solid #86efac', background: '#f0fdf4', color: '#15803d', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
                     <CheckCircle size={12} /> Activar
+                  </button>
+                )}
+                {puedeAjustes && (
+                  <button onClick={() => setNumeracionUnidad({ id: selected.id, siglas: selected.siglas || selected.codigo })}
+                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 11px', borderRadius: 8, border: `0.5px solid ${T.rowBd}`, background: T.rowBg, color: T.rowTxt, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    <Hash size={12} /> Numeración
                   </button>
                 )}
               </div>

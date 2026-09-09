@@ -28,6 +28,62 @@ class ExpedienteDocumentoSerializer(serializers.ModelSerializer):
         model  = ExpedienteDocumento
         fields = '__all__'
 
+    def to_representation(self, instance):
+        """
+        Política de acceso del nodo del expediente (F3-A + microcierre F3-A.1).
+
+        Solo se aplica cuando el contexto trae `documentos_visibles_ids`
+        (conjunto de ids de Documento que el usuario puede consultar según la
+        ACL central F2-E, `documentos_visibles_para`) — es decir, en el
+        detalle de un Expediente. Fuera de ese contexto (p. ej. la respuesta
+        de `agregar_documento`, donde el usuario acaba de vincular su propio
+        documento) la representación es completa.
+
+        Un nodo se ENMASCARA a `{id, acceso_restringido: true}` — **sin ningún
+        otro metadato** (ni del documento, ni del trámite, ni de quién lo
+        agregó, ni timestamps) — cuando:
+          · apunta a un `Documento` fuera de la ACL de lectura del usuario, o
+          · apunta a un `Tramite`. **No existe una ACL central de lectura de
+            Tramite** (RF-TRAM-011 no implementado); F3-A.1 no la crea, así que
+            el trámite se trata FAIL-CLOSED. Se resolverá en F3-B con la
+            condición de acceso de Serie/Expediente.
+
+        La pertenencia al expediente NUNCA concede acceso al Documento ni al
+        Tramite. La estructura del expediente se conserva (el nodo sigue
+        presente) pero no filtra información.
+        """
+        visibles = self.context.get('documentos_visibles_ids')
+        if visibles is None:
+            return super().to_representation(instance)
+
+        doc_restringido = (instance.documento_id is not None
+                           and instance.documento_id not in visibles)
+        tramite_sin_acl = instance.tramite_id is not None  # sin ACL central: fail-closed
+
+        if doc_restringido or tramite_sin_acl:
+            return {'id': instance.id, 'acceso_restringido': True}
+
+        data = super().to_representation(instance)
+        data['acceso_restringido'] = False
+        return data
+
+
+class ExpedienteActualizarSerializer(serializers.ModelSerializer):
+    """
+    Update genérico (PUT/PATCH) del Expediente — F3-A.
+
+    Solo expone campos ORDINARIOS editables por el usuario. Los campos de
+    TRANSICIÓN de negocio (`estado`, `fecha_cierre`, `expurgado`,
+    `fecha_expurgo`, `foliado`, `fecha_foliacion`, `categoria_actual`,
+    `num_fojas`, `codigo_expediente`, `serie`, `unidad`) NO son modificables
+    por esta vía: cambian únicamente a través de sus acciones dedicadas
+    (`cerrar` / `expurgar` / `foliar` / `transferir`) o del alta.
+    """
+    class Meta:
+        model  = Expediente
+        fields = ['titulo', 'descripcion', 'fecha_inicio',
+                  'soporte', 'ubicacion_fisica', 'numero_caja', 'numero_parte']
+
 
 class ExpedienteListSerializer(serializers.ModelSerializer):
     serie_nombre    = serializers.CharField(source='serie.nombre',   read_only=True)
@@ -76,9 +132,12 @@ class ExpedienteCrearSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Expediente
         fields = [
-            'serie', 'unidad', 'titulo', 'descripcion',
+            'id', 'codigo_expediente', 'serie', 'unidad', 'titulo', 'descripcion',
             'fecha_inicio', 'soporte', 'ubicacion_fisica',
         ]
+        # F3-A — la respuesta del alta debe traer `id` (y el código generado)
+        # para que `VincularExpedienteModal` pueda encadenar la vinculación.
+        read_only_fields = ['id', 'codigo_expediente']
 
     def create(self, validated_data):
         exp = Expediente(**validated_data)

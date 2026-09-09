@@ -525,6 +525,8 @@ export default function TramitesPage() {
   const [mostrarVincular, setMostrarVincular] = useState(false)
   const [tramiteAEditar, setTramiteAEditar]   = useState<TramiteDetalle | null>(null)
   const puedeCanalTramite = usePermisosStore(s => s.puedeCanalTramite)
+  // F3-A — "Archivar en expediente" escribe en el módulo Archivo.
+  const puedeArchivoEditar = usePermisosStore(s => s.puede('archivo', 'editar'))
 
   const { data, isLoading } = useQuery({
     queryKey: ['tramites', busqueda, filtroEstado, filtroCanal],
@@ -764,10 +766,12 @@ export default function TramitesPage() {
               </button>
             )}
           </div>
-          <button onClick={() => setMostrarVincular(true)}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', padding: '8px 10px', borderRadius: 9, border: `1px solid ${T.rowBd}`, background: T.rowBg, color: T.rowTxt, fontSize: 12, fontWeight: 600, cursor: 'pointer', marginBottom: 12 }}>
-            <Archive size={13} /> Archivar en expediente
-          </button>
+          {puedeArchivoEditar && (
+            <button onClick={() => setMostrarVincular(true)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', padding: '8px 10px', borderRadius: 9, border: `1px solid ${T.rowBd}`, background: T.rowBg, color: T.rowTxt, fontSize: 12, fontWeight: 600, cursor: 'pointer', marginBottom: 12 }}>
+              <Archive size={13} /> Archivar en expediente
+            </button>
+          )}
 
           {!detalle ? (
             <div style={{ borderTop: `1px solid ${T.rowBd}`, paddingTop: 12, marginBottom: 12 }}>

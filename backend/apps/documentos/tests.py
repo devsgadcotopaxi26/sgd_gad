@@ -78,13 +78,21 @@ class EnvioDocumentalTestCase(TestCase):
             ).exists()
         )
 
-    # --- Enviar dos veces: la segunda debe rechazarse, no duplicar bandejas ---
+    # --- Enviar dos veces: la segunda debe rechazarse por CONFLICTO DE ESTADO ---
+    # 409 (no 403 "sin responsabilidad" ni 400 "solicitud inválida"): el
+    # documento ya está oficializado; reenviarlo choca con su estado actual.
     def test_enviar_documento_ya_enviado_rechaza(self):
         doc = self._crear_borrador(con_destinatario=True)
         primero = self.client.post(f'/api/v1/documentos/{doc.id}/enviar/')
         self.assertEqual(primero.status_code, 200)
         segundo = self.client.post(f'/api/v1/documentos/{doc.id}/enviar/')
-        self.assertEqual(segundo.status_code, 400)
+        self.assertEqual(segundo.status_code, 409)
+        self.assertIn('ya fue enviado', segundo.data['detail'])
+        # no se duplicaron bandejas de recibidos
+        from .models import BandejaDocumento
+        self.assertEqual(
+            BandejaDocumento.objects.filter(documento=doc, bandeja='recibidos').count(), 1,
+        )
 
     # --- Sin asunto: rechazado incluso con destinatario válido ---
     def test_enviar_sin_asunto_rechaza(self):
@@ -135,6 +143,32 @@ class EnvioDocumentalTestCase(TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertFalse(Documento.objects.filter(pk=doc.pk, estado='enviado').exists())
+
+    # --- Solo destinatario 'copia' (sin 'principal') → NO se puede enviar/firmar ---
+    def test_solo_copia_no_es_enviable(self):
+        from .models import Destinatario
+        doc = self._crear_borrador(con_destinatario=False)
+        Destinatario.objects.create(documento=doc, usuario=self.destinatario_user, unidad=self.unidad, tipo='copia')
+
+        # enviar
+        r = self.client.post(f'/api/v1/documentos/{doc.id}/enviar/')
+        self.assertEqual(r.status_code, 400)
+        # firma física
+        r = self.client.post(f'/api/v1/documentos/{doc.id}/firma-fisica/', {}, format='json')
+        self.assertEqual(r.status_code, 400)
+        # generar token firma EC
+        r = self.client.post(f'/api/v1/documentos/{doc.id}/firmaec/generar-token/')
+        self.assertEqual(r.status_code, 400)
+        # cambiar_estado -> enviado
+        r = self.client.post(f'/api/v1/documentos/{doc.id}/cambiar_estado/', {'estado': 'enviado'}, format='json')
+        self.assertEqual(r.status_code, 400)
+        doc.refresh_from_db()
+        self.assertEqual(doc.estado, 'borrador')
+
+    def test_con_principal_si_es_enviable(self):
+        doc = self._crear_borrador(con_destinatario=True)   # tipo='principal' por defecto
+        r = self.client.post(f'/api/v1/documentos/{doc.id}/enviar/')
+        self.assertEqual(r.status_code, 200, getattr(r, 'data', None))
 
 
 class GuardarNoEnviaTestCase(TestCase):
@@ -197,6 +231,75 @@ class GuardarNoEnviaTestCase(TestCase):
         self.assertEqual(doc.asunto, 'PRUEBA 2')
         self.assertEqual(doc.estado, 'borrador')
         self.assertIsNone(doc.fecha_envio)
+
+
+class EnviarTrasPersistirTestCase(TestCase):
+    """
+    Contrato que respalda el fix de EditorDocumento: "Enviar sin firma"
+    ahora PATCHea el documento (persistiendo los destinatarios que el
+    usuario agregó en el editor) ANTES de llamar a /enviar/. Antes enviaba
+    directo sin guardar y el backend respondía 400 "Seleccione al menos un
+    destinatario" porque en BD había 0.
+    """
+
+    def setUp(self):
+        nivel = Nivel.objects.create(codigo='N1', nombre='Nivel 1')
+        self.unidad = Unidad.objects.create(nivel=nivel, codigo='U1', nombre='Unidad Uno', tipo='unidad')
+        self.creador = Usuario.objects.create_user(
+            email='c3@test.local', nombres='C', apellidos='Tres', unidad=self.unidad)
+        self.dest = Usuario.objects.create_user(
+            email='d3@test.local', nombres='D', apellidos='Tres', unidad=self.unidad)
+        self.tipo = TipoDocumento.objects.create(codigo='OFI', nombre='Oficio', prefijo_numeracion='OFI')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.creador)
+
+    def _borrador_sin_destinatarios(self):
+        doc = Documento(tipo_documento=self.tipo, asunto='s', unidad_origen=self.unidad,
+                        creado_por=self.creador, anio=2026)
+        doc.generar_numero()
+        doc.save()
+        BandejaDocumento.objects.create(documento=doc, usuario=self.creador, bandeja='en_elaboracion')
+        return doc
+
+    def test_enviar_directo_sin_persistir_da_400(self):
+        # Reproduce el bug: el editor tenía un destinatario en estado React
+        # pero nunca lo guardó → /enviar/ sin PATCH previo.
+        doc = self._borrador_sin_destinatarios()
+        r = self.client.post(f'/api/v1/documentos/{doc.id}/enviar/')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('destinatario', r.data['detail'].lower())
+        doc.refresh_from_db()
+        self.assertEqual(doc.estado, 'borrador')
+
+    def test_patch_destinatarios_y_luego_enviar_ok(self):
+        # El nuevo flujo: PATCH (guarda destinatarios) → enviar.
+        doc = self._borrador_sin_destinatarios()
+        p = self.client.patch(f'/api/v1/documentos/{doc.id}/', {
+            'tipo_documento': self.tipo.id,
+            'asunto': 's',
+            'unidad_origen': self.unidad.id,
+            'destinatarios_ids': [self.dest.id],
+        }, format='json')
+        self.assertEqual(p.status_code, 200, p.data)
+        self.assertEqual(Destinatario.objects.filter(documento=doc, usuario=self.dest).count(), 1)
+
+        r = self.client.post(f'/api/v1/documentos/{doc.id}/enviar/')
+        self.assertEqual(r.status_code, 200, getattr(r, 'data', None))
+        doc.refresh_from_db()
+        self.assertEqual(doc.estado, 'enviado')
+        self.assertTrue(BandejaDocumento.objects.filter(
+            documento=doc, usuario=self.dest, bandeja='recibidos').exists())
+
+    def test_un_solo_enviar_por_flujo(self):
+        # Un PATCH + un POST /enviar/ = un documento enviado, sin duplicar bandejas.
+        doc = self._borrador_sin_destinatarios()
+        self.client.patch(f'/api/v1/documentos/{doc.id}/', {
+            'tipo_documento': self.tipo.id, 'asunto': 's',
+            'unidad_origen': self.unidad.id, 'destinatarios_ids': [self.dest.id],
+        }, format='json')
+        self.client.post(f'/api/v1/documentos/{doc.id}/enviar/')
+        self.assertEqual(BandejaDocumento.objects.filter(
+            documento=doc, usuario=self.dest, bandeja='recibidos').count(), 1)
 
 
 class DistribuirDocumentalTestCase(TestCase):

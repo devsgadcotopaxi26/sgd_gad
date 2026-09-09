@@ -4,6 +4,12 @@ from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 
+def _estructura_numeracion_default():
+    """Estructura por defecto del número documental (formato Quipux observado:
+    `inst-dep-anio-secuencial-tipodoc`)."""
+    return ['institucion', 'area', 'anio', 'secuencial', 'abreviatura']
+
+
 class TipoDocumento(models.Model):
     codigo               = models.CharField(max_length=20, unique=True)
     nombre               = models.CharField(max_length=100)
@@ -83,10 +89,15 @@ class Documento(models.Model):
     confidencial        = models.BooleanField(default=False)
     requiere_respuesta  = models.BooleanField(default=False)
     fecha_limite_resp   = models.DateField(null=True, blank=True)
+    # ANTECEDENTE de "Documentos Asociados" (F2-E). 1 antecedente máx · N
+    # consecuentes (`respuestas`). Lo fija Responder (automático) y Asociar
+    # (manual). Ninguna acción de bandeja lo destruye.
     responde_a          = models.ForeignKey(
         'self', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='respuestas'
     )
+    # DORMIDO — semántica todavía NO confirmada. NO usar para antecedente/
+    # consecuente (eso es `responde_a`). Ver MIGRACION_QUIPUX_ASOCIADOS.md.
     relacionado_con     = models.ForeignKey(
         'self', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='relacionados'
@@ -134,18 +145,13 @@ class Documento(models.Model):
         return f'{self.numero_documento or self.uuid} — {self.asunto[:50]}'
 
     def generar_numero(self):
-        from django.utils import timezone
-        anio    = timezone.now().year
-        ultimo  = Documento.objects.filter(
-            tipo_documento=self.tipo_documento, anio=anio
-        ).count()
-        # Si hay un secuencial inicial por migración Quipux, arrancar desde ahí
-        base = self.tipo_documento.secuencial_inicial or 0
-        secuencial = max(ultimo + 1, base + 1)
-        siglas     = self.unidad_origen.siglas or 'GAD'
-        self.numero_documento  = f'{self.tipo_documento.prefijo_numeracion}-{str(secuencial).zfill(4)}-{siglas}-{anio}'
-        self.numero_secuencial = secuencial
-        self.anio              = anio
+        """Compat. — antes construía el número definitivo con un `count()`
+        global por tipo. Ahora delega en la numeración configurable por
+        Unidad × TipoDocumento: asigna un número PROVISIONAL ("…-TEMP"). El
+        número definitivo se asigna al oficializar (firma/envío) vía
+        `apps.documentos.numeracion.asignar_numero_definitivo`."""
+        from .numeracion import numero_provisional
+        numero_provisional(self)
 
 
 class Destinatario(models.Model):
@@ -230,6 +236,10 @@ class BandejaDocumento(models.Model):
         ('archivados',       'Archivados'),
         ('por_imprimir',     'Por imprimir'),
         ('eliminados',       'Eliminados'),
+        # Documentos puestos EN CONOCIMIENTO del usuario mediante la acción
+        # "Informar" (no es destinatario principal ni copia inicial; no cambia
+        # responsable; lectura independiente). Coherente con QUIPUX ("informados").
+        ('informados',       'Informados'),
     ]
     ACCION_CHOICES = [
         ('pendiente',   'Pendiente'),
@@ -246,6 +256,14 @@ class BandejaDocumento(models.Model):
     usuario          = models.ForeignKey('usuarios.Usuario', on_delete=models.CASCADE, related_name='bandeja_documentos')
     unidad           = models.ForeignKey('organizacion.Unidad', on_delete=models.PROTECT, null=True, blank=True)
     bandeja          = models.CharField(max_length=30, choices=BANDEJA_CHOICES)
+    # Solo se rellena mientras `bandeja == 'archivados'`: guarda de qué bandeja
+    # (Recibidos o Enviados — únicos orígenes válidos de "Archivar") provino el
+    # ítem, para poder devolverlo a su sitio al Restaurar. NO es histórico: al
+    # restaurar vuelve a NULL (la trazabilidad histórica va en SeguimientoDocumento).
+    bandeja_origen   = models.CharField(
+        max_length=30, null=True, blank=True,
+        choices=[('recibidos', 'Recibidos'), ('enviados', 'Enviados')],
+    )
     accion_tomada    = models.CharField(max_length=20, choices=ACCION_CHOICES, default='pendiente')
     leido            = models.BooleanField(default=False)
     leido_en         = models.DateTimeField(null=True, blank=True)
@@ -275,16 +293,40 @@ class SeguimientoDocumento(models.Model):
         ('informado',   'Informado'),
         ('comentado',   'Comentado'),
         ('archivado',   'Archivado'),
+        # Inverso de 'archivado' — el ítem vuelve de Archivados a su bandeja de
+        # origen. Distinto de 'restaurado' (que es salir de la papelera).
+        ('desarchivado', 'Restaurado de archivados'),
         ('respondido',  'Respondido'),
         ('recuperado',  'Recuperado'),
         ('eliminado',   'Eliminado'),
         ('restaurado',  'Restaurado'),
+        # Ciclo de vida de Tarea (doc_tarea) — la tarea NO transfiere
+        # responsabilidad documental; solo deja rastro en el recorrido del doc.
+        ('tarea_creada',     'Tarea creada'),
+        ('tarea_iniciada',   'Tarea iniciada'),
+        ('tarea_completada', 'Tarea completada'),
+        ('tarea_cancelada',  'Tarea cancelada'),
+        # Documentos asociados (Documento.responde_a) — antecedente/consecuente.
+        # `asociado` se registra en el CONSECUENTE (apunta a su antecedente);
+        # `desasociado` cuando se rompe el vínculo.
+        ('asociado',    'Documento asociado'),
+        ('desasociado', 'Documento desasociado'),
     ]
 
     documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='seguimiento_quipux')
     etapa            = models.CharField(max_length=20, choices=ETAPA_CHOICES)
     usuario          = models.ForeignKey('usuarios.Usuario', on_delete=models.PROTECT)
     unidad           = models.ForeignKey('organizacion.Unidad', null=True, blank=True, on_delete=models.SET_NULL)
+    # Tarea concreta que originó el evento (solo en etapas 'tarea_*'). Opcional:
+    # la mayoría de seguimientos documentales no corresponden a una tarea.
+    # SET_NULL: si la tarea se borra, el evento histórico se conserva.
+    tarea            = models.ForeignKey('Tarea', null=True, blank=True, on_delete=models.SET_NULL, related_name='seguimientos')
+    # Otro Documento referido por el evento (solo en 'asociado'/'desasociado'/
+    # 'respondido'): el antecedente/consecuente concreto. FK estructurada, no
+    # texto. SET_NULL: si ese documento se borra, el evento histórico se conserva.
+    documento_relacionado = models.ForeignKey(
+        Documento, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
     destinatario_externo = models.CharField(max_length=200, blank=True)
     institucion_externa  = models.CharField(max_length=200, blank=True)
     observacion      = models.TextField(blank=True)
@@ -536,3 +578,184 @@ class ListaDistribucionMiembro(models.Model):
 
     def __str__(self):
         return f'{self.lista.nombre} → {self.usuario.nombre_completo}'
+
+
+class ConfiguracionNumeracion(models.Model):
+    """Configuración de FORMATO de numeración para una combinación
+    Unidad × TipoDocumento. Independiente de la jerarquía (padre/hijo NO
+    hereda) y del contador operativo (ver `SecuenciaDocumento`).
+
+    `estructura` es una lista ordenada de tokens de un enum cerrado:
+    'institucion' | 'area' | 'anio' | 'secuencial' | 'abreviatura'
+    (+ 'literal:<texto>' para casos futuros — nunca código ejecutable).
+    """
+    unidad            = models.ForeignKey(
+        'organizacion.Unidad', on_delete=models.CASCADE, related_name='config_numeracion')
+    tipo_documento    = models.ForeignKey(
+        TipoDocumento, on_delete=models.CASCADE, related_name='config_numeracion')
+    abreviatura       = models.CharField(max_length=8, blank=True)
+    separador         = models.CharField(max_length=3, default='-')
+    digitos_anio      = models.PositiveSmallIntegerField(default=4)
+    digitos_secuencia = models.PositiveSmallIntegerField(default=4)
+    estructura        = models.JSONField(default=_estructura_numeracion_default)
+    activo            = models.BooleanField(default=True)
+    creado_en         = models.DateTimeField(auto_now_add=True)
+    modificado_en     = models.DateTimeField(auto_now=True)
+    creado_por        = models.ForeignKey(
+        'usuarios.Usuario', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    modificado_por    = models.ForeignKey(
+        'usuarios.Usuario', null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        db_table = 'doc_config_numeracion'
+        constraints = [
+            models.UniqueConstraint(fields=['unidad', 'tipo_documento'],
+                                    name='uq_config_num_unidad_tipo'),
+        ]
+
+    def __str__(self):
+        return f'{self.unidad.siglas} / {self.tipo_documento.codigo}'
+
+
+class SecuenciaDocumento(models.Model):
+    """Contador OPERATIVO de numeración por Unidad × TipoDocumento × Año.
+    Separado de la configuración de formato. `ultimo_numero` es la última
+    secuencia DEFINITIVA emitida (0 = ninguna); el próximo documento oficial
+    usa `ultimo_numero + 1`. `ultimo_provisional` es un contador aparte para
+    los números "…-TEMP" de los borradores — no se mezcla con el oficial.
+    """
+    unidad             = models.ForeignKey(
+        'organizacion.Unidad', on_delete=models.CASCADE, related_name='secuencias')
+    tipo_documento     = models.ForeignKey(
+        TipoDocumento, on_delete=models.CASCADE, related_name='secuencias')
+    anio               = models.PositiveSmallIntegerField()
+    ultimo_numero      = models.PositiveIntegerField(default=0)
+    ultimo_provisional = models.PositiveIntegerField(default=0)
+    actualizado_en     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'doc_secuencia'
+        constraints = [
+            models.UniqueConstraint(fields=['unidad', 'tipo_documento', 'anio'],
+                                    name='uq_secuencia_unidad_tipo_anio'),
+        ]
+
+    def __str__(self):
+        return f'{self.unidad.siglas}/{self.tipo_documento.codigo}/{self.anio} = {self.ultimo_numero}'
+
+
+def _norm_nombre_carpeta(nombre: str) -> str:
+    """Normalización para la unicidad de carpetas hermanas: sin espacios
+    sobrantes y sin distinción de mayúsculas ('Convenios' == ' convenios ')."""
+    return ' '.join((nombre or '').strip().lower().split())
+
+
+class CarpetaVirtual(models.Model):
+    """
+    Carpeta Virtual (F2-F) — CLASIFICACIÓN OPERATIVA de una Unidad/Área.
+
+    NO es bandeja, expediente, archivo físico/institucional, serie/subserie,
+    preservación ni copia del documento. Solo responde: "¿cómo quiere ESTA
+    unidad organizar internamente este documento?".
+
+    - Pertenece a UNA `Unidad`; toda la rama (padre→hijos) es de esa unidad.
+    - La comparten (en CONSULTA) todos los usuarios del área.
+    - Es independiente de Documentos Asociados y del módulo de Archivo/Expedientes.
+
+    Reglas funcionales (ver `servicios_carpeta.py`):
+      R1 — los documentos en elaboración (borrador/en_revision) no se clasifican
+           por endpoint ni se listan en la vista compartida.
+      R2 — ADMINISTRAR el árbol (crear/renombrar/mover/desactivar/reactivar)
+           es exclusivo de ADMIN_GENERAL / superusuario.
+      R3 — el usuario normal solo CONSULTA su árbol y clasifica documentos.
+      R4 — "eliminar" carpeta = DESACTIVACIÓN LÓGICA recursiva (`activa=False`),
+           nunca borrado físico; no toca documentos ni clasificaciones.
+      R5 — matriz de bandejas: clasificar solo desde Recibidos / Enviados /
+           Archivados / Tareas Recibidas / Tareas Enviadas.
+    """
+    unidad         = models.ForeignKey('organizacion.Unidad', on_delete=models.CASCADE,
+                                       related_name='carpetas_virtuales')
+    nombre         = models.CharField(max_length=120)
+    nombre_norm    = models.CharField(max_length=120, editable=False)
+    padre          = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE,
+                                       related_name='subcarpetas')
+    activa         = models.BooleanField(default=True)
+    creada_por     = models.ForeignKey('usuarios.Usuario', null=True, blank=True,
+                                       on_delete=models.SET_NULL, related_name='+')
+    creado_en      = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'doc_carpeta_virtual'
+        ordering = ['nombre']
+        indexes  = [
+            models.Index(fields=['unidad', 'padre']),
+        ]
+        constraints = [
+            # Hermanas ACTIVAS (mismo padre, misma unidad) no pueden repetir
+            # nombre normalizado. `condition=activa` → una carpeta desactivada
+            # (soft-delete) libera su nombre. nulls_distinct=False → aplica
+            # también a las raíces (padre IS NULL). PostgreSQL 15+.
+            models.UniqueConstraint(
+                fields=['unidad', 'padre', 'nombre_norm'],
+                name='uq_carpeta_unidad_padre_nombre',
+                condition=models.Q(activa=True),
+                nulls_distinct=False,
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.nombre = (self.nombre or '').strip()
+        self.nombre_norm = _norm_nombre_carpeta(self.nombre)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.unidad.siglas or self.unidad.codigo} / {self.ruta()}'
+
+    def ruta(self) -> str:
+        partes, actual, n = [self.nombre], self.padre, 0
+        while actual is not None and n < 50:
+            partes.insert(0, actual.nombre)
+            actual, n = actual.padre, n + 1
+        return ' > '.join(partes)
+
+
+class DocumentoCarpetaVirtual(models.Model):
+    """
+    Clasificación de UN `Documento` en UNA `CarpetaVirtual`, para UNA `Unidad`.
+
+    Regla fundamental (constraint de BD): `(documento, unidad)` es único — un
+    documento tiene MÁXIMO una carpeta por unidad. Reclasificar = UPDATE de
+    `carpeta` sobre la fila existente, nunca una fila nueva.
+
+    Unidades distintas clasifican el MISMO documento de forma independiente
+    (Jurídico→Convenios y Financiero→Presupuesto es el mismo `Documento`).
+
+    Clasificar NO modifica el documento, su estado, su bandeja, su
+    responsable ni sus destinatarios. `unidad` se denormaliza desde
+    `carpeta.unidad` (para el índice y el constraint).
+    """
+    documento      = models.ForeignKey(Documento, on_delete=models.CASCADE,
+                                       related_name='clasificaciones_carpeta')
+    unidad         = models.ForeignKey('organizacion.Unidad', on_delete=models.CASCADE,
+                                       related_name='+')
+    carpeta        = models.ForeignKey(CarpetaVirtual, on_delete=models.CASCADE,
+                                       related_name='documentos')
+    asignado_por   = models.ForeignKey('usuarios.Usuario', null=True, blank=True,
+                                       on_delete=models.SET_NULL, related_name='+')
+    asignado_en    = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'doc_documento_carpeta'
+        indexes  = [
+            models.Index(fields=['carpeta']),
+            models.Index(fields=['unidad', 'documento']),
+        ]
+        constraints = [
+            models.UniqueConstraint(fields=['documento', 'unidad'],
+                                    name='uq_doc_carpeta_por_unidad'),
+        ]
+
+    def __str__(self):
+        return f'{self.documento_id} → {self.carpeta.ruta()}'
