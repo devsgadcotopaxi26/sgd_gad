@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
+from apps.organizacion.models import Unidad
 from .models import Rol, UsuarioRol
 
 Usuario = get_user_model()
@@ -112,6 +113,7 @@ class UsuarioListSerializer(serializers.ModelSerializer):
 
 class UsuarioDetalleSerializer(serializers.ModelSerializer):
     nombre_completo = serializers.ReadOnlyField()
+    unidad_id       = serializers.PrimaryKeyRelatedField(source='unidad', queryset=Unidad.objects.all(), required=False, allow_null=True)
     unidad_nombre   = serializers.CharField(source='unidad.nombre', read_only=True)
     unidad_siglas   = serializers.CharField(source='unidad.siglas', read_only=True)
     roles           = serializers.SerializerMethodField()
