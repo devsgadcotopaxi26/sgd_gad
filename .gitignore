@@ -57,3 +57,5 @@ frontend.zip
 
 # Código fuente externo de referencia (Quipux oficial), sistema distinto al proyecto
 _quipux/
+.env.production
+_quipux_restore_logs/
