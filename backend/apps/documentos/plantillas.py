@@ -277,21 +277,43 @@ _CSS = """
     line-height: 1.6;
     margin-top: 3pt;
   }
+
+  /* ── BLOQUE "CON COPIA" (destinatarios tipo='copia', tras la firma) ── */
+  .copia-bloque { margin-top: 26pt; font-size: 10pt; line-height: 1.18; }
+  .copia-bloque .cc-lbl  { font-weight: bold; }
+  .copia-bloque .cc-lista { padding-left: 40pt; margin-top: 2pt; }
+  .copia-bloque .cc-item  { margin-bottom: 2pt; }
 """
 
 
-def html_documento_oficial(doc, pre_firma: bool = False) -> str:
+def html_documento_oficial(doc, modo: str = 'preview', *, pre_firma: bool = False) -> str:
+    """Genera el HTML del documento oficial. `modo` declara la INTENCIÓN del
+    render y decide si se incrusta la marca de agua "BORRADOR" — no se
+    depende del `doc.estado` persistido, porque al congelar el PDF oficial
+    (`pdf_oficial.congelar_pdf_oficial`) el estado todavía es 'borrador' en
+    memoria: el cambio a 'enviado' va después, dentro de la misma
+    transacción atómica.
+
+      'preview'   → previsualización de un documento EN ELABORACIÓN.
+                    Lleva "BORRADOR" si `doc.estado == 'borrador'`.
+      'final'     → PDF que se va a CONGELAR como artefacto oficial
+                    (enviar / firma física). NUNCA lleva "BORRADOR".
+      'pre_firma' → PDF que se manda a firmar. Sin "BORRADOR" + incluye la
+                    leyenda "Documento firmado electrónicamente".
+
+    `pre_firma=True` se conserva por compatibilidad (⇔ modo='pre_firma').
+    """
+    if pre_firma:
+        modo = 'pre_firma'
+
     prefijo     = doc.tipo_documento.prefijo_numeracion or 'OFI'
     nombre_tipo = NOMBRE_TIPO.get(prefijo, doc.tipo_documento.nombre)
     es_interno  = prefijo in TIPOS_INTERNOS
 
-    # Fuente real de "es borrador": Documento.estado, tal cual está
-    # persistido — no el número (puede contener "TEMP" sin relación con
-    # esto), no la bandeja/accion_tomada (esas describen quién lo tiene, no
-    # si es oficial). `pre_firma=True` es la excepción explícita: ese render
-    # se envía a firmar y su resultado firmado pasa a ser el documento
-    # definitivo — jamás debe llevar la marca de "BORRADOR" incrustada.
-    es_borrador = doc.estado == 'borrador' and not pre_firma
+    # La marca "BORRADOR" es EXCLUSIVA de la previsualización de un documento
+    # en elaboración. En 'final' / 'pre_firma' nunca aparece, sin importar
+    # que `doc.estado` siga siendo 'borrador' en este punto del flujo.
+    es_borrador = (modo == 'preview') and (doc.estado == 'borrador')
 
     fecha_doc = _fecha_es(doc.fecha_elaboracion)
 
@@ -313,12 +335,16 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
     destinatarios_qs = list(
         doc.destinatarios.select_related('usuario', 'usuario__unidad').all()
     )
+    # "Para" = todo lo que no sea copia (principal / conocimiento / sin dato);
+    # "Con copia" = tipo == 'copia'. El bloque de copia se pinta tras la firma.
+    principales = [d for d in destinatarios_qs if d.tipo != 'copia']
+    copias      = [d for d in destinatarios_qs if d.tipo == 'copia']
 
     # ── Bloque PARA/ASUNTO ─────────────────────────────────────────────────
     if es_interno:
-        if destinatarios_qs:
+        if principales:
             items_html = ''
-            for i, d in enumerate(destinatarios_qs):
+            for i, d in enumerate(principales):
                 u      = d.usuario
                 nombre = u.nombre_completo if u else ''
                 cargo  = getattr(u, 'cargo', '') or ''
@@ -328,7 +354,7 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
                     inner += f'<br><span class="cargo">{cargo}</span>'
                 if unid:
                     inner += f'<br><span class="cargo">{unid}</span>'
-                last   = ' style="margin-bottom:0"' if i == len(destinatarios_qs) - 1 else ''
+                last   = ' style="margin-bottom:0"' if i == len(principales) - 1 else ''
                 items_html += f'<div class="item"{last}>{inner}</div>'
         else:
             fb = (doc.unidad_destino.nombre if doc.unidad_destino
@@ -344,8 +370,8 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
     else:
         # Oficio: bloque Señor/a por destinatario
         bloques = ''
-        if destinatarios_qs:
-            for d in destinatarios_qs:
+        if principales:
+            for d in principales:
                 u      = d.usuario
                 nombre = u.nombre_completo if u else ''
                 cargo  = getattr(u, 'cargo', '') or ''
@@ -370,7 +396,7 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
         <div class="asunto-ofi"><strong>ASUNTO:</strong>&nbsp; {doc.asunto}</div>"""
 
     # ── Bloque firma ──────────────────────────────────────────────────────
-    tiene_firma = bool(doc.firma_bce_info) or pre_firma
+    tiene_firma = bool(doc.firma_bce_info) or (modo == 'pre_firma')
 
     if tiene_firma:
         separador_firma = '<div class="firma-elec-texto">Documento firmado electr&#xF3;nicamente</div>'
@@ -379,6 +405,25 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
 
     cuerpo_html   = doc.cuerpo or '<p style="color:#999;font-style:italic">[Sin contenido]</p>'
     pie_iniciales = f'<div class="iniciales">{iniciales}</div>' if iniciales else ''
+
+    # ── Bloque "Con copia" (destinatarios tipo='copia') ──────────────────
+    if copias:
+        _cc_items = []
+        for d in copias:
+            u      = d.usuario
+            nombre = u.nombre_completo if u else ''
+            cargo  = getattr(u, 'cargo', '') or ''
+            unid   = u.unidad.nombre if (u and u.unidad) else ''
+            extra  = ' — '.join(x for x in (cargo, unid) if x)
+            _cc_items.append(
+                f'<div class="cc-item">{nombre}{f" — {extra}" if extra else ""}</div>'
+            )
+        copia_html = (
+            '<div class="copia-bloque"><span class="cc-lbl">Copia:</span>'
+            f'<div class="cc-lista">{"".join(_cc_items)}</div></div>'
+        )
+    else:
+        copia_html = ''
 
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -439,6 +484,8 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
         {f'<div class="firma-cargo">{unidad_orig}</div>' if unidad_orig else ''}
         {pie_iniciales}
       </div>
+
+      {copia_html}
 
     </div>
   </div>

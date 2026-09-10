@@ -656,27 +656,30 @@ class QuipuxPDFView(APIView):
                 status=404,
             )
 
+        # Recuperación centralizada (misma lógica que reutiliza
+        # DocumentoPDFView en FASE 0B.1).
+        from .pdf_original import recuperar_pdf_original, QuipuxNoDisponible
         try:
-            with connections['quipux_documental'].cursor() as cursor:
-                cursor.execute("SELECT func_recuperar_archivo(%s)", [arch_id])
-                row = cursor.fetchone()
-                if not row or not row[0]:
-                    return Response(
-                        {'detail': 'Archivo no encontrado en la base documental.'},
-                        status=404,
-                    )
-
-                pdf_bytes = base64.b64decode(row[0])
-                filename  = doc.radi_nume_text or str(doc.radi_nume_radi)
-                if firmado:
-                    filename += '_firmado'
-                filename += '.pdf'
-
-                response = HttpResponse(pdf_bytes, content_type='application/pdf')
-                response['Content-Disposition'] = f'inline; filename="{filename}"'
-                return response
+            pdf_bytes = recuperar_pdf_original(arch_id)
+        except QuipuxNoDisponible as e:
+            return Response({'detail': f'Base documental Quipux no disponible: {e}'}, status=503)
         except Exception as e:
             return Response({'detail': f'Error al recuperar el archivo: {e}'}, status=500)
+
+        if not pdf_bytes:
+            return Response(
+                {'detail': 'Archivo no encontrado en la base documental.'},
+                status=404,
+            )
+
+        filename = doc.radi_nume_text or str(doc.radi_nume_radi)
+        if firmado:
+            filename += '_firmado'
+        filename += '.pdf'
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
 
 
 class QuipuxEstadisticasView(APIView):
@@ -989,6 +992,7 @@ class QuipuxResponderView(APIView):
             pass
 
         from apps.documentos.models import Documento, TipoDocumento
+        from apps.documentos.numeracion import numero_provisional
         from django.utils import timezone
 
         try:
@@ -996,19 +1000,12 @@ class QuipuxResponderView(APIView):
         except TipoDocumento.DoesNotExist:
             return Response({'detail': 'Tipo de documento no encontrado.'}, status=404)
 
-        anio = timezone.now().year
-        ultimo = (
-            Documento.objects.filter(tipo_documento=tipo, anio=anio)
-            .order_by('-numero_secuencial')
-            .values_list('numero_secuencial', flat=True)
-            .first()
-        ) or 0
-
-        doc = Documento.objects.create(
+        # Numeración configurable (misma vía que DocumentoCrearSerializer):
+        # el borrador nace con número PROVISIONAL "…-TEMP"; el definitivo se
+        # asigna al oficializar (firma/envío).
+        doc = Documento(
             tipo_documento=tipo,
-            anio=anio,
-            numero_secuencial=ultimo + 1,
-            numero_documento=f'{tipo.prefijo_numeracion}-{anio}-{str(ultimo + 1).zfill(4)}',
+            anio=timezone.now().year,
             asunto=asunto,
             cuerpo=cuerpo or f'<p>En respuesta al documento {radi_nume_text}.</p>',
             estado='borrador',
@@ -1017,6 +1014,8 @@ class QuipuxResponderView(APIView):
             quipux_origen=radi_nume_text,
             fecha_elaboracion=timezone.now().date(),
         )
+        numero_provisional(doc)
+        doc.save()
 
         return Response({
             'detail': 'Documento de respuesta creado en elaboración.',

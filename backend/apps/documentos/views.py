@@ -9,7 +9,32 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.views import APIView
 from .models import BandejaDocumento, SeguimientoDocumento, Tarea, DestinatarioExterno
 from .models import TipoDocumento, Documento, FlujoAprobacion, VersionDocumento, AdjuntoDocumento
-from .servicios import DocumentoInvalidoError, marcar_documento_enviado, validar_documento_minimo, validar_lista_destinatarios
+from .servicios import DocumentoInvalidoError, marcar_documento_enviado, validar_documento_minimo, validar_documento_enviable, validar_lista_destinatarios
+from .servicios_bandeja import (
+    BandejaAccionError, validar_restauracion, aplicar_restauracion,
+    validar_reasignacion_bandeja, aplicar_reasignacion_bandeja,
+    aplicar_comentario_bandeja, aplicar_marcar_leido_bandeja,
+    validar_archivado_bandeja, aplicar_archivado_bandeja,
+    validar_desarchivado, aplicar_desarchivado,
+    aplicar_informar, aplicar_quitar_informado,
+)
+from .servicios_tarea import (
+    TareaError, crear_tarea, iniciar_tarea, completar_tarea, cancelar_tarea,
+)
+from .servicios_documento_asoc import (
+    AsociacionError, cadena_ascendente, validar_asociacion,
+    aplicar_asociacion, aplicar_desasociacion, crear_respuesta,
+)
+from .acl_documentos import (
+    documentos_visibles_para, puede_ver_documento, filtro_visibilidad_documento,
+)
+from .servicios_carpeta import (
+    CarpetaError, crear_carpeta, renombrar_carpeta, mover_carpeta,
+    desactivar_carpeta, activar_carpeta,
+    arbol_unidad, documentos_de_carpeta, clasificar_documentos, quitar_de_carpeta,
+    unidades_visibles, es_admin_carpetas,
+)
+from .numeracion import NumeracionError
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.http import HttpResponse, FileResponse
 from apps.auditoria.reportes import generar_pdf, html_base
@@ -58,6 +83,66 @@ def _puede_firmar_documento(user, doc):
     ).exclude(accion_tomada='reasignado').exists()
 
 
+# ── Enviar a papelera (soft-delete) — operación de dominio única ──────────
+# Reutilizada por el endpoint individual (`eliminar_borrador`) y el masivo
+# (`enviar_papelera`). NO borra nada físicamente: mueve el ítem de bandeja a
+# 'eliminados', marca `Documento.eliminado_*` y deja rastro en seguimiento.
+class PapeleraError(Exception):
+    """El documento no puede enviarse a la papelera. `code` = HTTP status."""
+    def __init__(self, mensaje, code=400):
+        super().__init__(mensaje)
+        self.code = code
+
+
+def _validar_envio_papelera(doc, usuario, comentario):
+    """Comprueba que `doc` puede ir a la papelera por `usuario`. Devuelve el
+    BandejaDocumento a mover. Lanza PapeleraError si no procede."""
+    if not (comentario or '').strip():
+        raise PapeleraError('El comentario es obligatorio.', 400)
+    if doc.eliminado_en:
+        raise PapeleraError('El documento ya está en la papelera.', 409)
+    if doc.estado == 'anulado':
+        raise PapeleraError('Un documento anulado no puede enviarse a la papelera.', 409)
+    if not (_es_responsable_actual(usuario, doc) or _es_admin_bandeja(usuario)):
+        raise PapeleraError('El documento ya no se encuentra bajo su responsabilidad.', 403)
+    item = BandejaDocumento.objects.filter(
+        documento=doc, bandeja='en_elaboracion',
+    ).exclude(accion_tomada='reasignado').first()
+    if not item:
+        raise PapeleraError('Solo se pueden enviar a la papelera borradores en "En elaboración".', 409)
+    return item
+
+
+def _aplicar_envio_papelera(doc, item, usuario, comentario):
+    """Aplica el soft-delete. Debe llamarse dentro de transaction.atomic().
+
+    Un documento puede tener VARIOS ítems de bandeja activos a la vez (p. ej.
+    creado por A con remitente/DE B: ambos tienen un ítem en 'en_elaboracion').
+    Se mueven TODOS los ítems activos a 'eliminados' — de lo contrario el
+    documento seguiría apareciendo en "En elaboración" de otro usuario. Los
+    ítems 'reasignado' se dejan como trazabilidad (la bandeja activa ya los
+    oculta por `Documento.eliminado_en`).
+
+    Los ítems de tareas (`tareas_recibidas` / `tareas_enviadas`) NO se tocan:
+    la tarea es de otro usuario y su ciclo de vida es independiente; el doc en
+    papelera igual queda oculto de esas bandejas por `_excluir_eliminados`, y
+    al restaurar reaparece intacto (el ítem nunca cambió de bandeja)."""
+    _TAREAS = ('tareas_recibidas', 'tareas_enviadas')
+    BandejaDocumento.objects.filter(documento=doc).exclude(
+        bandeja__in=('eliminados',) + _TAREAS,
+    ).exclude(accion_tomada='reasignado').update(
+        bandeja='eliminados', accion_tomada='eliminado',
+    )
+    doc.eliminado_en       = timezone.now()
+    doc.eliminado_por      = usuario
+    doc.motivo_eliminacion = comentario.strip()
+    doc.save(update_fields=['eliminado_en', 'eliminado_por', 'motivo_eliminacion'])
+    SeguimientoDocumento.objects.create(
+        documento=doc, etapa='eliminado', usuario=usuario,
+        unidad=getattr(usuario, 'unidad', None), observacion=comentario.strip(),
+    )
+
+
 class TipoDocumentoViewSet(viewsets.ModelViewSet):
     serializer_class   = TipoDocumentoSerializer
     permission_classes = [IsAuthenticated]
@@ -80,10 +165,27 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     ordering           = ['-creado_en']
 
     def get_queryset(self):
-        return Documento.objects.select_related(
+        qs = Documento.objects.select_related(
             'tipo_documento', 'unidad_origen', 'unidad_destino',
             'creado_por', 'firmado_por', 'remitente',
         )
+        # ── ACL de lectura (fuente única: acl_documentos) ──
+        # Un usuario solo ve documentos con los que tiene relación (creador /
+        # remitente / firmante / Destinatario de cualquier tipo / documento en
+        # alguna de sus bandejas). Admin de bandeja ve todos. Las @actions que
+        # además exigen ser responsable actual (`enviar`, `reasignar_a`…)
+        # siguen aplicando su propia verificación, más estricta, encima de esto.
+        if not _es_admin_bandeja(self.request.user):
+            qs = qs.filter(filtro_visibilidad_documento(self.request.user)).distinct()
+        if self.action == 'retrieve':
+            from django.db.models import Prefetch
+            qs = qs.prefetch_related(
+                Prefetch('seguimiento_quipux', queryset=SeguimientoDocumento.objects.select_related(
+                    'usuario', 'unidad', 'tarea',
+                )),
+                'destinatarios__usuario', 'destinatarios__unidad',
+            )
+        return qs
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -127,12 +229,33 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         if nuevo_estado not in estados:
             return Response({'detail': 'Estado inválido.'}, status=400)
 
-        doc.estado = nuevo_estado
-        if nuevo_estado == 'enviado'  and not doc.fecha_envio:
-            doc.fecha_envio = timezone.now()
-        if nuevo_estado == 'archivado' and not doc.fecha_archivo:
-            doc.fecha_archivo = timezone.now()
-        doc.save()
+        # Oficializar (enviar/firmar) exige "Para" — misma regla que enviar/firma.
+        if nuevo_estado in ('enviado', 'firmado') and doc.estado not in ('enviado', 'recibido', 'archivado', 'firmado'):
+            try:
+                validar_documento_enviable(doc)
+            except DocumentoInvalidoError as e:
+                return Response({'detail': str(e)}, status=400)
+
+        # FASE 0A — Si esta transición oficializa el documento (-> enviado)
+        # desde un estado no oficial, congelar el PDF antes de guardar el
+        # nuevo estado. Idempotente; respeta un PDF firmado preexistente.
+        if nuevo_estado in ('enviado', 'firmado') and doc.estado not in ('enviado', 'recibido', 'archivado', 'firmado'):
+            from .pdf_oficial import congelar_pdf_oficial_seguro
+            from .numeracion import asignar_numero_definitivo
+            with transaction.atomic():
+                asignar_numero_definitivo(doc)
+                with congelar_pdf_oficial_seguro(doc, request.user, motivo='cambiar_estado'):
+                    doc.estado = nuevo_estado
+                    if nuevo_estado == 'enviado' and not doc.fecha_envio:
+                        doc.fecha_envio = timezone.now()
+                    doc.save()
+        else:
+            doc.estado = nuevo_estado
+            if nuevo_estado == 'enviado'  and not doc.fecha_envio:
+                doc.fecha_envio = timezone.now()
+            if nuevo_estado == 'archivado' and not doc.fecha_archivo:
+                doc.fecha_archivo = timezone.now()
+            doc.save()
 
         _estado_a_etapa = {
             'enviado':    'enviado',
@@ -187,7 +310,18 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         doc.estado     = 'firmado'
         doc.fecha_firma = timezone.now()
         doc.firmado_por = request.user
-        doc.save(update_fields=['firma_bce_info', 'estado', 'fecha_firma', 'firmado_por'])
+        # FASE 0A — El flujo P12 en navegador sube el PDF firmado como adjunto
+        # tipo='documento' ANTES de llamar aquí, así que esto normalmente es
+        # un no-op. Se deja como red de seguridad: si por algún motivo no hay
+        # artefacto, se congela el render actual (con `firma_bce_info` ya
+        # asignado en memoria → refleja la firma). No sustituye un PDF firmado.
+        from .pdf_oficial import congelar_pdf_oficial_seguro
+        from .numeracion import asignar_numero_definitivo
+        with transaction.atomic():
+            asignar_numero_definitivo(doc)
+            doc.save(update_fields=['firma_bce_info', 'estado', 'fecha_firma', 'firmado_por'])
+            with congelar_pdf_oficial_seguro(doc, request.user, motivo='registrar_firma'):
+                pass
         SeguimientoDocumento.objects.create(
             documento   = doc,
             etapa       = 'firmado',
@@ -206,51 +340,84 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='enviar')
     def enviar(self, request, pk=None):
         doc = self.get_object()
+        # Estado incompatible (ya oficializado) → 409, ANTES de evaluar
+        # responsabilidad: reenviar un documento ya enviado no es "falta de
+        # permiso" (403) sino un conflicto con el estado actual del recurso.
+        if doc.estado in ('enviado', 'recibido', 'archivado'):
+            return Response({'detail': 'El documento ya fue enviado.'}, status=409)
         if not _es_responsable_actual(request.user, doc):
             return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
         try:
             with transaction.atomic():
-                # Regla única BORRADOR -> ENVIADO: no repetido, tipo, asunto
-                # y >=1 destinatario. Si falla, la excepción revierte
-                # cualquier escritura hecha en este bloque (ninguna, todavía).
-                marcar_documento_enviado(doc)
+                # NUMERACIÓN — Asignar el número DEFINITIVO (consume la
+                # secuencia oficial de la unidad/tipo) antes de congelar el
+                # PDF, para que el artefacto congelado lleve el número final
+                # y no el provisional "…-TEMP". Idempotente si ya es definitivo.
+                from .numeracion import asignar_numero_definitivo
+                asignar_numero_definitivo(doc)
 
-                # Mover bandeja del titular (remitente o creador) a 'enviados'
-                titular = doc.remitente or doc.creado_por
-                BandejaDocumento.objects.filter(
-                    documento=doc, usuario=titular, bandeja__in=['en_elaboracion', 'no_enviados'],
-                ).update(bandeja='enviados')
-                # Si el creador es distinto del titular, también darle visibilidad en 'enviados'
-                if doc.creado_por and doc.creado_por != titular:
-                    BandejaDocumento.objects.get_or_create(
-                        documento=doc,
-                        usuario=doc.creado_por,
-                        defaults={'bandeja': 'enviados'},
-                    )
+                # FASE 0A — Congelar el PDF oficial ANTES de cambiar el estado,
+                # con limpieza garantizada del archivo físico si algo del resto
+                # de este bloque (bandejas, seguimiento, marcar_documento_enviado)
+                # falla después (§0A.1 Parte B — FileSystemStorage no participa
+                # del rollback SQL). Idempotente: si ya existe el PDF (p. ej.
+                # firmado), no lo toca y no crea nada que limpiar.
+                from .pdf_oficial import congelar_pdf_oficial_seguro
+                from contextlib import nullcontext
+                cm = (
+                    congelar_pdf_oficial_seguro(doc, request.user, motivo='envio')
+                    if doc.estado != 'enviado' else nullcontext(None)
+                )
+                with cm as adj_oficial:
+                    # Regla única BORRADOR -> ENVIADO: no repetido, tipo, asunto
+                    # y >=1 destinatario. Si falla, la excepción revierte
+                    # cualquier escritura hecha en este bloque (incluido el
+                    # archivo recién escrito, vía congelar_pdf_oficial_seguro).
+                    marcar_documento_enviado(doc)
+
+                    # Mover bandeja del titular (remitente o creador) a 'enviados'
+                    titular = doc.remitente or doc.creado_por
                     BandejaDocumento.objects.filter(
-                        documento=doc, usuario=doc.creado_por, bandeja__in=['en_elaboracion', 'no_enviados'],
+                        documento=doc, usuario=titular, bandeja__in=['en_elaboracion', 'no_enviados'],
                     ).update(bandeja='enviados')
-                # Crear entradas en recibidos para cada destinatario al momento del envío
-                dest_names = []
-                for d in doc.destinatarios.select_related('usuario').all():
-                    if d.usuario:
+                    # Si el creador es distinto del titular, también darle visibilidad en 'enviados'
+                    if doc.creado_por and doc.creado_por != titular:
                         BandejaDocumento.objects.get_or_create(
                             documento=doc,
-                            usuario=d.usuario,
-                            bandeja='recibidos',
-                            defaults={'es_urgente': doc.prioridad != 'normal'},
+                            usuario=doc.creado_por,
+                            defaults={'bandeja': 'enviados'},
                         )
-                        dest_names.append(d.usuario.nombre_completo)
-                obs = f'Enviado a: {", ".join(dest_names)}' if dest_names else 'Enviado'
-                SeguimientoDocumento.objects.create(
-                    documento   = doc,
-                    etapa       = 'enviado',
-                    usuario     = request.user,
-                    unidad      = getattr(request.user, 'unidad', None),
-                    observacion = obs,
-                )
+                        BandejaDocumento.objects.filter(
+                            documento=doc, usuario=doc.creado_por, bandeja__in=['en_elaboracion', 'no_enviados'],
+                        ).update(bandeja='enviados')
+                    # Crear entradas en recibidos para cada destinatario al momento del envío
+                    dest_names = []
+                    for d in doc.destinatarios.select_related('usuario').all():
+                        if d.usuario:
+                            BandejaDocumento.objects.get_or_create(
+                                documento=doc,
+                                usuario=d.usuario,
+                                bandeja='recibidos',
+                                defaults={'es_urgente': doc.prioridad != 'normal'},
+                            )
+                            dest_names.append(d.usuario.nombre_completo)
+                    obs = f'Enviado a: {", ".join(dest_names)}' if dest_names else 'Enviado'
+                    if adj_oficial is not None:
+                        obs += (
+                            f' · PDF oficial congelado '
+                            f'({adj_oficial.hash_integridad[:12]}, {adj_oficial.tamanio} bytes)'
+                        )
+                    SeguimientoDocumento.objects.create(
+                        documento   = doc,
+                        etapa       = 'enviado',
+                        usuario     = request.user,
+                        unidad      = getattr(request.user, 'unidad', None),
+                        observacion = obs,
+                    )
         except DocumentoInvalidoError as e:
             return Response({'detail': str(e)}, status=400)
+        except NumeracionError as e:
+            return Response({'detail': str(e)}, status=409)
         return Response({'detail': 'Documento enviado correctamente.'})
 
     @action(detail=True, methods=['post'], url_path='reasignar_a')
@@ -369,6 +536,13 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         doc.fecha_envio = None
         doc.save(update_fields=['estado', 'fecha_envio'])
 
+        # FASE 0A — El documento vuelve a borrador: deja de estar oficializado,
+        # así que su PDF congelado deja de aplicar (se regenerará al volver a
+        # enviarlo tras la corrección). `descongelar_pdf_oficial` NO borra nada
+        # si el documento tiene firma registrada.
+        from .pdf_oficial import descongelar_pdf_oficial
+        descongelar_pdf_oficial(doc)
+
         SeguimientoDocumento.objects.create(
             documento=doc, etapa='recuperado', usuario=request.user,
             unidad=getattr(request.user, 'unidad', None),
@@ -379,46 +553,62 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='eliminar_borrador')
     def eliminar_borrador(self, request, pk=None):
         """
-        Envía un borrador (bandeja 'en_elaboracion') a la papelera ('eliminados').
-        Permitido para el responsable actual del documento o un
-        administrador de archivo — NO para quien ya lo reasignó, aunque sea
-        el creador original: `creado_por` no otorga propiedad permanente
-        (ver `_es_responsable_actual`).
+        Envía un borrador ('en_elaboracion') a la papelera ('eliminados') —
+        soft-delete. Responsable actual o admin de archivo; NO para quien ya
+        lo reasignó. Misma operación de dominio que `enviar_papelera` (masivo).
         """
         doc = self.get_object()
-        if not (_es_responsable_actual(request.user, doc) or _es_admin_bandeja(request.user)):
-            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
+        comentario = request.data.get('comentario') or ''
+        try:
+            item = _validar_envio_papelera(doc, request.user, comentario)
+            with transaction.atomic():
+                _aplicar_envio_papelera(doc, item, request.user, comentario)
+        except PapeleraError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Borrador enviado a la papelera.'})
 
-        comentario = (request.data.get('comentario') or '').strip()
-        if not comentario:
+    @action(detail=False, methods=['post'], url_path='enviar_papelera')
+    def enviar_papelera(self, request):
+        """
+        Envío MASIVO a la papelera desde la selección de "En elaboración".
+        Body: {documentos: [ids], comentario}. Todo-o-nada (§10): si algún
+        documento no puede moverse, se informa cuáles y NO se aplica ninguno.
+        """
+        ids = request.data.get('documentos') or []
+        comentario = request.data.get('comentario') or ''
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+        if not (comentario or '').strip():
             return Response({'detail': 'El comentario es obligatorio.'}, status=400)
 
-        # El ítem a archivar es el del responsable actual (quien lo tiene
-        # activo en 'en_elaboracion'), no necesariamente el de `creado_por`
-        # — tras una reasignación puede ser un usuario distinto.
-        item = BandejaDocumento.objects.filter(
-            documento=doc, bandeja='en_elaboracion',
-        ).exclude(accion_tomada='reasignado').first()
-        if not item:
-            return Response({'detail': 'Solo se pueden eliminar borradores en "En elaboración".'}, status=400)
+        docs = {d.id: d for d in Documento.objects.filter(pk__in=ids)}
+        validos, errores = [], []
+        for did in ids:
+            doc = docs.get(did)
+            if doc is None:
+                errores.append({'documento_id': did, 'detalle': 'Documento no encontrado.'})
+                continue
+            try:
+                item = _validar_envio_papelera(doc, request.user, comentario)
+                validos.append((doc, item))
+            except PapeleraError as e:
+                errores.append({'documento_id': did, 'detalle': str(e)})
 
-        item.bandeja       = 'eliminados'
-        item.accion_tomada = 'eliminado'
-        item.save()
+        if errores:
+            return Response({
+                'detail': 'Ningún documento fue movido: algunos no pueden enviarse a la papelera.',
+                'errores': errores,
+            }, status=409)
 
-        doc.eliminado_en       = timezone.now()
-        doc.eliminado_por      = request.user
-        doc.motivo_eliminacion = comentario
-        doc.save(update_fields=['eliminado_en', 'eliminado_por', 'motivo_eliminacion'])
+        with transaction.atomic():
+            for doc, item in validos:
+                _aplicar_envio_papelera(doc, item, request.user, comentario)
 
-        SeguimientoDocumento.objects.create(
-            documento   = doc,
-            etapa       = 'eliminado',
-            usuario     = request.user,
-            unidad      = getattr(request.user, 'unidad', None),
-            observacion = comentario,
-        )
-        return Response({'detail': 'Borrador enviado a la papelera.'})
+        n = len(validos)
+        return Response({
+            'detail': f'{n} documento{"s" if n != 1 else ""} enviado{"s" if n != 1 else ""} a la papelera.',
+            'movidos': [doc.id for doc, _ in validos],
+        })
 
     @action(detail=True, methods=['post'], url_path='restaurar_eliminado')
     def restaurar_eliminado(self, request, pk=None):
@@ -432,34 +622,133 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         quien lo eliminó fue un responsable posterior a una reasignación.)
         """
         doc = self.get_object()
-        item = BandejaDocumento.objects.filter(documento=doc, bandeja='eliminados').first()
-        if not item:
-            return Response({'detail': 'Este documento no está en la papelera.'}, status=400)
-        if item.usuario_id != request.user.id and not _es_admin_bandeja(request.user):
-            return Response({'detail': 'No tiene permiso para restaurar este documento.'}, status=403)
-
         comentario = (request.data.get('comentario') or '').strip()
         if not comentario:
             return Response({'detail': 'El comentario es obligatorio.'}, status=400)
-
-        item.bandeja       = 'en_elaboracion'
-        item.accion_tomada = 'pendiente'
-        item.save()
-
-        doc.estado             = 'borrador'
-        doc.eliminado_en       = None
-        doc.eliminado_por      = None
-        doc.motivo_eliminacion = ''
-        doc.save(update_fields=['estado', 'eliminado_en', 'eliminado_por', 'motivo_eliminacion'])
-
-        SeguimientoDocumento.objects.create(
-            documento   = doc,
-            etapa       = 'restaurado',
-            usuario     = request.user,
-            unidad      = getattr(request.user, 'unidad', None),
-            observacion = comentario,
-        )
+        try:
+            items = validar_restauracion(
+                doc, request.user, es_admin_bandeja=_es_admin_bandeja(request.user),
+            )
+            with transaction.atomic():
+                aplicar_restauracion(doc, request.user, comentario, items=items)
+        except BandejaAccionError as e:
+            return Response({'detail': str(e)}, status=e.code)
         return Response({'detail': 'Documento restaurado a "En elaboración".'})
+
+    @action(detail=False, methods=['post'], url_path='restaurar_eliminados')
+    def restaurar_eliminados(self, request):
+        """
+        Restauración MASIVA desde la papelera desde la selección de "Eliminados".
+        Body: {documentos: [ids], comentario}. Todo-o-nada (igual que
+        `enviar_papelera`): si algún documento no puede restaurarse se informa
+        cuáles y NO se aplica ninguno. Reutiliza EXACTAMENTE la misma lógica de
+        dominio que la acción individual (`validar_restauracion` /
+        `aplicar_restauracion`).
+        """
+        ids = request.data.get('documentos') or []
+        comentario = (request.data.get('comentario') or '').strip()
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        es_admin = _es_admin_bandeja(request.user)
+        docs = {d.id: d for d in Documento.objects.filter(pk__in=ids)}
+        validos, errores = [], []
+        for did in ids:
+            doc = docs.get(did)
+            if doc is None:
+                errores.append({'documento_id': did, 'detalle': 'Documento no encontrado.'})
+                continue
+            try:
+                items = validar_restauracion(doc, request.user, es_admin_bandeja=es_admin)
+                validos.append((doc, items))
+            except BandejaAccionError as e:
+                errores.append({'documento_id': did, 'detalle': str(e)})
+
+        if errores:
+            return Response({
+                'detail': 'Ningún documento fue restaurado: algunos ya no cumplen las condiciones actuales de restauración.',
+                'errores': errores,
+            }, status=409)
+
+        with transaction.atomic():
+            for doc, items in validos:
+                aplicar_restauracion(doc, request.user, comentario, items=items)
+
+        n = len(validos)
+        return Response({
+            'detail': f'{n} documento{"s" if n != 1 else ""} restaurado{"s" if n != 1 else ""} a "En elaboración".',
+            'restaurados': [doc.id for doc, _ in validos],
+        })
+
+    @action(detail=True, methods=['post'], url_path='informar')
+    def informar(self, request, pk=None):
+        """
+        Pone el documento EN CONOCIMIENTO de otros usuarios (acción "Informar").
+        Body: {usuarios: [ids], comentario?}. NO cambia responsable, NO saca el
+        documento de la bandeja del emisor. Idempotente: quien ya estaba
+        informado no genera un registro nuevo.
+        """
+        doc = self.get_object()
+        usuario_ids = request.data.get('usuarios') or []
+        comentario  = request.data.get('comentario', '')
+        if not isinstance(usuario_ids, list) or not usuario_ids:
+            return Response({'detail': 'Debe indicar al menos un usuario a informar.'}, status=400)
+        if not _puede_informar(request.user, doc):
+            return Response({'detail': 'No tiene acceso a este documento para informarlo.'}, status=403)
+        with transaction.atomic():
+            nuevos, ya = aplicar_informar(doc, request.user, usuario_ids, comentario)
+        det = f'Documento puesto en conocimiento de {len(nuevos)} usuario(s).'
+        if ya:
+            det += f' {len(ya)} ya estaba(n) informado(s).'
+        return Response({'detail': det, 'informados': nuevos, 'ya_informados': ya})
+
+    @action(detail=False, methods=['post'], url_path='informar_lote')
+    def informar_lote(self, request):
+        """
+        Informar MASIVO: los MISMOS usuarios y comentario sobre todos los
+        documentos seleccionados. Body: {documentos:[ids], usuarios:[ids],
+        comentario?}. TODO-O-NADA sobre existencia/acceso; IDEMPOTENTE al
+        aplicar (no duplica relaciones de conocimiento ya existentes).
+        Seguimiento individual por documento.
+        """
+        ids         = request.data.get('documentos') or []
+        usuario_ids = request.data.get('usuarios') or []
+        comentario  = request.data.get('comentario', '')
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+        if not isinstance(usuario_ids, list) or not usuario_ids:
+            return Response({'detail': 'Debe indicar al menos un usuario a informar.'}, status=400)
+
+        docs = {d.id: d for d in Documento.objects.filter(pk__in=ids)}
+        validos, errores = [], []
+        for did in ids:
+            doc = docs.get(did)
+            if doc is None:
+                errores.append({'documento_id': did, 'detalle': 'Documento no encontrado.'})
+            elif not _puede_informar(request.user, doc):
+                errores.append({'documento_id': did, 'detalle': 'No tiene acceso a este documento.'})
+            else:
+                validos.append(doc)
+        if errores:
+            return Response({
+                'detail': 'Ningún documento fue informado: hay documentos sin acceso o inexistentes.',
+                'errores': errores,
+            }, status=409)
+
+        resumen, total_nuevos = [], 0
+        with transaction.atomic():
+            for doc in validos:
+                nuevos, ya = aplicar_informar(doc, request.user, usuario_ids, comentario)
+                total_nuevos += len(nuevos)
+                resumen.append({'documento_id': doc.id, 'informados': nuevos, 'ya_informados': ya})
+
+        return Response({
+            'detail': f'{len(validos)} documento(s) puestos en conocimiento; '
+                      f'{total_nuevos} relación(es) de conocimiento nueva(s).',
+            'resumen': resumen,
+        })
 
     @action(detail=True, methods=['post'], url_path='eliminar_definitivo')
     def eliminar_definitivo(self, request, pk=None):
@@ -508,12 +797,203 @@ class DocumentoViewSet(viewsets.ModelViewSet):
 
         return Response({'detail': 'Documento eliminado definitivamente.'})
 
+    # ── Documentos asociados (antecedente ↔ consecuente) ──────────────────
+    @action(detail=True, methods=['post'], url_path='responder')
+    def responder(self, request, pk=None):
+        """
+        Crea un borrador que RESPONDE a este documento. El borrador nace con
+        `responde_a` = este documento (asociación automática). `a_todos=true`
+        precarga también a los demás destinatarios principales — sigue siendo
+        UN solo Documento.
+        """
+        original = self.get_object()
+        tipo_id  = request.data.get('tipo_documento_id')
+        tipo = None
+        if tipo_id:
+            tipo = TipoDocumento.objects.filter(pk=tipo_id).first()
+            if tipo is None:
+                return Response({'detail': 'Tipo de documento no encontrado.'}, status=404)
+        else:
+            tipo = original.tipo_documento
+        try:
+            with transaction.atomic():
+                doc, sin_dest = crear_respuesta(
+                    original, request.user,
+                    asunto=request.data.get('asunto') or f'RE: {original.asunto}',
+                    tipo_documento=tipo,
+                    cuerpo=request.data.get('cuerpo', ''),
+                    a_todos=bool(request.data.get('a_todos')),
+                )
+        except AsociacionError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({
+            'detail': 'Borrador de respuesta creado en "En elaboración".',
+            'documento_id': doc.id, 'numero': doc.numero_documento,
+            'sin_destinatario_auto': sin_dest,
+        }, status=201)
+
+    def _puede_editar_asociacion(self, request, doc):
+        # `asociar`/`desasociar` modifican metadata relacional (`responde_a`),
+        # NO contenido firmado / PDF / numeración / destinatarios. Autorizado:
+        # el responsable actual (típicamente su borrador en elaboración) o un
+        # admin de bandeja (corrección de metadata de un documento ya enviado).
+        # Cualquier otro rol (p. ej. un receptor de un documento enviado) es
+        # DECISIÓN DE NEGOCIO PENDIENTE — no habilitado por ahora.
+        return _es_responsable_actual(request.user, doc) or _es_admin_bandeja(request.user)
+
+    @action(detail=True, methods=['post'], url_path='asociar')
+    def asociar(self, request, pk=None):
+        """Fija manualmente el antecedente de este documento. Body: {antecedente_id, observacion?}."""
+        doc = self.get_object()
+        if not self._puede_editar_asociacion(request, doc):
+            return Response({'detail': 'No tiene permiso para modificar la asociación de este documento.'}, status=403)
+        ant_id = request.data.get('antecedente_id')
+        # El antecedente debe ser VISIBLE para el usuario (no se puede asociar a
+        # un documento que no puede consultar).
+        antecedente = (documentos_visibles_para(request.user).filter(pk=ant_id).first()
+                       if ant_id else None)
+        if ant_id and antecedente is None:
+            return Response({'detail': 'El documento antecedente no existe o no tiene acceso a él.'}, status=404)
+        try:
+            validar_asociacion(doc, antecedente)
+            with transaction.atomic():
+                aplicar_asociacion(doc, antecedente, request.user, request.data.get('observacion', ''))
+        except AsociacionError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Documento asociado.'})
+
+    @action(detail=True, methods=['post'], url_path='desasociar')
+    def desasociar(self, request, pk=None):
+        doc = self.get_object()
+        if not self._puede_editar_asociacion(request, doc):
+            return Response({'detail': 'No tiene permiso para modificar la asociación de este documento.'}, status=403)
+        try:
+            with transaction.atomic():
+                aplicar_desasociacion(doc, request.user, request.data.get('observacion', ''))
+        except AsociacionError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Asociación retirada.'})
+
+    @action(detail=True, methods=['get'], url_path='asociados')
+    def asociados(self, request, pk=None):
+        """
+        Árbol/cadena documental de este documento:
+          - `cadena`: [raíz … antecedente, actual] (de más antiguo a este)
+          - `consecuentes`: respuestas directas de este documento
+        Nodos a los que el usuario NO tiene acceso se devuelven como
+        `{id, restringido: true}` SIN metadatos (§5) — el árbol conserva su
+        estructura. Estar asociado NUNCA concede acceso (§4/§13).
+        """
+        doc = self.get_object()
+        es_admin = _es_admin_bandeja(request.user)
+        cadena = cadena_ascendente(doc)
+        consecuentes = list(doc.respuestas.select_related('tipo_documento').order_by('creado_en'))
+        nodo_ids = {d.id for d in cadena} | {d.id for d in consecuentes}
+        visibles = nodo_ids if es_admin else set(
+            documentos_visibles_para(request.user, False).filter(pk__in=nodo_ids).values_list('pk', flat=True)
+        )
+
+        def _mini(d):
+            if d.id not in visibles:
+                return {'id': d.id, 'restringido': True, 'es_actual': d.id == doc.id}
+            return {
+                'id': d.id,
+                'numero_documento': d.numero_documento,
+                'tipo': d.tipo_documento.prefijo_numeracion if d.tipo_documento_id else None,
+                'asunto': d.asunto,
+                'fecha': d.fecha_elaboracion,
+                'estado': d.estado,
+                'es_actual': d.id == doc.id,
+                'restringido': False,
+            }
+
+        return Response({
+            'cadena': [_mini(d) for d in cadena],
+            'consecuentes': [_mini(d) for d in consecuentes],
+        })
+
+    @action(detail=False, methods=['get'], url_path='asociables')
+    def asociables(self, request):
+        """
+        Búsqueda ACOTADA para asociar manualmente: solo documentos con los que
+        el usuario tiene relación (o cualquiera si es admin de bandeja) — §16,
+        no permite enumerar documentos ajenos. Params: ?q= (número o asunto),
+        ?excluir= (id del documento que se está asociando).
+        """
+        q       = (request.query_params.get('q') or '').strip()
+        excluir = request.query_params.get('excluir')
+        base = documentos_visibles_para(request.user, _es_admin_bandeja(request.user))
+        if excluir:
+            base = base.exclude(pk=excluir)
+        if q:
+            from django.db.models import Q
+            base = base.filter(Q(numero_documento__icontains=q) | Q(asunto__icontains=q))
+        base = base.select_related('tipo_documento').order_by('-creado_en')[:20]
+        return Response([{
+            'id': d.id,
+            'numero_documento': d.numero_documento,
+            'tipo': d.tipo_documento.prefijo_numeracion if d.tipo_documento_id else None,
+            'asunto': d.asunto,
+            'fecha': d.fecha_elaboracion,
+            'estado': d.estado,
+        } for d in base])
+
+    # ── Carpetas Virtuales (clasificación operativa por Unidad) ───────────
+    @action(detail=False, methods=['post'], url_path='clasificar_carpeta')
+    def clasificar_carpeta(self, request):
+        """
+        Clasifica una selección de documentos EN LA MISMA carpeta (individual
+        o masivo). TODO-O-NADA. Idempotente: un documento ya en esa carpeta
+        cuenta como `sin_cambio`. Reclasificar = UPDATE de la fila existente.
+        Body: {documentos: [ids], carpeta_id}.
+        NO modifica documento / estado / bandeja / responsable / destinatarios.
+        """
+        try:
+            res = clasificar_documentos(
+                request.user,
+                documento_ids=request.data.get('documentos') or [],
+                carpeta_id=request.data.get('carpeta_id'),
+            )
+        except CarpetaError as e:
+            payload = {'detail': str(e)}
+            if getattr(e, 'errores', None):
+                payload['errores'] = e.errores
+            return Response(payload, status=e.code)
+        n = len(res['clasificados']) + len(res['reclasificados'])
+        return Response({
+            'detail': f'{n} documento(s) clasificado(s); {len(res["sin_cambio"])} sin cambio.',
+            **res,
+        })
+
+    @action(detail=True, methods=['post'], url_path='quitar_de_carpeta')
+    def quitar_de_carpeta(self, request, pk=None):
+        """Retira la clasificación de carpeta de este documento para la unidad
+        del usuario (o `unidad_id` si es admin). No toca el documento ni la
+        clasificación de otras unidades."""
+        doc = self.get_object()
+        try:
+            quitar_de_carpeta(request.user, doc, unidad_id=request.data.get('unidad_id'))
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Documento retirado de la carpeta.'})
+
+    @action(detail=True, methods=['get'], url_path='carpeta')
+    def carpeta_actual(self, request, pk=None):
+        """Devuelve la clasificación de carpeta de este documento para la
+        unidad del usuario (o `?unidad=`): `{carpeta_id, ruta}` o `null`."""
+        doc = self.get_object()
+        from .models import DocumentoCarpetaVirtual
+        uid = request.query_params.get('unidad') or getattr(request.user, 'unidad_id', None)
+        rel = (DocumentoCarpetaVirtual.objects.filter(documento=doc, unidad_id=uid)
+               .select_related('carpeta').first())
+        if rel is None:
+            return Response(None)
+        return Response({'carpeta_id': rel.carpeta_id, 'ruta': rel.carpeta.ruta(),
+                         'asignado_en': rel.asignado_en})
+
     @action(detail=True, methods=['post'], url_path='enviar_email')
     def enviar_email(self, request, pk=None):
         from django.core.mail import EmailMessage
-        from .plantillas import html_documento_oficial
-        from apps.auditoria.reportes import generar_pdf
-        import io
 
         doc = self.get_object()
 
@@ -549,9 +1029,10 @@ Gobierno Autónomo Descentralizado Provincial de Cotopaxi
             )
 
             if adjuntar_pdf:
-                html     = html_documento_oficial(doc)
-                pdf_resp = generar_pdf(html, 'temp.pdf')
-                pdf_bytes = pdf_resp.content
+                # FASE 0A — adjuntar el PDF oficial congelado si existe (mismo
+                # artefacto que sirve GET /pdf/); si no, render dinámico.
+                from .pdf_oficial import obtener_pdf_oficial_bytes
+                pdf_bytes = obtener_pdf_oficial_bytes(doc)
                 filename = f'{doc.numero_documento or f"doc_{doc.id}"}.pdf'.replace('/', '-')
                 msg.attach(filename, pdf_bytes, 'application/pdf')
 
@@ -618,6 +1099,37 @@ def _es_admin_bandeja(user):
     ).exists()
 
 
+def _puede_informar(user, doc):
+    """Puede poner un documento en conocimiento de otros quien participa del
+    documento (lo tiene en alguna de sus bandejas) o un admin de bandeja."""
+    return _es_admin_bandeja(user) or BandejaDocumento.objects.filter(
+        documento=doc, usuario=user,
+    ).exists()
+
+
+def _items_de_bandeja(usuario, ids, bandeja):
+    """
+    Resuelve {documento_id: BandejaDocumento} para una acción de lote sobre
+    `bandeja`. Maneja la bandeja VIRTUAL 'reasignados' (ítems con
+    accion_tomada='reasignado', físicamente en 'en_elaboracion').
+    """
+    qs = BandejaDocumento.objects.filter(documento_id__in=ids, usuario=usuario)
+    if bandeja == 'reasignados':
+        qs = qs.filter(accion_tomada='reasignado')
+    else:
+        qs = qs.filter(bandeja=bandeja)
+    return {b.documento_id: b for b in qs.select_related('documento', 'usuario')}
+
+
+def _excluir_eliminados(qs, bandeja):
+    """Fuente de verdad del soft-delete = `Documento.eliminado_en`. Toda
+    bandeja ACTIVA excluye sistemáticamente los documentos en papelera; la
+    bandeja 'eliminados' es justamente la que los muestra."""
+    if bandeja == 'eliminados':
+        return qs
+    return qs.filter(documento__eliminado_en__isnull=True)
+
+
 def _resolver_usuario_bandeja(request):
     """
     Devuelve el usuario cuya bandeja se debe mostrar.
@@ -653,14 +1165,13 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
         qs = BandejaDocumento.objects.filter(usuario=usuario)
         resultado = {}
         for bandeja, _ in BandejaDocumento.BANDEJA_CHOICES:
+            sub = _excluir_eliminados(qs.filter(bandeja=bandeja), bandeja)
             if bandeja == 'en_elaboracion':
                 # Excluir reasignados del conteo de en_elaboracion
-                sub = qs.filter(bandeja=bandeja).exclude(accion_tomada='reasignado')
-            else:
-                sub = qs.filter(bandeja=bandeja)
+                sub = sub.exclude(accion_tomada='reasignado')
             resultado[bandeja] = {'total': sub.count(), 'no_leidos': sub.filter(leido=False).count()}
-        # Bandeja virtual reasignados
-        rea = qs.filter(accion_tomada='reasignado')
+        # Bandeja virtual reasignados — también excluye documentos en papelera
+        rea = qs.filter(accion_tomada='reasignado').filter(documento__eliminado_en__isnull=True)
         resultado['reasignados'] = {'total': rea.count(), 'no_leidos': rea.filter(leido=False).count()}
         return Response(resultado)
 
@@ -684,6 +1195,10 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
             # En elaboración excluye los ya reasignados (esos aparecen en 'reasignados')
             if bandeja == 'en_elaboracion':
                 qs = qs.exclude(accion_tomada='reasignado')
+
+        # Fuente de verdad del soft-delete: toda bandeja activa oculta los
+        # documentos en papelera (solo 'eliminados' los muestra).
+        qs = _excluir_eliminados(qs, bandeja)
 
         qs = qs.select_related(
             'documento__tipo_documento',
@@ -714,14 +1229,88 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'], url_path='marcar_leido')
     def marcar_leido(self, request, pk=None):
         item = self.get_object()
-        # Idempotente: repetir la llamada da el mismo resultado. `leido_en`
-        # registra la PRIMERA lectura — reabrir un documento ya leído no
-        # debe correrle la fecha ni generar una escritura innecesaria.
-        if not item.leido:
-            item.leido    = True
-            item.leido_en = timezone.now()
-            item.save()
+        aplicar_marcar_leido_bandeja(item)
         return Response({'detail': 'Marcado como leído.'})
+
+    @action(detail=False, methods=['post'], url_path='marcar_leido_lote')
+    def marcar_leido_lote(self, request):
+        """
+        Marca leídos varios ítems de una bandeja. Body: {documentos:[ids], bandeja}.
+        Acción neutra e idempotente: TODO-O-NADA (el único rechazo posible es
+        que algún documento no esté en esa bandeja del usuario — condición de
+        integridad de la solicitud, no una regla de negocio).
+        """
+        ids     = request.data.get('documentos') or []
+        bandeja = request.data.get('bandeja') or 'recibidos'
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+
+        usuario_bandeja = _resolver_usuario_bandeja(request)
+        items_por_id = _items_de_bandeja(usuario_bandeja, ids, bandeja)
+        errores = [
+            {'documento_id': did, 'detalle': 'El documento no está en esta bandeja.'}
+            for did in ids if did not in items_por_id
+        ]
+        if errores:
+            return Response({
+                'detail': 'No se marcó ningún documento: algunos no están en esta bandeja.',
+                'errores': errores,
+            }, status=409)
+
+        with transaction.atomic():
+            for did in ids:
+                aplicar_marcar_leido_bandeja(items_por_id[did])
+
+        n = len(ids)
+        return Response({
+            'detail': f'{n} documento{"s" if n != 1 else ""} marcado{"s" if n != 1 else ""} como leído.',
+            'leidos': list(ids),
+        })
+
+    @action(detail=True, methods=['post'], url_path='quitar_informado')
+    def quitar_informado(self, request, pk=None):
+        """
+        Retira ESTA copia de conocimiento de la bandeja Informados del usuario.
+        NO elimina el Documento institucional ni afecta a otros informados o al
+        emisor. (Es lo que en QUIPUX hacía "Eliminar" dentro de Informados.)
+        """
+        item = self.get_object()
+        if item.bandeja != 'informados':
+            return Response({'detail': 'Esta acción solo aplica a la bandeja Informados.'}, status=400)
+        with transaction.atomic():
+            aplicar_quitar_informado(item)
+        return Response({'detail': 'Documento retirado de tu bandeja Informados.'})
+
+    @action(detail=False, methods=['post'], url_path='quitar_informados')
+    def quitar_informados(self, request):
+        """Retira varias copias de conocimiento de la bandeja Informados del
+        usuario. Body: {documentos:[ids]}. TODO-O-NADA. NO borra documentos."""
+        ids = request.data.get('documentos') or []
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+        usuario_bandeja = _resolver_usuario_bandeja(request)
+        items = {
+            b.documento_id: b for b in BandejaDocumento.objects.filter(
+                documento_id__in=ids, usuario=usuario_bandeja, bandeja='informados',
+            ).select_related('documento', 'usuario')
+        }
+        errores = [
+            {'documento_id': did, 'detalle': 'No está en tu bandeja Informados.'}
+            for did in ids if did not in items
+        ]
+        if errores:
+            return Response({
+                'detail': 'No se retiró ningún documento: algunos no están en tu bandeja Informados.',
+                'errores': errores,
+            }, status=409)
+        with transaction.atomic():
+            for did in ids:
+                aplicar_quitar_informado(items[did])
+        n = len(ids)
+        return Response({
+            'detail': f'{n} documento{"s" if n != 1 else ""} retirado{"s" if n != 1 else ""} de Informados.',
+            'retirados': list(ids),
+        })
 
     @action(detail=True, methods=['post'], url_path='reasignar')
     def reasignar(self, request, pk=None):
@@ -729,84 +1318,253 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
         usuario_id   = request.data.get('usuario_id')
         unidad_id    = request.data.get('unidad_id')
         instrucciones = request.data.get('instrucciones', '')
-
-        BandejaDocumento.objects.get_or_create(
-            documento  = item.documento,
-            usuario_id = usuario_id,
-            bandeja    = 'recibidos',
-            defaults={
-                'unidad_id':     unidad_id,
-                'instrucciones': instrucciones,
-                'es_urgente':    item.es_urgente,
-                'fecha_limite':  item.fecha_limite,
-            },
-        )
-
-        item.accion_tomada = 'reasignado'
-        item.save()
-
-        SeguimientoDocumento.objects.create(
-            documento   = item.documento,
-            etapa       = 'reasignado',
-            usuario     = request.user,
-            unidad_id   = unidad_id,
-            observacion = instrucciones,
-        )
+        with transaction.atomic():
+            aplicar_reasignacion_bandeja(item, request.user, usuario_id, unidad_id, instrucciones)
         return Response({'detail': 'Documento reasignado.'})
+
+    @action(detail=False, methods=['post'], url_path='reasignar_lote')
+    def reasignar_lote(self, request):
+        """
+        Reasignación MASIVA desde la selección de una bandeja. Body:
+        {documentos: [ids], bandeja, usuario_id, unidad_id?, instrucciones?}.
+        TODO-O-NADA: se validan TODOS los documentos primero; si alguno no
+        puede reasignarse, NO se reasigna ninguno y se devuelve el detalle de
+        los incompatibles. Reutiliza la MISMA lógica de dominio que la acción
+        individual (`aplicar_reasignacion_bandeja`).
+        """
+        ids        = request.data.get('documentos') or []
+        bandeja    = request.data.get('bandeja') or 'recibidos'
+        usuario_id = request.data.get('usuario_id')
+        unidad_id  = request.data.get('unidad_id')
+        instrucciones = request.data.get('instrucciones', '')
+
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+        if not usuario_id:
+            return Response({'detail': 'Debe indicar el usuario destino.'}, status=400)
+
+        usuario_bandeja = _resolver_usuario_bandeja(request)
+        items_por_id = _items_de_bandeja(usuario_bandeja, ids, bandeja)
+
+        validos, errores = [], []
+        for did in ids:
+            item = items_por_id.get(did)
+            if item is None:
+                errores.append({'documento_id': did, 'detalle': 'El documento no está en esta bandeja.'})
+                continue
+            try:
+                validar_reasignacion_bandeja(item, usuario_id)
+                validos.append(item)
+            except BandejaAccionError as e:
+                errores.append({'documento_id': did, 'detalle': str(e)})
+
+        if errores:
+            return Response({
+                'detail': 'Ningún documento fue reasignado: algunos no pueden reasignarse.',
+                'errores': errores,
+            }, status=409)
+
+        with transaction.atomic():
+            for item in validos:
+                aplicar_reasignacion_bandeja(item, request.user, usuario_id, unidad_id, instrucciones)
+
+        n = len(validos)
+        return Response({
+            'detail': f'{n} documento{"s" if n != 1 else ""} reasignado{"s" if n != 1 else ""}.',
+            'reasignados': [i.documento_id for i in validos],
+        })
 
     @action(detail=True, methods=['post'], url_path='archivar')
     def archivar(self, request, pk=None):
-        item               = self.get_object()
-        item.bandeja       = 'archivados'
-        item.accion_tomada = 'archivado'
-        item.save()
-
-        SeguimientoDocumento.objects.create(
-            documento   = item.documento,
-            etapa       = 'archivado',
-            usuario     = request.user,
-            observacion = request.data.get('observacion', ''),
-        )
+        item = self.get_object()
+        try:
+            validar_archivado_bandeja(item)
+            with transaction.atomic():
+                aplicar_archivado_bandeja(item, request.user, request.data.get('observacion', ''))
+        except BandejaAccionError as e:
+            return Response({'detail': str(e)}, status=e.code)
         return Response({'detail': 'Documento archivado.'})
+
+    @action(detail=False, methods=['post'], url_path='archivar_lote')
+    def archivar_lote(self, request):
+        """
+        Archivo de GESTIÓN PERSONAL en lote (mueve a 'archivados', guarda
+        `bandeja_origen`). Body: {documentos:[ids], bandeja, observacion?}.
+        Solo desde Recibidos o Enviados (QUIPUX). TODO-O-NADA. NO vincula a
+        expediente — esa es otra acción.
+        """
+        ids         = request.data.get('documentos') or []
+        bandeja     = request.data.get('bandeja') or 'recibidos'
+        observacion = request.data.get('observacion', '')
+
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+        if bandeja not in ('recibidos', 'enviados'):
+            return Response({'detail': 'Solo se puede archivar desde Recibidos o Enviados.'}, status=400)
+
+        usuario_bandeja = _resolver_usuario_bandeja(request)
+        items_por_id = {
+            b.documento_id: b for b in BandejaDocumento.objects.filter(
+                documento_id__in=ids, usuario=usuario_bandeja, bandeja=bandeja,
+            ).select_related('documento')
+        }
+        validos, errores = [], []
+        for did in ids:
+            item = items_por_id.get(did)
+            if item is None:
+                errores.append({'documento_id': did, 'detalle': 'El documento ya no está en esta bandeja.'})
+                continue
+            try:
+                validar_archivado_bandeja(item)
+                validos.append(item)
+            except BandejaAccionError as e:
+                errores.append({'documento_id': did, 'detalle': str(e)})
+        if errores:
+            return Response({
+                'detail': 'Ningún documento fue archivado: algunos no pueden archivarse.',
+                'errores': errores,
+            }, status=409)
+
+        with transaction.atomic():
+            for item in validos:
+                aplicar_archivado_bandeja(item, request.user, observacion)
+
+        n = len(validos)
+        return Response({
+            'detail': f'{n} documento{"s" if n != 1 else ""} archivado{"s" if n != 1 else ""}.',
+            'archivados': [i.documento_id for i in validos],
+        })
+
+    @action(detail=True, methods=['post'], url_path='restaurar_archivado')
+    def restaurar_archivado(self, request, pk=None):
+        """
+        RESTAURAR un ítem desde Archivados a su bandeja de origen
+        (`bandeja_origen`). Observación OPCIONAL (no aplica la regla de
+        comentario obligatorio de papelera — es otro proceso). NO modifica el
+        Documento.
+        """
+        item = self.get_object()
+        try:
+            validar_desarchivado(item)
+            with transaction.atomic():
+                aplicar_desarchivado(item, request.user, request.data.get('observacion', ''))
+        except BandejaAccionError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': f'Documento restaurado a "{item.bandeja}".'})
+
+    @action(detail=False, methods=['post'], url_path='restaurar_archivados')
+    def restaurar_archivados(self, request):
+        """
+        RESTAURAR masivo desde Archivados. Body: {documentos:[ids], observacion?}.
+        Cada documento vuelve a SU propia `bandeja_origen` (el lote puede ser
+        MIXTO recibidos+enviados). TODO-O-NADA. Seguimiento individual por
+        documento; si hay observación, se registra idéntica en cada uno.
+        """
+        ids         = request.data.get('documentos') or []
+        observacion = request.data.get('observacion', '')
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+
+        usuario_bandeja = _resolver_usuario_bandeja(request)
+        items_por_id = {
+            b.documento_id: b for b in BandejaDocumento.objects.filter(
+                documento_id__in=ids, usuario=usuario_bandeja, bandeja='archivados',
+            ).select_related('documento')
+        }
+        validos, errores = [], []
+        for did in ids:
+            item = items_por_id.get(did)
+            if item is None:
+                errores.append({'documento_id': did, 'detalle': 'El documento no está en tu bandeja Archivados.'})
+                continue
+            try:
+                validar_desarchivado(item)
+                validos.append(item)
+            except BandejaAccionError as e:
+                errores.append({'documento_id': did, 'detalle': str(e)})
+        if errores:
+            return Response({
+                'detail': 'Ningún documento fue restaurado: algunos no pueden restaurarse.',
+                'errores': errores,
+            }, status=409)
+
+        destinos = {}
+        with transaction.atomic():
+            for item in validos:
+                destinos[item.documento_id] = item.bandeja_origen
+                aplicar_desarchivado(item, request.user, observacion)
+
+        n = len(validos)
+        return Response({
+            'detail': f'{n} documento{"s" if n != 1 else ""} restaurado{"s" if n != 1 else ""} correctamente.',
+            'restaurados': [i.documento_id for i in validos],
+            'destinos': destinos,
+        })
 
     @action(detail=True, methods=['post'], url_path='comentar')
     def comentar(self, request, pk=None):
         item = self.get_object()
         obs  = request.data.get('comentario', '')
-
-        SeguimientoDocumento.objects.create(
-            documento   = item.documento,
-            etapa       = 'comentado',
-            usuario     = request.user,
-            observacion = obs,
-        )
-        item.accion_tomada = 'comentado'
-        item.save()
+        with transaction.atomic():
+            aplicar_comentario_bandeja(item, request.user, obs)
         return Response({'detail': 'Comentario registrado.'})
+
+    @action(detail=False, methods=['post'], url_path='comentar_lote')
+    def comentar_lote(self, request):
+        """
+        Comentario MASIVO: el MISMO comentario para todos los documentos
+        seleccionados. Body: {documentos: [ids], bandeja, comentario}.
+        Genera un SeguimientoDocumento INDIVIDUAL por documento (nunca un
+        registro grupal — preserva la trazabilidad). TODO-O-NADA.
+        """
+        ids       = request.data.get('documentos') or []
+        bandeja   = request.data.get('bandeja') or 'recibidos'
+        comentario = (request.data.get('comentario') or '').strip()
+
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Debe indicar al menos un documento.'}, status=400)
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        usuario_bandeja = _resolver_usuario_bandeja(request)
+        items_por_id = _items_de_bandeja(usuario_bandeja, ids, bandeja)
+
+        errores = [
+            {'documento_id': did, 'detalle': 'El documento no está en esta bandeja.'}
+            for did in ids if did not in items_por_id
+        ]
+        if errores:
+            return Response({
+                'detail': 'No se registró ningún comentario: algunos documentos no están en esta bandeja.',
+                'errores': errores,
+            }, status=409)
+
+        with transaction.atomic():
+            for did in ids:
+                aplicar_comentario_bandeja(items_por_id[did], request.user, comentario)
+
+        n = len(ids)
+        return Response({
+            'detail': f'Comentario registrado en {n} documento{"s" if n != 1 else ""}.',
+            'comentados': list(ids),
+        })
 
     @action(detail=True, methods=['post'], url_path='nueva_tarea')
     def nueva_tarea(self, request, pk=None):
         item = self.get_object()
-        tarea = Tarea.objects.create(
-            documento      = item.documento,
-            asignada_por   = request.user,
-            asignada_a_id  = request.data.get('usuario_id'),
-            unidad_destino_id = request.data.get('unidad_id'),
-            descripcion    = request.data.get('descripcion', ''),
-            prioridad      = request.data.get('prioridad', 'normal'),
-            fecha_limite   = request.data.get('fecha_limite'),
-        )
-        BandejaDocumento.objects.get_or_create(
-            documento    = item.documento,
-            usuario_id   = request.data.get('usuario_id'),
-            bandeja      = 'tareas_recibidas',
-            defaults={'instrucciones': request.data.get('descripcion', '')},
-        )
-        BandejaDocumento.objects.get_or_create(
-            documento = item.documento,
-            usuario   = request.user,
-            bandeja   = 'tareas_enviadas',
-        )
+        try:
+            with transaction.atomic():
+                tarea = crear_tarea(
+                    documento     = item.documento,
+                    creado_por    = request.user,
+                    asignada_a_id = request.data.get('usuario_id'),
+                    descripcion   = request.data.get('descripcion', ''),
+                    prioridad     = request.data.get('prioridad', 'normal'),
+                    unidad_id     = request.data.get('unidad_id'),
+                    fecha_limite  = request.data.get('fecha_limite'),
+                )
+        except TareaError as e:
+            return Response({'detail': str(e)}, status=e.code)
         return Response({'detail': 'Tarea creada.', 'tarea_id': tarea.id})
 
     @action(detail=True, methods=['post'], url_path='agregar_imprimir')
@@ -831,6 +1589,192 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
             observacion = 'Documento impreso',
         )
         return Response({'detail': 'Marcado como impreso.'})
+
+
+class TareaViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Ciclo de vida de una Tarea (doc_tarea). Opera SOBRE LA TAREA (por su id),
+    NUNCA sobre el estado global del Documento. Un usuario solo ve/actúa sobre
+    tareas donde es `asignada_a` o `asignada_por` (get_object → 404 si no).
+    Filtros: ?documento=<id>  ?rol=recibidas|enviadas
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        from .serializers import TareaSerializer
+        return TareaSerializer
+
+    def get_queryset(self):
+        from django.db.models import Q
+        u = self.request.user
+        qs = Tarea.objects.select_related(
+            'documento__tipo_documento', 'asignada_por', 'asignada_a',
+        ).filter(Q(asignada_a=u) | Q(asignada_por=u))
+        doc = self.request.query_params.get('documento')
+        rol = self.request.query_params.get('rol')
+        if doc:
+            qs = qs.filter(documento_id=doc)
+        if rol == 'recibidas':
+            qs = qs.filter(asignada_a=u)
+        elif rol == 'enviadas':
+            qs = qs.filter(asignada_por=u)
+        return qs.order_by('-creado_en')
+
+    @action(detail=True, methods=['post'])
+    def iniciar(self, request, pk=None):
+        try:
+            with transaction.atomic():
+                iniciar_tarea(self.get_object(), request.user)
+        except TareaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Tarea iniciada.'})
+
+    @action(detail=True, methods=['post'])
+    def completar(self, request, pk=None):
+        try:
+            with transaction.atomic():
+                completar_tarea(self.get_object(), request.user, request.data.get('respuesta', ''))
+        except TareaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Tarea completada.'})
+
+    @action(detail=True, methods=['post'])
+    def cancelar(self, request, pk=None):
+        try:
+            with transaction.atomic():
+                cancelar_tarea(self.get_object(), request.user, request.data.get('motivo', ''))
+        except TareaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Tarea cancelada.'})
+
+
+class CarpetaVirtualViewSet(viewsets.ModelViewSet):
+    """
+    Carpetas Virtuales (F2-F) — CLASIFICACIÓN OPERATIVA por Unidad.
+    NO es bandeja/expediente/archivo. Clasificar no modifica el documento.
+
+    ADMINISTRACIÓN del árbol (crear/renombrar/mover/desactivar/reactivar) =
+    SOLO ADMIN_GENERAL / superusuario (R2). El usuario normal solo CONSULTA
+    su árbol y clasifica documentos (endpoints en DocumentoViewSet).
+
+    - GET  /carpetas/?unidad=<id>[&incluir_inactivas=true]   árbol (plano)
+    - POST /carpetas/  {nombre, padre?, unidad?}             (admin)
+    - PATCH /carpetas/{id}/  {nombre} | {padre}              (admin)
+    - DELETE /carpetas/{id}/            desactivación lógica recursiva (admin)
+    - POST /carpetas/{id}/activar/                           (admin)
+    - GET  /carpetas/{id}/documentos/?incluir_subcarpetas=false
+    - POST /carpetas/{id}/quitar_documento/  {documento_id}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        from .serializers import CarpetaVirtualSerializer
+        return CarpetaVirtualSerializer
+
+    def _unidad_destino(self):
+        uid = self.request.query_params.get('unidad') or self.request.data.get('unidad')
+        if uid:
+            return int(uid)
+        return getattr(self.request.user, 'unidad_id', None)
+
+    def get_queryset(self):
+        from django.db.models import Count
+        from .models import CarpetaVirtual
+        qs = CarpetaVirtual.objects.select_related('unidad').annotate(
+            n_docs=Count('documentos', distinct=True),
+        )
+        vis = unidades_visibles(self.request.user)
+        if vis is not None:
+            qs = qs.filter(unidad_id__in=[u for u in vis if u is not None] or [0])
+        uid = self.request.query_params.get('unidad')
+        if uid:
+            qs = qs.filter(unidad_id=uid)
+        return qs.order_by('nombre')
+
+    def list(self, request, *args, **kwargs):
+        unidad_id = self._unidad_destino()
+        if not unidad_id:
+            return Response({'detail': 'No se pudo determinar la unidad.'}, status=400)
+        incluir_inactivas = str(request.query_params.get('incluir_inactivas', '')).lower() in ('1', 'true', 'si')
+        try:
+            return Response({
+                'unidad': int(unidad_id),
+                'puede_administrar': es_admin_carpetas(request.user),
+                'carpetas': arbol_unidad(request.user, unidad_id, incluir_inactivas=incluir_inactivas),
+            })
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+
+    def create(self, request, *args, **kwargs):
+        unidad_id = self._unidad_destino()
+        if not unidad_id:
+            return Response({'detail': 'No se pudo determinar la unidad.'}, status=400)
+        try:
+            carpeta = crear_carpeta(
+                request.user, unidad_id=unidad_id,
+                nombre=request.data.get('nombre', ''),
+                padre_id=request.data.get('padre'),
+            )
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response(self.get_serializer(carpeta).data, status=201)
+
+    def partial_update(self, request, *args, **kwargs):
+        carpeta = self.get_object()
+        try:
+            if 'padre' in request.data:
+                mover_carpeta(request.user, carpeta, request.data.get('padre'))
+            if 'nombre' in request.data:
+                renombrar_carpeta(request.user, carpeta, request.data.get('nombre', ''))
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        carpeta.refresh_from_db()
+        return Response(self.get_serializer(carpeta).data)
+
+    def update(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """DESACTIVACIÓN LÓGICA recursiva (R4). No borra la fila ni toca
+        documentos / clasificaciones / bandejas."""
+        try:
+            desactivar_carpeta(request.user, self.get_object())
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response(status=204)
+
+    @action(detail=True, methods=['post'])
+    def activar(self, request, pk=None):
+        try:
+            carpeta = activar_carpeta(request.user, self.get_object())
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response(self.get_serializer(carpeta).data)
+
+    @action(detail=True, methods=['get'])
+    def documentos(self, request, pk=None):
+        carpeta = self.get_object()
+        incluir = str(request.query_params.get('incluir_subcarpetas', '')).lower() in ('1', 'true', 'si')
+        try:
+            qs = documentos_de_carpeta(request.user, carpeta, incluir_subcarpetas=incluir)
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        page = self.paginate_queryset(qs)
+        data = DocumentoListSerializer(page if page is not None else qs, many=True).data
+        return self.get_paginated_response(data) if page is not None else Response(data)
+
+    @action(detail=True, methods=['post'], url_path='quitar_documento')
+    def quitar_documento(self, request, pk=None):
+        carpeta = self.get_object()
+        did = request.data.get('documento_id')
+        doc = Documento.objects.filter(pk=did).first()
+        if doc is None:
+            return Response({'detail': 'Documento no encontrado.'}, status=404)
+        try:
+            quitar_de_carpeta(request.user, doc, unidad_id=carpeta.unidad_id)
+        except CarpetaError as e:
+            return Response({'detail': str(e)}, status=e.code)
+        return Response({'detail': 'Documento retirado de la carpeta.'})
 
 
 class EnviarDocumentoView(viewsets.GenericViewSet):
@@ -866,13 +1810,32 @@ class EnviarDocumentoView(viewsets.GenericViewSet):
         numero_referencia       = request.data.get('numero_referencia', '')
 
         try:
-            with transaction.atomic():
+            from contextlib import ExitStack
+            with transaction.atomic(), ExitStack() as _stack:
                 # Este endpoint (usado por "Distribuir") no depende de
                 # destinatarios ya guardados: los recibe en la misma
                 # solicitud. Se valida ANTES de crear nada ni tocar el
                 # estado — una lista vacía nunca debe poder enviar.
                 validar_documento_minimo(doc)
                 internos_validos = validar_lista_destinatarios(destinatarios_internos, destinatarios_externos)
+
+                # NUMERACIÓN — número definitivo (consume secuencia oficial)
+                # solo si ESTA acción oficializa el documento. Idempotente.
+                if doc.estado not in ('enviado', 'recibido', 'archivado', 'firmado'):
+                    from .numeracion import asignar_numero_definitivo
+                    asignar_numero_definitivo(doc)
+
+                # FASE 0A — Congelar el PDF oficial solo cuando ES ESTA acción
+                # la que oficializa el documento (borrador -> enviado). Si el
+                # documento ya estaba enviado/recibido/archivado, es un caso
+                # legacy o una redistribución: no se retro-congela aquí (§9).
+                # `_stack.enter_context(...)` (en vez de un `with` anidado)
+                # asegura que, si algo MÁS ABAJO en este mismo bloque falla
+                # (bandejas, seguimiento), la limpieza del archivo físico
+                # recién escrito se dispare igual (§0A.1 Parte B).
+                from .pdf_oficial import congelar_pdf_oficial_seguro
+                if doc.estado not in ('enviado', 'recibido', 'archivado', 'firmado'):
+                    _stack.enter_context(congelar_pdf_oficial_seguro(doc, request.user, motivo='distribuir'))
 
                 for dest in internos_validos:
                     BandejaDocumento.objects.get_or_create(
@@ -937,6 +1900,8 @@ class EnviarDocumentoView(viewsets.GenericViewSet):
                 )
         except DocumentoInvalidoError as e:
             return Response({'detail': str(e)}, status=400)
+        except NumeracionError as e:
+            return Response({'detail': str(e)}, status=409)
 
         return Response({'detail': f'Documento {doc.numero_documento} enviado correctamente.'})
 
@@ -956,20 +1921,228 @@ class DocumentoPDFView(APIView):
         except Documento.DoesNotExist:
             return Response({'detail': 'Documento no encontrado.'}, status=404)
 
-        html     = html_documento_oficial(doc)
+        # ACL de lectura — servir el PDF de un documento ajeno es una fuga.
+        if not puede_ver_documento(request.user, doc):
+            return Response({'detail': 'No tiene acceso a este documento.'}, status=403)
+
         filename = f'{doc.numero_documento or f"doc_{doc.id}"}.pdf'.replace('/', '-')
-        return generar_pdf(html, filename)
+
+        # FASE 0A — Si el documento tiene un PDF oficial congelado (enviado /
+        # firmado desde FASE 0A, o el PDF firmado de FirmaEC / P12), servir
+        # exactamente esos bytes. Nunca reconstruir desde plantillas.py.
+        from .pdf_oficial import obtener_adjunto_oficial
+        adj = obtener_adjunto_oficial(doc)
+        if adj and adj.archivo:
+            try:
+                with adj.archivo.open('rb') as fh:
+                    data = fh.read()
+                resp = HttpResponse(data, content_type='application/pdf')
+                resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+                resp['X-PDF-Origen'] = 'congelado'
+                return resp
+            except (FileNotFoundError, OSError):
+                # Archivo referenciado pero ausente en MEDIA (p. ej. bind mount
+                # perdido): se cae al render dinámico para no romper la vista.
+                pass
+
+        # Borrador → render dinámico SGDA con marca BORRADOR. Se resuelve ANTES
+        # de cualquier consulta a Quipux (no se toca la base legacy por cada
+        # borrador / documento SGDA nativo).
+        if doc.estado == 'borrador':
+            html = html_documento_oficial(doc, 'preview')      # con marca BORRADOR
+            resp = generar_pdf(html, filename)
+            resp['X-PDF-Origen'] = 'borrador'
+            return resp
+
+        # FASE 0B.1 — Documento histórico QUIPUX: preferir su PDF ORIGINAL
+        # (base documental Quipux) en vez de reconstruirlo con WeasyPrint.
+        # `resolver_radicado_quipux` hace un filtro barato por formato de
+        # numero_documento y solo entonces confirma contra radicado.radi_nume_text.
+        # No se copia nada a MEDIA ni se crea AdjuntoDocumento: es una capa de
+        # compatibilidad de lectura, no la migración documental.
+        try:
+            from apps.quipux.pdf_original import (
+                resolver_radicado_quipux, recuperar_pdf_original, QuipuxNoDisponible,
+            )
+            radicado = resolver_radicado_quipux(doc.numero_documento)
+            if radicado is not None:
+                pdf_bytes = None
+                if radicado['arch_codi'] > 0:
+                    pdf_bytes = recuperar_pdf_original(radicado['arch_codi'])
+                if pdf_bytes:
+                    resp = HttpResponse(pdf_bytes, content_type='application/pdf')
+                    resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+                    resp['X-PDF-Origen'] = 'quipux-original'
+                    return resp
+                # Radicado Quipux CONFIRMADO pero sin PDF original recuperable
+                # (arch_codi=0, o func_recuperar_archivo sin resultado): se
+                # sirve el render dinámico pero SIN llamarlo "original" (§7).
+                html = html_documento_oficial(doc, 'final')    # doc ya oficial → sin BORRADOR
+                resp = generar_pdf(html, filename)
+                resp['X-PDF-Origen'] = 'reconstruido-legacy'
+                return resp
+        except QuipuxNoDisponible as e:
+            # §9 — infra legacy caída: NO 500. Se degrada al fallback dinámico
+            # de abajo, dejando rastro para no ocultar el problema de infra.
+            import logging
+            logging.getLogger(__name__).warning(
+                'FASE 0B.1: base Quipux no disponible al resolver PDF de Documento %s (%s): %s',
+                doc.id, doc.numero_documento, e,
+            )
+
+        # Documento SGDA histórico enviado ANTES de FASE 0A y sin PDF congelado
+        # (los 16 nativos), o QUIPUX que no se pudo resolver por infra caída →
+        # render dinámico TEMPORAL. No se persiste. `doc.estado` no es
+        # 'borrador' aquí → 'final' (sin BORRADOR).
+        html = html_documento_oficial(doc, 'final')
+        resp = generar_pdf(html, filename)
+        resp['X-PDF-Origen'] = 'dinamico-legacy'
+        return resp
+
+
+# ─────────────────────────────────────────────────────────
+# Numeración documental configurable por Unidad × TipoDocumento  (Etapa 2 — API)
+# Permiso: módulo 'ajustes' (solo ADMIN_GENERAL / superusuario).
+# ─────────────────────────────────────────────────────────
+class _NumeracionBaseView(APIView):
+    permission_classes = [IsAuthenticated]
+    accion_requerida   = 'editar'
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        from apps.usuarios.permisos import tiene_permiso
+        if not tiene_permiso(request.user, 'ajustes', self.accion_requerida):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Requiere permiso de administración de ajustes.')
+
+    def get_unidad(self, unidad_id):
+        from apps.organizacion.models import Unidad
+        return Unidad.objects.filter(pk=unidad_id).first()
+
+    def get_tipo(self, tipo_id):
+        return TipoDocumento.objects.filter(pk=tipo_id).first()
+
+
+class NumeracionUnidadView(_NumeracionBaseView):
+    """GET — tabla §22: config + secuencia actual + próximo número por tipo."""
+    accion_requerida = 'ver'
+
+    def get(self, request, unidad_id):
+        from .numeracion import resumen_unidad
+        unidad = self.get_unidad(unidad_id)
+        if not unidad:
+            return Response({'detail': 'Unidad no encontrada.'}, status=404)
+        return Response({
+            'unidad':  {'id': unidad.id, 'siglas': unidad.siglas, 'nombre': unidad.nombre},
+            'tipos':   resumen_unidad(unidad),
+        })
+
+
+class NumeracionConfigView(_NumeracionBaseView):
+    """PUT — crea/actualiza la ConfiguracionNumeracion de (unidad, tipo)."""
+
+    def put(self, request, unidad_id, tipo_id):
+        from .models import ConfiguracionNumeracion
+        from .serializers import ConfiguracionNumeracionSerializer
+        unidad, tipo = self.get_unidad(unidad_id), self.get_tipo(tipo_id)
+        if not unidad or not tipo:
+            return Response({'detail': 'Unidad o tipo no encontrado.'}, status=404)
+
+        instancia = ConfiguracionNumeracion.objects.filter(unidad=unidad, tipo_documento=tipo).first()
+        ser = ConfiguracionNumeracionSerializer(instancia, data=request.data, partial=bool(instancia))
+        ser.is_valid(raise_exception=True)
+        obj = ser.save(
+            unidad=unidad, tipo_documento=tipo,
+            modificado_por=request.user,
+            **({} if instancia else {'creado_por': request.user}),
+        )
+        return Response(ConfiguracionNumeracionSerializer(obj).data)
+
+
+class NumeracionPreviewView(_NumeracionBaseView):
+    """POST {overrides} — próximo número con la config indicada, SIN consumir."""
+
+    def post(self, request, unidad_id, tipo_id):
+        from .numeracion import cfg_efectiva, preview_siguiente, validar_config, NumeracionError
+        unidad, tipo = self.get_unidad(unidad_id), self.get_tipo(tipo_id)
+        if not unidad or not tipo:
+            return Response({'detail': 'Unidad o tipo no encontrado.'}, status=404)
+        cfg = cfg_efectiva(unidad, tipo, override=request.data or None)
+        try:
+            validar_config(estructura=cfg.estructura, separador=cfg.separador,
+                           digitos_anio=cfg.digitos_anio, digitos_secuencia=cfg.digitos_secuencia)
+        except NumeracionError as e:
+            return Response({'detail': str(e)}, status=400)
+        return Response({'preview': preview_siguiente(unidad, tipo, cfg_override=cfg)})
+
+
+class NumeracionAjustarSecuenciaView(_NumeracionBaseView):
+    """POST {nueva_secuencia, motivo} — fija ultimo_numero (§16/§17), auditado."""
+
+    def post(self, request, unidad_id, tipo_id):
+        from .numeracion import ajustar_secuencia, preview_siguiente, NumeracionError
+        unidad, tipo = self.get_unidad(unidad_id), self.get_tipo(tipo_id)
+        if not unidad or not tipo:
+            return Response({'detail': 'Unidad o tipo no encontrado.'}, status=404)
+        try:
+            nueva = int(request.data.get('nueva_secuencia'))
+        except (TypeError, ValueError):
+            return Response({'detail': 'nueva_secuencia debe ser un entero.'}, status=400)
+        try:
+            seq = ajustar_secuencia(
+                unidad, tipo,
+                nueva_secuencia=nueva,
+                motivo=request.data.get('motivo', ''),
+                usuario=request.user,
+            )
+        except NumeracionError as e:
+            return Response({'detail': str(e)}, status=400)
+        return Response({
+            'secuencia_actual': seq.ultimo_numero,
+            'proximo_numero':   preview_siguiente(unidad, tipo),
+        })
+
+
+class NumeracionCopiarView(_NumeracionBaseView):
+    """POST {unidad_origen_id} — copia el FORMATO de otra unidad (§14/§15:
+    NO copia la secuencia)."""
+
+    def post(self, request, unidad_id):
+        from .numeracion import copiar_config, resumen_unidad, NumeracionError
+        destino = self.get_unidad(unidad_id)
+        origen  = self.get_unidad(request.data.get('unidad_origen_id'))
+        if not destino or not origen:
+            return Response({'detail': 'Unidad no encontrada.'}, status=404)
+        try:
+            n = copiar_config(destino, origen, usuario=request.user)
+        except NumeracionError as e:
+            return Response({'detail': str(e)}, status=400)
+        return Response({
+            'copiadas': n,
+            'detail': f'Se copiaron {n} configuración(es) de {origen.siglas}. '
+                      f'Las secuencias de {destino.siglas} NO se modificaron.',
+            'tipos': resumen_unidad(destino),
+        })
+
 
 class AdjuntoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     parser_classes     = [MultiPartParser, FormParser]
 
     def get_queryset(self):
+        from django.db.models import Q
         qs = AdjuntoDocumento.objects.select_related('subido_por')
         doc_id     = self.request.query_params.get('documento')
         tramite_id = self.request.query_params.get('tramite')
         if doc_id:     qs = qs.filter(documento_id=doc_id)
         if tramite_id: qs = qs.filter(tramite_id=tramite_id)
+        # ACL de lectura: solo anexos de documentos que el usuario puede ver
+        # (los anexos de trámites siguen su propia lógica y no se filtran aquí).
+        if not _es_admin_bandeja(self.request.user):
+            qs = qs.filter(
+                Q(documento__isnull=True)
+                | Q(documento__in=documentos_visibles_para(self.request.user, False))
+            )
         return qs
 
     def get_serializer_class(self):
@@ -1294,11 +2467,23 @@ class GenerarTokenFirmaECView(APIView):
             return Response({'error': 'Documento no encontrado.'}, status=404)
         if not _puede_firmar_documento(request.user, doc):
             return Response({'error': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
+        try:
+            validar_documento_enviable(doc)   # no se inicia la firma de un documento sin "Para"
+        except DocumentoInvalidoError as e:
+            return Response({'error': str(e)}, status=400)
         cedula = getattr(request.user, 'cedula', '') or str(request.user.id)
 
-        # 1. Generar PDF limpio (sin /ObjStm); pre_firma=True incluye la leyenda
-        #    "Documento firmado electrónicamente" antes de que FirmaEC lo firme
-        html      = html_documento_oficial(doc, pre_firma=True)
+        # NUMERACIÓN — el PDF que se manda a firmar debe llevar ya el número
+        # DEFINITIVO (no el provisional "…-TEMP"). Se consume la secuencia
+        # oficial aquí. Idempotente si ya era definitivo.
+        from .numeracion import asignar_numero_definitivo
+        with transaction.atomic():
+            asignar_numero_definitivo(doc)
+
+        # 1. Generar PDF limpio (sin /ObjStm); modo 'pre_firma': SIN marca
+        #    BORRADOR + con la leyenda "Documento firmado electrónicamente"
+        #    antes de que FirmaEC lo firme.
+        html      = html_documento_oficial(doc, 'pre_firma')
         pdf_bytes = _pdf_limpio(_generar_pdf(html, f'doc_{doc.id}.pdf').content)
         pdf_b64   = base64.b64encode(pdf_bytes).decode('utf-8')
         nombre    = f'doc_{doc.id}.pdf'
@@ -1422,6 +2607,7 @@ class FirmaECCallbackView(APIView):
         doc.archivos_adjuntos.filter(tipo='documento').delete()
 
         nombre_archivo = f'{doc.numero_documento or f"doc_{doc.id}"}_firmado_firmaec.pdf'
+        import hashlib as _hashlib
         adjunto = AdjuntoDocumento(
             documento  = doc,
             nombre     = nombre_archivo,
@@ -1430,8 +2616,11 @@ class FirmaECCallbackView(APIView):
             tamanio    = len(pdf_bytes),
             subido_por = usuario,
             origen_digitalizacion = 'nativo_digital',
+            # FASE 0A — hash del PDF realmente firmado, para verificar
+            # almacenado == servido (misma columna que el resto de adjuntos).
+            hash_integridad = _hashlib.sha256(pdf_bytes).hexdigest(),
         )
-        adjunto.archivo.save(nombre_archivo, ContentFile(pdf_bytes))
+        adjunto.archivo.save(nombre_archivo, ContentFile(pdf_bytes), save=False)
         adjunto.save()
 
         doc.estado      = 'firmado'
@@ -1473,6 +2662,10 @@ class FirmaFisicaView(APIView):
         doc = get_object_or_404(Documento, pk=pk)
         if not _puede_firmar_documento(request.user, doc):
             return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
+        try:
+            validar_documento_enviable(doc)   # no se firma un documento sin "Para"
+        except DocumentoInvalidoError as e:
+            return Response({'detail': str(e)}, status=400)
         observacion = request.data.get('observacion', 'Firma física manuscrita')
 
         doc.estado     = 'firmado'
@@ -1485,7 +2678,16 @@ class FirmaFisicaView(APIView):
             'fecha_firma': timezone.now().isoformat(),
             'observacion': observacion,
         }
-        doc.save(update_fields=['estado', 'fecha_firma', 'firmado_por', 'firma_bce_info'])
+        # FASE 0A — La firma física oficializa el documento pero no genera
+        # ningún PDF por sí sola. Se congela el render actual (con la leyenda
+        # de firma ya presente) como artefacto oficial, dentro de la misma
+        # transacción que el cambio de estado.
+        from .pdf_oficial import congelar_pdf_oficial
+        from .numeracion import asignar_numero_definitivo
+        with transaction.atomic():
+            asignar_numero_definitivo(doc)
+            doc.save(update_fields=['estado', 'fecha_firma', 'firmado_por', 'firma_bce_info'])
+            congelar_pdf_oficial(doc, request.user, motivo='firma_fisica')
 
         SeguimientoDocumento.objects.create(
             documento   = doc,

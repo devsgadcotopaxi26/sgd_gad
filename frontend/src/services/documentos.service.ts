@@ -46,6 +46,11 @@ export interface SeguimientoItem {
   unidad_siglas: string | null
   observacion: string
   creado_en: string
+  // Presente solo en eventos de ciclo de vida de tarea (etapa 'tarea_*'):
+  // identifica INEQUÍVOCAMENTE qué Tarea originó el evento.
+  tarea?: number | null
+  tarea_descripcion?: string | null
+  tarea_estado?: string | null
 }
 
 export interface DestinatarioItem {
@@ -93,8 +98,22 @@ export interface CrearDocumento {
   requiere_respuesta?: boolean
   fecha_limite_resp?: string
   destinatarios_ids?: number[]
+  // Destinatarios "Con copia" (Destinatario.tipo='copia' en el backend).
+  copia_ids?: number[]
   palabras_clave?: string[]
   remitente_id?: number | null
+}
+
+export interface DocumentoAsociado {
+  id: number
+  es_actual?: boolean
+  /** true = el usuario no tiene acceso a este documento; no trae metadatos. */
+  restringido?: boolean
+  numero_documento?: string | null
+  tipo?: string | null
+  asunto?: string
+  fecha?: string
+  estado?: string
 }
 
 export const documentosService = {
@@ -127,6 +146,26 @@ export const documentosService = {
 
   nuevaVersion: (id: number, cuerpo: string, comentario: string) =>
     api.post(`/documentos/${id}/nueva_version/`, { cuerpo, comentario }).then(r => r.data),
+
+  // ── Documentos asociados (antecedente ↔ consecuente) ──
+  responder: (id: number, data: { asunto?: string; tipo_documento_id?: number; cuerpo?: string; a_todos?: boolean }) =>
+    api.post<{ detail: string; documento_id: number; numero: string | null; sin_destinatario_auto: boolean }>(
+      `/documentos/${id}/responder/`, data,
+    ).then(r => r.data),
+
+  asociar: (id: number, antecedente_id: number, observacion?: string) =>
+    api.post(`/documentos/${id}/asociar/`, { antecedente_id, observacion }).then(r => r.data),
+
+  desasociar: (id: number, observacion?: string) =>
+    api.post(`/documentos/${id}/desasociar/`, { observacion }).then(r => r.data),
+
+  asociados: (id: number) =>
+    api.get<{ cadena: DocumentoAsociado[]; consecuentes: DocumentoAsociado[] }>(
+      `/documentos/${id}/asociados/`,
+    ).then(r => r.data),
+
+  asociables: (q: string, excluir: number) =>
+    api.get<DocumentoAsociado[]>('/documentos/asociables/', { params: { q, excluir } }).then(r => r.data),
 
   tipos: () =>
     api.get<{ results: TipoDocumento[] }>('/documentos/tipos/').then(r => r.data.results),

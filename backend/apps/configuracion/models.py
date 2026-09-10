@@ -17,6 +17,9 @@ class ConfiguracionSistema(models.Model):
     # Configuración de documentos
     numeracion_por_anio  = models.BooleanField(default=True, help_text='Reinicia numeración cada año')
     formato_numero       = models.CharField(max_length=50, default='{PREFIJO}-{NUM}-{SIGLAS}-{ANIO}', help_text='Formato del número de documento')
+    abreviatura_institucion = models.CharField(
+        max_length=12, default='GADPC',
+        help_text='Código corto de la institución para la numeración documental (token "institucion", p. ej. GADPC-DA-2026-0455-C)')
     dias_alerta_vencimiento = models.SmallIntegerField(default=3, help_text='Días antes del vencimiento para alertar')
 
     # Configuración SMTP (override del .env, opcional)

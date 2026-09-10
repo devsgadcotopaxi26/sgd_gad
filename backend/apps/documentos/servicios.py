@@ -17,7 +17,21 @@ def validar_documento_minimo(doc):
 
 
 def tiene_destinatario_valido(doc):
-    return doc.destinatarios.filter(usuario__isnull=False).exists()
+    """>=1 destinatario PRINCIPAL ("Para") interno con usuario. Un documento de
+    copia/conocimiento sin ningún "Para" no es un envío válido."""
+    return doc.destinatarios.filter(usuario__isnull=False, tipo='principal').exists()
+
+
+def validar_documento_enviable(doc):
+    """
+    Reglas mínimas para OFICIALIZAR un documento (enviar O firmar): tipo,
+    asunto y al menos un destinatario PRINCIPAL. Punto ÚNICO — invocado por
+    `enviar`, firma física, firma electrónica y `cambiar_estado` →
+    enviado/firmado. Ningún endpoint debe poder oficializar sin "Para".
+    """
+    validar_documento_minimo(doc)
+    if not tiene_destinatario_valido(doc):
+        raise DocumentoInvalidoError('Seleccione al menos un destinatario (Para).')
 
 
 def marcar_documento_enviado(doc):
@@ -30,9 +44,7 @@ def marcar_documento_enviado(doc):
     """
     if doc.estado == 'enviado':
         raise DocumentoInvalidoError('El documento ya fue enviado.')
-    validar_documento_minimo(doc)
-    if not tiene_destinatario_valido(doc):
-        raise DocumentoInvalidoError('Seleccione al menos un destinatario.')
+    validar_documento_enviable(doc)
     doc.estado = 'enviado'
     doc.fecha_envio = timezone.now()
     doc.save(update_fields=['estado', 'fecha_envio'])

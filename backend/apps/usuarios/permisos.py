@@ -1,5 +1,13 @@
 """
 Sistema de permisos por rol para el SGD GAD Cotopaxi
+
+Nota F2-F (Carpetas Virtuales): la ADMINISTRACIÓN del árbol de carpetas
+virtuales (crear/renombrar/mover/desactivar/reactivar) está hoy restringida a
+ADMIN_GENERAL / superusuario en `apps.documentos.servicios_carpeta`
+(`es_admin_carpetas`), sin usar este catálogo. En el futuro podría añadirse
+un rol `GESTOR_CARPETAS_VIRTUALES` o un módulo `carpetas` con acciones
+['ver','clasificar','administrar']; por ahora NO se crea. El usuario normal
+solo consulta el árbol de su unidad y clasifica documentos.
 """
 
 # El módulo 'tramites' tiene una estructura especial: canal -> acciones,
@@ -151,3 +159,58 @@ class PermisoSGD:
             raise PermissionDenied(
                 f'No tienes permiso para {self.accion} en {self.modulo}.'
             )
+
+
+# ── Permiso DRF por MÓDULO para ViewSets (F3-A) ────────────────────────────
+from rest_framework.permissions import BasePermission
+
+
+class PermisoModulo(BasePermission):
+    """
+    Autorización por MÓDULO del catálogo central `PERMISOS_ROL`, para ViewSets
+    (y APIViews) de DRF. NO es un segundo sistema de permisos: solo adapta la
+    acción DRF al verbo del catálogo y delega en `tiene_permiso()`
+    (que ya incluye el bypass de superusuario).
+
+    Uso en la vista:
+        permission_classes = [IsAuthenticated, PermisoModulo]
+        modulo_permiso     = 'archivo'
+        # opcional, para @action personalizadas:
+        acciones_permiso   = {'agregar_documento': 'editar', 'transferir': 'transferir'}
+
+    Mapeo por defecto de la acción del ViewSet → verbo:
+        list/retrieve/metadata            → 'ver'
+        create                            → 'crear'
+        update/partial_update             → 'editar'
+        destroy                           → 'eliminar'
+        (@action no mapeada)              → 'ver' si es GET, 'editar' en otro caso
+    Una vista sin `modulo_permiso` no es afectada (devuelve True).
+    """
+
+    message = 'No tiene permiso para acceder a este módulo.'
+
+    _MAP_ACCION = {
+        'list': 'ver', 'retrieve': 'ver', 'metadata': 'ver',
+        'create': 'crear',
+        'update': 'editar', 'partial_update': 'editar',
+        'destroy': 'eliminar',
+    }
+    _METODOS_LECTURA = {'GET', 'HEAD', 'OPTIONS'}
+
+    def _verbo(self, request, view):
+        accion = getattr(view, 'action', None)
+        overrides = getattr(view, 'acciones_permiso', {}) or {}
+        if accion in overrides:
+            return overrides[accion]
+        if accion in self._MAP_ACCION:
+            return self._MAP_ACCION[accion]
+        # @action personalizada sin override, o APIView: decidir por método.
+        return 'ver' if request.method in self._METODOS_LECTURA else 'editar'
+
+    def has_permission(self, request, view):
+        modulo = getattr(view, 'modulo_permiso', None)
+        if not modulo:
+            return True
+        if not (request.user and request.user.is_authenticated):
+            return False  # → 401 (DRF: no autenticado)
+        return tiene_permiso(request.user, modulo, self._verbo(request, view))

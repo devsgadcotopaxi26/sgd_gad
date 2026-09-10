@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -187,7 +187,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
           unidad_nombre: d.unidad_nombre,
           unidad_siglas: d.unidad_siglas,
           unidad_id: d.unidad ?? null,
-          rol: 'para',
+          rol: d.tipo === 'copia' ? 'copia' : 'para',
         });
       }
     }
@@ -247,15 +247,24 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
     setSelectorModo(null);
   };
   const aplicarDestinatarios = (arr: PersonaDocumento[]) => {
+    // El modal entrega cada persona con su rol ya fijado ('para' | 'copia').
+    // Se reemplazan ambos grupos de una sola vez; el remitente ('de') no se toca.
     setPersonas(prev => [
-      ...prev.filter(x => x.rol !== 'para'),
-      ...arr.map(p => ({ ...p, rol: 'para' as const })),
+      ...prev.filter(x => x.rol === 'de'),
+      ...arr.map(p => ({ ...p, rol: p.rol === 'copia' ? ('copia' as const) : ('para' as const) })),
     ]);
     setSelectorModo(null);
   };
 
-  const personasDe    = personas.filter(p => p.rol === 'de');
-  const personasPara  = personas.filter(p => p.rol === 'para');
+  // Derivados de `personas` — memoizados para conservar la MISMA referencia
+  // entre renders mientras `personas` no cambie. Son dependencias de varios
+  // useEffect (limpieza de campo inválido, preselección de tipo, sugerencia
+  // Oficio→Memorando); si se recrearan en cada render, esos efectos se
+  // re-ejecutarían indefinidamente (el de sugerencia llegaba a hacer
+  // setSugerenciaTipo({...}) en bucle → "Maximum update depth exceeded").
+  const personasDe    = useMemo(() => personas.filter(p => p.rol === 'de'),    [personas]);
+  const personasPara  = useMemo(() => personas.filter(p => p.rol === 'para'),  [personas]);
+  const personasCopia = useMemo(() => personas.filter(p => p.rol === 'copia'), [personas]);
   // Si el DE es otra persona, el documento se guarda como borrador en SU bandeja.
   // El usuario actual no puede firmar ni enviar en nombre de otro.
   const esYoElRemitente = personasDe.length === 0 || (perfil != null && personasDe[0]?.id === perfil.id);
@@ -350,9 +359,14 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
 
     if (tipoSugerenciaDescartadaRef.current === tipoActual.id) return;
 
-    setSugerenciaTipo({
-      tipoActualId: tipoActual.id, tipoActualNombre: tipoActual.nombre,
-      tipoSugeridoId: memo.id, tipoSugeridoNombre: memo.nombre,
+    // No recrear el objeto si ya se sugiere exactamente lo mismo: si este
+    // efecto se re-ejecuta por otra causa, no debe disparar un render nuevo.
+    setSugerenciaTipo(prev => {
+      if (prev && prev.tipoActualId === tipoActual.id && prev.tipoSugeridoId === memo.id) return prev;
+      return {
+        tipoActualId: tipoActual.id, tipoActualNombre: tipoActual.nombre,
+        tipoSugeridoId: memo.id, tipoSugeridoNombre: memo.nombre,
+      };
     });
   }, [personasPara, form.tipo_documento, tipos]);
 
@@ -412,6 +426,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
         onEnviado ? onEnviado(doc.id) : onClose();
       } catch (e: any) {
         setError(e.response?.data?.detail || 'El borrador se guardó, pero no se pudo enviar. Intente nuevamente.');
+        setEnviando(false);
       }
     } else if (accionPostGuardar === 'reasignar') {
       const remitente = personasDe[0];
@@ -445,8 +460,10 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
       onGuardado ? onGuardado(doc) : onClose();
     }
   };
-  const onGuardadoError = (e: any) =>
+  const onGuardadoError = (e: any) => {
+    setEnviando(false);
     setError(Object.values(e.response?.data ?? {}).flat().join(' ') || 'Error al guardar el documento');
+  };
 
   const mutation = useMutation({
     mutationFn: (data: CrearDocumento) => documentosService.crear(data),
@@ -503,6 +520,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
     const personaDe = personas.find(p => p.rol === 'de')!;
     const unidadOrigen = personaDe.unidad_id || perfil?.unidad_id!;
     const destinatariosIds = personasPara.map(p => p.id);
+    const copiaIds = personasCopia.map(p => p.id);
     const remitente_id = (perfil && personaDe.id !== perfil.id) ? personaDe.id : null;
     return {
       ...form,
@@ -511,6 +529,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
       unidad_origen: unidadOrigen,
       unidad_destino: personasPara[0]?.unidad_id || undefined,
       destinatarios_ids: destinatariosIds,
+      copia_ids: copiaIds,
       cuerpo,
       palabras_clave: [],
       remitente_id,
@@ -523,6 +542,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
   // guardarse de nuevo — a partir de ahí ya es "actualizar", igual que un
   // documento abierto desde En elaboración.
   const handleGuardar = () => {
+    if (isPending || enviando) return;
     if (!validarDocumentoMinimo()) return;
     setAccionPostGuardar('borrador');
     if (docGuardado) actualizarMutation.mutate(buildPayload());
@@ -530,6 +550,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
   };
 
   const handleGuardarYReasignar = () => {
+    if (isPending || enviando) return;
     if (!validarDocumentoMinimo()) return;
     setAccionPostGuardar('reasignar');
     // Igual que handleGuardar: si el documento ya existe (p. ej. se abrió
@@ -540,22 +561,20 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
     else mutation.mutate(buildPayload());
   };
 
-  // Documento ya constituido (En elaboración) → enviar directo, sin volver
-  // a guardar. Se revalida igual: un borrador guardado no garantiza que
-  // siga siendo válido si se editó algo después sin guardar.
-  const handleEnviarDirecto = async () => {
-    if (!docGuardado || enviando) return;
+  // Documento ya constituido (En elaboración) → "Enviar sin firma".
+  // PRIMERO persiste el estado actual del formulario (mismo mecanismo que
+  // Guardar: create/update) y SOLO SI el guardado tuvo éxito encadena el
+  // POST /enviar/ (en onGuardadoExito, rama 'enviar'). Antes enviaba directo
+  // sin guardar: los destinatarios recién agregados en el editor nunca
+  // llegaban a la BD y el backend respondía 400 "Seleccione al menos un
+  // destinatario". Un clic ⇒ exactamente 1 guardado + 1 POST /enviar/.
+  const handleEnviarDirecto = () => {
+    if (enviando || isPending) return;
     if (!validarDocumentoMinimo()) return;
     setEnviando(true);
-    try {
-      await documentosService.enviar(docGuardado.id);
-      qc.invalidateQueries({ queryKey: ['bandeja'] });
-      qc.invalidateQueries({ queryKey: ['bandeja-conteos'] });
-      onEnviado ? onEnviado(docGuardado.id) : onClose();
-    } catch (e: any) {
-      setError(e.response?.data?.detail || 'Error al enviar el documento');
-      setEnviando(false);
-    }
+    setAccionPostGuardar('enviar');
+    if (docGuardado) actualizarMutation.mutate(buildPayload());
+    else mutation.mutate(buildPayload());
   };
 
   // Vista previa (comportamiento Quipux): valida, y luego guarda/actualiza
@@ -563,13 +582,24 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
   // el PDF siempre refleja lo que hay en el editor, nunca una versión
   // vieja ni una simulación aparte. Nunca envía. Si el guardado falla,
   // onGuardadoError ya deja el mensaje en `error` y jamás se llega a abrir.
-  const handleToggleVistaPrevia = () => {
-    if (vistaPrevia) { setVistaPrevia(false); return; }
+  // NO es un toggle: siempre ABRE el modal (cerrar es con X / "Volver a
+  // editar" / ESC dentro del modal).
+  const handleAbrirVistaPrevia = () => {
+    if (vistaPrevia || isPending || enviando) return;
     if (!validarDocumentoMinimo()) return;
     setAccionPostGuardar('vista_previa');
     if (docGuardado) actualizarMutation.mutate(buildPayload());
     else mutation.mutate(buildPayload());
   };
+  const cerrarVistaPrevia = () => setVistaPrevia(false);
+
+  // ESC cierra el modal de vista previa (y solo eso — nunca el editor).
+  useEffect(() => {
+    if (!vistaPrevia) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setVistaPrevia(false); } };
+    window.addEventListener('keydown', h, true);
+    return () => window.removeEventListener('keydown', h, true);
+  }, [vistaPrevia]);
 
   // ========================
   // RENDER
@@ -596,28 +626,22 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={handleToggleVistaPrevia}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${vistaPrevia ? 'bg-blue-50 border-blue-200 text-[#002f6c]' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+              onClick={handleAbrirVistaPrevia}
+              disabled={isPending && accionPostGuardar === 'vista_previa'}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors bg-white border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
             >
-              <Eye size={14} /> Vista previa
+              <Eye size={14} /> {isPending && accionPostGuardar === 'vista_previa' ? 'Generando…' : 'Vista previa'}
             </button>
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500" title="Cerrar el documento">
               <X size={16} />
             </button>
           </div>
         </div>
 
-        {/* ===== CONTENT ===== */}
+        {/* ===== CONTENT — el formulario SIEMPRE montado; la vista previa es
+             un modal por encima (no sustituye el editor) ===== */}
         <div className="flex-1 min-h-0 overflow-hidden">
-          {vistaPrevia ? (
-            /* ---------- VISTA PREVIA ----------
-               handleToggleVistaPrevia siempre valida y guarda/actualiza
-               ANTES de poner vistaPrevia=true, así que al llegar aquí
-               docGuardado ya existe: un solo camino (PDF real del backend,
-               generado desde lo que se acaba de persistir), sin simulación
-               HTML aparte ni placeholders. */
-            docGuardado && <PdfPreview docId={docGuardado.id} />
-          ) : (
+          {(
             /* ---------- FORMULARIO - 2 COLUMNAS ---------- */
             <div className="h-full flex">
 
@@ -729,9 +753,11 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
                       }`}
                     >
                       <Users size={14} />
-                      {personasPara.length === 0
+                      {personasPara.length === 0 && personasCopia.length === 0
                         ? 'Seleccionar destinatarios'
-                        : `Editar destinatarios (${personasPara.length})`}
+                        : `Editar destinatarios (${personasPara.length}`
+                          + (personasCopia.length ? ` + ${personasCopia.length} copia` : '')
+                          + ')'}
                     </button>
                   </div>
 
@@ -800,6 +826,33 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
                         </div>
                       )}
                     </div>
+
+                    {/* Con copia — destinatarios tipo copia (opcional) */}
+                    {personasCopia.length > 0 && (
+                      <div className="mt-3">
+                        <span className="text-[10px] font-bold uppercase tracking-wider block mb-1" style={{ color: '#b45309' }}>Con copia</span>
+                        <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
+                          {personasCopia.map(p => (
+                            <div key={`copia-${p.id}`} className="flex items-center gap-2 px-3 py-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-semibold text-gray-900 truncate" title={p.nombre_completo}>{p.nombre_completo}</p>
+                                <p className="text-[10px] text-gray-500 truncate">
+                                  {p.cargo || '—'}{p.unidad_siglas ? ` · ${p.unidad_siglas}` : ''}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => eliminarPersona(p.id, 'copia')}
+                                className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors flex-shrink-0"
+                                title="Quitar copia"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Checkboxes */}
@@ -845,6 +898,46 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
           )}
         </div>
 
+        {/* ===== MODAL VISTA PREVIA (por encima del editor, que sigue montado) ===== */}
+        {vistaPrevia && docGuardado && (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-6"
+            style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(3px)' }}
+          >
+            <div
+              className="bg-white rounded-2xl shadow-2xl flex flex-col w-[92vw] max-w-[1100px] h-[92vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-shrink-0">
+                <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
+                  <Eye size={15} className="text-[#002f6c]" /> Vista previa del documento
+                </h3>
+                <button
+                  onClick={cerrarVistaPrevia}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"
+                  title="Volver a editar"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <PdfPreview docId={docGuardado.id} />
+              </div>
+              <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 flex-shrink-0">
+                <p className="text-xs text-gray-400">
+                  Previsualización del estado actual (marca <strong>BORRADOR</strong>). No modifica el documento.
+                </p>
+                <button
+                  onClick={cerrarVistaPrevia}
+                  className="px-4 py-2 text-sm font-bold text-white bg-[#002f6c] rounded-xl hover:bg-[#002f6c]/90 transition-colors"
+                >
+                  Volver a editar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ===== FOOTER ===== */}
         <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100 bg-white flex-shrink-0">
           <p className="text-xs text-gray-400">
@@ -883,7 +976,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
                   <>
                     <button
                       onClick={handleGuardar}
-                      disabled={isPending}
+                      disabled={isPending || enviando}
                       title="Guarda los cambios sin enviar"
                       className="px-4 py-2.5 text-sm font-bold text-[#002f6c] border border-[#002f6c] rounded-xl hover:bg-blue-50 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
@@ -896,20 +989,21 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
                     </button>
                     <button
                       onClick={handleEnviarDirecto}
-                      disabled={enviando}
-                      title="Envía el documento sin firma electrónica"
+                      disabled={enviando || isPending}
+                      title="Guarda los cambios y envía el documento sin firma electrónica"
                       className="px-4 py-2.5 text-sm font-bold text-white bg-[#0f6e56] rounded-xl hover:bg-[#0f6e56]/90 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {enviando ? (
+                      {enviando || (isPending && accionPostGuardar === 'enviar') ? (
                         <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                       ) : (
                         <Send size={15} />
                       )}
-                      Enviar sin firma
+                      {enviando || (isPending && accionPostGuardar === 'enviar') ? 'Enviando…' : 'Enviar sin firma'}
                     </button>
                     <button
                       onClick={() => setDocParaFirmar(docGuardado)}
-                      className="px-5 py-2.5 text-sm font-bold text-white bg-[#002f6c] rounded-xl hover:bg-[#002f6c]/90 transition-colors flex items-center gap-2"
+                      disabled={enviando || isPending}
+                      className="px-5 py-2.5 text-sm font-bold text-white bg-[#002f6c] rounded-xl hover:bg-[#002f6c]/90 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Signature size={16} />
                       Firmar y Enviar
@@ -982,7 +1076,7 @@ export default function EditorDocumento({ onClose, onEnviado, onReasignado, onGu
         {selectorModo && (
           <SelectorPersonasModal
             modo={selectorModo}
-            seleccionActual={selectorModo === 'remitente' ? personasDe : personasPara}
+            seleccionActual={selectorModo === 'remitente' ? personasDe : [...personasPara, ...personasCopia]}
             onAceptar={selectorModo === 'remitente' ? aplicarRemitente : aplicarDestinatarios}
             onCancelar={() => setSelectorModo(null)}
           />

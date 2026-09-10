@@ -5,8 +5,52 @@ from .models import (
     BandejaDocumento, SeguimientoDocumento,
     Tarea, DestinatarioExterno, AdjuntoDocumento,
     ListaDistribucion, ListaDistribucionMiembro,
+    ConfiguracionNumeracion, CarpetaVirtual,
 )
 from apps.usuarios.serializers import UsuarioResumenSerializer
+
+
+class CarpetaVirtualSerializer(serializers.ModelSerializer):
+    ruta          = serializers.SerializerMethodField()
+    n_docs        = serializers.IntegerField(read_only=True)
+    unidad_siglas = serializers.CharField(source='unidad.siglas', read_only=True)
+
+    class Meta:
+        model  = CarpetaVirtual
+        fields = ['id', 'unidad', 'unidad_siglas', 'nombre', 'ruta', 'padre',
+                  'activa', 'n_docs', 'creado_en', 'actualizado_en']
+        read_only_fields = ['id', 'unidad', 'creado_en', 'actualizado_en']
+
+    def get_ruta(self, obj):
+        return obj.ruta()
+
+
+class ConfiguracionNumeracionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = ConfiguracionNumeracion
+        fields = ['abreviatura', 'separador', 'digitos_anio',
+                  'digitos_secuencia', 'estructura', 'activo']
+
+    def validate(self, data):
+        from .numeracion import validar_config, NumeracionError, ESTRUCTURA_DEFAULT
+
+        def g(k, d):
+            if k in data:
+                return data[k]
+            if self.instance is not None:
+                return getattr(self.instance, k)
+            return d
+
+        try:
+            validar_config(
+                estructura=g('estructura', list(ESTRUCTURA_DEFAULT)),
+                separador=g('separador', '-'),
+                digitos_anio=g('digitos_anio', 4),
+                digitos_secuencia=g('digitos_secuencia', 4),
+            )
+        except NumeracionError as e:
+            raise serializers.ValidationError({'detail': str(e)})
+        return data
 class TipoDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = TipoDocumento
@@ -68,6 +112,11 @@ class SeguimientoDocumentoSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
     unidad_nombre  = serializers.CharField(source='unidad.nombre',           read_only=True)
     unidad_siglas  = serializers.CharField(source='unidad.siglas',           read_only=True)
+    # `tarea` (id) ya viene por __all__; se añade el resumen de la tarea que
+    # originó el evento para poder distinguir varias tareas del mismo documento
+    # en el recorrido (sin N+1: el retrieve hace select_related('tarea')).
+    tarea_descripcion = serializers.CharField(source='tarea.descripcion', read_only=True)
+    tarea_estado      = serializers.CharField(source='tarea.estado',      read_only=True)
 
     class Meta:
         model  = SeguimientoDocumento
@@ -107,6 +156,11 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
     destinatarios_ids = serializers.ListField(
         child=serializers.IntegerField(), write_only=True, required=False
     )
+    # Destinatarios "Con copia": mismo Destinatario, tipo='copia'. Opcional;
+    # cuando llega (aunque sea []) se reemplaza la lista de copias del documento.
+    copia_ids = serializers.ListField(
+        child=serializers.IntegerField(), write_only=True, required=False
+    )
     remitente_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
     class Meta:
@@ -118,7 +172,7 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
             'prioridad', 'confidencial', 'requiere_respuesta',
             'fecha_limite_resp', 'responde_a', 'relacionado_con',
             'remitente_nombre', 'remitente_email', 'remitente_entidad',
-            'destinatarios_ids', 'remitente_id',
+            'destinatarios_ids', 'copia_ids', 'remitente_id',
         ]
         read_only_fields = ['id', 'numero_documento', 'uuid']
 
@@ -126,6 +180,7 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
         from django.utils import timezone
         from apps.usuarios.models import Usuario
         destinatarios_ids = validated_data.pop('destinatarios_ids', [])
+        copia_ids = validated_data.pop('copia_ids', [])
         remitente_id = validated_data.pop('remitente_id', None)
         doc = Documento(**validated_data)
         doc.anio = timezone.now().year
@@ -163,13 +218,23 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
             )
         from apps.usuarios.models import Usuario
         dest_nombres = []
-        for uid in destinatarios_ids:
+        # principal → "Para"; copia → "Con copia". Se ignoran ids repetidos
+        # entre ambas listas: un mismo usuario no puede ser Para y Copia a la vez.
+        vistos = set()
+        for uid, tipo in (
+            [(u, 'principal') for u in destinatarios_ids]
+            + [(u, 'copia') for u in copia_ids]
+        ):
+            if uid in vistos:
+                continue
+            vistos.add(uid)
             try:
                 dest_user = Usuario.objects.select_related('unidad').get(pk=uid)
                 Destinatario.objects.create(
                     documento=doc,
                     usuario=dest_user,
                     unidad=dest_user.unidad,
+                    tipo=tipo,
                 )
                 # NO crear recibidos aquí; se crean al enviar el documento
                 dest_nombres.append(dest_user.nombre_completo)
@@ -189,20 +254,38 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         destinatarios_ids = validated_data.pop('destinatarios_ids', None)
+        copia_ids = validated_data.pop('copia_ids', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-        if destinatarios_ids is not None:
+        if destinatarios_ids is not None or copia_ids is not None:
             from apps.usuarios.models import Usuario
-            instance.destinatarios.all().delete()
+            # Reemplazo completo de la selección de destinatarios (Para + Copia).
+            # Solo se reconstruyen las categorías realmente enviadas: si el
+            # cliente manda `destinatarios_ids` pero no `copia_ids`, las copias
+            # existentes se conservan, y viceversa.
+            nuevos = []
+            if destinatarios_ids is not None:
+                instance.destinatarios.filter(tipo='principal').delete()
+                nuevos += [(uid, 'principal') for uid in destinatarios_ids]
+            if copia_ids is not None:
+                instance.destinatarios.filter(tipo='copia').delete()
+                nuevos += [(uid, 'copia') for uid in copia_ids]
             dest_nombres = []
-            for uid in destinatarios_ids:
+            existentes = set(
+                instance.destinatarios.values_list('usuario_id', flat=True)
+            )
+            for uid, tipo in nuevos:
+                if uid in existentes:
+                    continue
+                existentes.add(uid)
                 try:
                     dest_user = Usuario.objects.select_related('unidad').get(pk=uid)
                     Destinatario.objects.create(
                         documento=instance,
                         usuario=dest_user,
                         unidad=dest_user.unidad,
+                        tipo=tipo,
                     )
                     # Solo crear/actualizar recibidos si el doc ya fue enviado
                     if instance.estado in ('enviado', 'recibido', 'archivado'):
