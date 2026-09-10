@@ -1,4 +1,5 @@
 import api from './api'
+import type { Usuario } from './usuarios.service'
 
 export interface TipoDocumento {
   id: number
@@ -54,6 +55,8 @@ export interface DestinatarioItem {
   unidad: number | null
   unidad_nombre: string | null
   unidad_siglas: string | null
+  // 'principal' | 'copia' | 'conocimiento' — determina si va en "Para" o "Con copia a".
+  tipo: string
 }
 
 export interface DocumentoDetalle extends Documento {
@@ -69,6 +72,13 @@ export interface DocumentoDetalle extends Documento {
   seguimiento: SeguimientoItem[]
   destinatarios: DestinatarioItem[]
   creado_por: number
+  // Remitente/DE persistido en el documento (distinto del creador cuando se
+  // redacta en nombre de otra persona). null = el remitente es el creador.
+  remitente: number | null
+  remitente_detalle: Usuario | null
+  creado_por_detalle: Usuario | null
+  // Número del documento Quipux histórico al que este responde, si aplica.
+  quipux_origen: string
 }
 
 export interface CrearDocumento {

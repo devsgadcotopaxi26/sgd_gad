@@ -39,6 +39,7 @@ export default function ModalFirmaElectronica({ documentoId, numeroDocumento, on
   const [fisicaObs, setFisicaObs]       = useState('')
   const [fisicaGuardando, setFisicaGuardando] = useState(false)
   const [fisicaOk, setFisicaOk]         = useState(false)
+  const [fisicaError, setFisicaError]   = useState('')
 
   const cls = "w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none focus:border-[#002f6c] focus:ring-2 focus:ring-[#002f6c]/10 bg-white"
 
@@ -72,8 +73,13 @@ export default function ModalFirmaElectronica({ documentoId, numeroDocumento, on
         if (doc.estado === 'firmado') {
           clearInterval(interval)
           setFirmaecPolling(false)
+          // No llamar onClose() aquí: onFirmado (definido por quien nos usa)
+          // es async y ya se encarga de cerrar/limpiar tanto en éxito como en
+          // error una vez que termina su propio flujo (p. ej. enviar()).
+          // Llamar onClose() en paralelo, sin esperar a onFirmado, provoca
+          // una carrera: el editor se cierra y revisa "cambios sin guardar"
+          // ANTES de que onFirmado termine de persistir/enviar el documento.
           onFirmado()
-          onClose()
         }
       } catch { /* silencio — continuar polling */ }
     }, 3000)
@@ -125,7 +131,10 @@ export default function ModalFirmaElectronica({ documentoId, numeroDocumento, on
 
       await api.post(`/documentos/${documentoId}/registrar_firma/`, { firma_info: info })
       setPasoP12('exito')
-      setTimeout(() => { onFirmado(); onClose() }, 2000)
+      // Solo onFirmado: es async y ya cierra/limpia por su cuenta (éxito o
+      // error) una vez resuelto su propio enviar(). Ver comentario análogo
+      // en el polling de FirmaEC más arriba.
+      setTimeout(onFirmado, 2000)
     } catch (e: any) {
       setErrorP12(e?.response?.data?.detail ?? e?.message ?? 'Error al firmar')
       setPasoP12('error')
@@ -135,11 +144,14 @@ export default function ModalFirmaElectronica({ documentoId, numeroDocumento, on
   // ── Física ───────────────────────────────────────────────
   const guardarFirmaFisica = async () => {
     setFisicaGuardando(true)
+    setFisicaError('')
     try {
       await documentosService.registrarFirmaFisica(documentoId, fisicaObs || 'Firma física manuscrita')
       setFisicaOk(true)
-      setTimeout(() => { onFirmado(); onClose() }, 1500)
-    } catch {
+      // Solo onFirmado — mismo motivo que en los otros dos métodos de firma.
+      setTimeout(onFirmado, 1500)
+    } catch (e: any) {
+      setFisicaError(e?.response?.data?.detail ?? e?.message ?? 'No se pudo registrar la firma física.')
       setFisicaGuardando(false)
     }
   }
@@ -370,6 +382,7 @@ export default function ModalFirmaElectronica({ documentoId, numeroDocumento, on
                 <textarea className={cls} rows={2} placeholder="ej. Firmado por el Prefecto en sesión del 30/06/2026"
                   value={fisicaObs} onChange={e => setFisicaObs(e.target.value)} />
               </div>
+              {fisicaError && <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-3 py-2"><AlertCircle size={14} /> {fisicaError}</div>}
               <button onClick={guardarFirmaFisica} disabled={fisicaGuardando}
                 className="w-full py-2.5 text-sm font-bold text-white rounded-xl flex items-center justify-center gap-2"
                 style={{ background: '#92400e' }}>

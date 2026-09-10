@@ -6,6 +6,7 @@ from .models import (
     Tarea, DestinatarioExterno, AdjuntoDocumento,
     ListaDistribucion, ListaDistribucionMiembro,
 )
+from apps.usuarios.serializers import UsuarioResumenSerializer
 class TipoDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model  = TipoDocumento
@@ -85,6 +86,11 @@ class DocumentoDetalleSerializer(serializers.ModelSerializer):
     versiones             = VersionSerializer(many=True, read_only=True)
     seguimiento           = SeguimientoDocumentoSerializer(source='seguimiento_quipux', many=True, read_only=True)
     pdf_firmado_url       = serializers.SerializerMethodField()
+    # Datos completos del remitente (DE) y del creador — necesarios para que
+    # el editor reconstruya el "De" guardado en el documento al reabrirlo,
+    # en vez de recalcularlo desde el usuario autenticado.
+    remitente_detalle     = UsuarioResumenSerializer(source='remitente', read_only=True)
+    creado_por_detalle    = UsuarioResumenSerializer(source='creado_por', read_only=True)
 
     def get_pdf_firmado_url(self, obj):
         adj = obj.archivos_adjuntos.filter(tipo='documento').order_by('-creado_en').first()
@@ -132,10 +138,20 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
         doc.save()
         # Bandeja principal: va al remitente (o al creador si no hay remitente)
         titular_bandeja = doc.remitente if doc.remitente else doc.creado_por
+        # El creador acaba de redactar el documento en esta misma sesión —
+        # su propio ítem de bandeja nace "leído" (no tiene sentido contarlo
+        # como pendiente de un documento que él mismo escribió, y así el
+        # contador no_leídos/total de "En elaboración" refleja trabajo
+        # realmente nuevo). El remitente/DE designado, si es distinto, SÍ
+        # nace pendiente — todavía no lo ha abierto (igual que al reasignar,
+        # ver reasignar_a en views.py).
+        es_creador_titular = titular_bandeja == doc.creado_por
         BandejaDocumento.objects.create(
             documento=doc,
             usuario=titular_bandeja,
             bandeja='en_elaboracion',
+            leido=es_creador_titular,
+            leido_en=timezone.now() if es_creador_titular else None,
         )
         # Si el creador es distinto del titular también lo ve en su borrador
         if doc.remitente and doc.remitente != doc.creado_por:
@@ -143,6 +159,7 @@ class DocumentoCrearSerializer(serializers.ModelSerializer):
                 documento=doc,
                 usuario=doc.creado_por,
                 bandeja='en_elaboracion',
+                defaults={'leido': True, 'leido_en': timezone.now()},
             )
         from apps.usuarios.models import Usuario
         dest_nombres = []
@@ -215,6 +232,7 @@ class BandejaSerializer(serializers.ModelSerializer):
     unidad_origen_nombre  = serializers.CharField(source='documento.unidad_origen.nombre', read_only=True)
     unidad_origen_siglas  = serializers.CharField(source='documento.unidad_origen.siglas', read_only=True)
     creado_por_nombre     = serializers.CharField(source='documento.creado_por.nombre_completo', read_only=True)
+    creado_por_id         = serializers.IntegerField(source='documento.creado_por_id', read_only=True)
     estado_documento      = serializers.CharField(source='documento.estado', read_only=True)
     fecha_documento       = serializers.DateTimeField(source='documento.creado_en', read_only=True)
     prioridad             = serializers.CharField(source='documento.prioridad', read_only=True)
@@ -262,7 +280,7 @@ class BandejaSerializer(serializers.ModelSerializer):
             'fecha_limite', 'creado_en',
             'numero_documento', 'asunto', 'tipo_nombre', 'tipo_codigo',
             'tipo_prefijo', 'unidad_origen_nombre', 'unidad_origen_siglas',
-            'creado_por_nombre', 'estado_documento', 'fecha_documento', 'prioridad',
+            'creado_por_nombre', 'creado_por_id', 'estado_documento', 'fecha_documento', 'prioridad',
             'remitente_nombre', 'remitente_email', 'remitente_entidad',
             'firmante_nombre', 'firmante_cargo', 'minutos_para_recuperar',
         ]

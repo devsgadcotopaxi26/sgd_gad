@@ -109,6 +109,12 @@ class Documento(models.Model):
         on_delete=models.SET_NULL, related_name='documentos_anulados'
     )
     motivo_anulacion    = models.TextField(blank=True)
+    eliminado_en        = models.DateTimeField(null=True, blank=True)
+    eliminado_por       = models.ForeignKey(
+        'usuarios.Usuario', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='documentos_eliminados'
+    )
+    motivo_eliminacion  = models.TextField(blank=True)
     quipux_origen       = models.CharField(
         max_length=60, blank=True,
         help_text='radi_nume_text del documento Quipux al que este responde'
@@ -223,6 +229,7 @@ class BandejaDocumento(models.Model):
         ('tareas_enviadas',  'Tareas enviadas'),
         ('archivados',       'Archivados'),
         ('por_imprimir',     'Por imprimir'),
+        ('eliminados',       'Eliminados'),
     ]
     ACCION_CHOICES = [
         ('pendiente',   'Pendiente'),
@@ -232,6 +239,7 @@ class BandejaDocumento(models.Model):
         ('archivado',   'Archivado'),
         ('comentado',   'Comentado'),
         ('respondido',  'Respondido'),
+        ('eliminado',   'Eliminado'),
     ]
 
     documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='bandejas')
@@ -269,6 +277,8 @@ class SeguimientoDocumento(models.Model):
         ('archivado',   'Archivado'),
         ('respondido',  'Respondido'),
         ('recuperado',  'Recuperado'),
+        ('eliminado',   'Eliminado'),
+        ('restaurado',  'Restaurado'),
     ]
 
     documento        = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='seguimiento_quipux')
@@ -395,7 +405,7 @@ class AdjuntoDocumento(models.Model):
 
     class Meta:
         db_table = 'doc_adjunto'
-        ordering = ['-creado_en']
+        ordering = ['creado_en']
 
     def __str__(self):
         return self.nombre

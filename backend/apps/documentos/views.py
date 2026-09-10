@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -8,6 +9,7 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.views import APIView
 from .models import BandejaDocumento, SeguimientoDocumento, Tarea, DestinatarioExterno
 from .models import TipoDocumento, Documento, FlujoAprobacion, VersionDocumento, AdjuntoDocumento
+from .servicios import DocumentoInvalidoError, marcar_documento_enviado, validar_documento_minimo, validar_lista_destinatarios
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.http import HttpResponse, FileResponse
 from apps.auditoria.reportes import generar_pdf, html_base
@@ -16,6 +18,44 @@ from .serializers import (
     DocumentoListSerializer, DocumentoDetalleSerializer, DocumentoCrearSerializer,
     FlujoSerializer, VersionSerializer,
 )
+
+
+def _es_responsable_actual(user, doc):
+    """
+    Único responsable actual = quien tiene el documento en su bandeja
+    'en_elaboracion' sin haberlo reasignado (BandejaDocumento es la fuente
+    real de "quién puede seguir trabajándolo" — no `creado_por`/`remitente`,
+    que no cambian al reasignar y por tanto no sirven para esto: tras
+    reasignar, el creador original pierde este derecho aunque siga figurando
+    como creado_por). Precondición común para editar, guardar, enviar,
+    eliminar borrador y reasignar — no para firmar (ver
+    `_puede_firmar_documento`: firmar no debe heredar el bypass
+    administrativo de esta función).
+    """
+    if user.is_superuser or user.roles.filter(rol__codigo='ADMIN_GENERAL', activo=True).exists():
+        return True
+    return BandejaDocumento.objects.filter(
+        documento=doc, usuario=user, bandeja='en_elaboracion',
+    ).exclude(accion_tomada='reasignado').exists()
+
+
+def _puede_firmar_documento(user, doc):
+    """
+    Regla A (responsabilidad) para firmar: el usuario debe seguir siendo el
+    responsable actual del documento — misma condición que
+    `_es_responsable_actual`, pero SIN el bypass administrativo. Ser
+    ADMIN_GENERAL (o superusuario) es una facultad de administración
+    técnica del sistema, no una habilitación para firmar documentalmente en
+    nombre de otro funcionario — la firma representa legalmente a una
+    persona específica. Esta función solo cubre la Regla A; no sustituye
+    ninguna Regla B (identidad/competencia real del firmante) — hoy el
+    backend no implementa ninguna Regla B propia (auditado: ningún endpoint
+    de firma verificaba nada antes de esta corrección), así que por ahora
+    esta es la única verificación real del lado servidor para firmar.
+    """
+    return BandejaDocumento.objects.filter(
+        documento=doc, usuario=user, bandeja='en_elaboracion',
+    ).exclude(accion_tomada='reasignado').exists()
 
 
 class TipoDocumentoViewSet(viewsets.ModelViewSet):
@@ -56,6 +96,13 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         serializer.save(creado_por=self.request.user)
 
     def perform_update(self, serializer):
+        doc = serializer.instance
+        if not _es_responsable_actual(self.request.user, doc):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                'Ya no tienes este documento en tu bandeja "En elaboración": '
+                'fue reasignado a otro responsable.'
+            )
         serializer.save()
         doc = serializer.instance
         dest_nombres = getattr(doc, '_dest_nombres_actualizados', None)
@@ -73,6 +120,8 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='cambiar_estado')
     def cambiar_estado(self, request, pk=None):
         doc          = self.get_object()
+        if not _es_responsable_actual(request.user, doc):
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
         nuevo_estado = request.data.get('estado')
         estados      = [e[0] for e in Documento.ESTADO_CHOICES]
         if nuevo_estado not in estados:
@@ -108,6 +157,8 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='anular')
     def anular(self, request, pk=None):
         doc = self.get_object()
+        if not _es_responsable_actual(request.user, doc):
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
         if doc.estado == 'anulado':
             return Response({'detail': 'El documento ya está anulado.'}, status=400)
         doc.estado          = 'anulado'
@@ -120,6 +171,8 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='registrar_firma')
     def registrar_firma(self, request, pk=None):
         doc = self.get_object()
+        if not _puede_firmar_documento(request.user, doc):
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
         info_firma = request.data.get('firma_info', {})
         if not info_firma:
             return Response({'detail': 'Se requiere información de firma.'}, status=400)
@@ -153,53 +206,66 @@ class DocumentoViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='enviar')
     def enviar(self, request, pk=None):
         doc = self.get_object()
-        if doc.estado == 'enviado':
-            return Response({'detail': 'El documento ya fue enviado.'}, status=400)
-        doc.estado     = 'enviado'
-        doc.fecha_envio = timezone.now()
-        doc.save(update_fields=['estado', 'fecha_envio'])
-        # Mover bandeja del titular (remitente o creador) a 'enviados'
-        titular = doc.remitente or doc.creado_por
-        BandejaDocumento.objects.filter(
-            documento=doc, usuario=titular, bandeja='en_elaboracion'
-        ).update(bandeja='enviados')
-        # Si el creador es distinto del titular, también darle visibilidad en 'enviados'
-        if doc.creado_por and doc.creado_por != titular:
-            BandejaDocumento.objects.get_or_create(
-                documento=doc,
-                usuario=doc.creado_por,
-                defaults={'bandeja': 'enviados'},
-            )
-            BandejaDocumento.objects.filter(
-                documento=doc, usuario=doc.creado_por, bandeja='en_elaboracion'
-            ).update(bandeja='enviados')
-        # Crear entradas en recibidos para cada destinatario al momento del envío
-        dest_names = []
-        for d in doc.destinatarios.select_related('usuario').all():
-            if d.usuario:
-                BandejaDocumento.objects.get_or_create(
-                    documento=doc,
-                    usuario=d.usuario,
-                    bandeja='recibidos',
-                    defaults={'es_urgente': doc.prioridad != 'normal'},
+        if not _es_responsable_actual(request.user, doc):
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
+        try:
+            with transaction.atomic():
+                # Regla única BORRADOR -> ENVIADO: no repetido, tipo, asunto
+                # y >=1 destinatario. Si falla, la excepción revierte
+                # cualquier escritura hecha en este bloque (ninguna, todavía).
+                marcar_documento_enviado(doc)
+
+                # Mover bandeja del titular (remitente o creador) a 'enviados'
+                titular = doc.remitente or doc.creado_por
+                BandejaDocumento.objects.filter(
+                    documento=doc, usuario=titular, bandeja__in=['en_elaboracion', 'no_enviados'],
+                ).update(bandeja='enviados')
+                # Si el creador es distinto del titular, también darle visibilidad en 'enviados'
+                if doc.creado_por and doc.creado_por != titular:
+                    BandejaDocumento.objects.get_or_create(
+                        documento=doc,
+                        usuario=doc.creado_por,
+                        defaults={'bandeja': 'enviados'},
+                    )
+                    BandejaDocumento.objects.filter(
+                        documento=doc, usuario=doc.creado_por, bandeja__in=['en_elaboracion', 'no_enviados'],
+                    ).update(bandeja='enviados')
+                # Crear entradas en recibidos para cada destinatario al momento del envío
+                dest_names = []
+                for d in doc.destinatarios.select_related('usuario').all():
+                    if d.usuario:
+                        BandejaDocumento.objects.get_or_create(
+                            documento=doc,
+                            usuario=d.usuario,
+                            bandeja='recibidos',
+                            defaults={'es_urgente': doc.prioridad != 'normal'},
+                        )
+                        dest_names.append(d.usuario.nombre_completo)
+                obs = f'Enviado a: {", ".join(dest_names)}' if dest_names else 'Enviado'
+                SeguimientoDocumento.objects.create(
+                    documento   = doc,
+                    etapa       = 'enviado',
+                    usuario     = request.user,
+                    unidad      = getattr(request.user, 'unidad', None),
+                    observacion = obs,
                 )
-                dest_names.append(d.usuario.nombre_completo)
-        obs = f'Enviado a: {", ".join(dest_names)}' if dest_names else 'Enviado'
-        SeguimientoDocumento.objects.create(
-            documento   = doc,
-            etapa       = 'enviado',
-            usuario     = request.user,
-            unidad      = getattr(request.user, 'unidad', None),
-            observacion = obs,
-        )
+        except DocumentoInvalidoError as e:
+            return Response({'detail': str(e)}, status=400)
         return Response({'detail': 'Documento enviado correctamente.'})
 
     @action(detail=True, methods=['post'], url_path='reasignar_a')
     def reasignar_a(self, request, pk=None):
         """
-        Reasigna el documento a un usuario diferente (el remitente/DE indicado).
-        El documento pasa a la bandeja 'en_elaboracion' del destinatario para que
-        él lo firme y envíe. El ítem del creador queda marcado como 'reasignado'.
+        Transfiere la responsabilidad de elaboración del documento a otro
+        usuario (el remitente/DE indicado) — mismo Documento.id, sin crear
+        copias. El documento pasa a la bandeja 'en_elaboracion' del
+        destinatario para que él lo firme y envíe; el ítem de quien reasigna
+        queda marcado como 'reasignado' (deja de poder editarlo, ver
+        `_es_responsable_actual` / `perform_update`) y pasa a mostrarse en
+        su bandeja virtual 'reasignados' — nunca dos responsables activos a
+        la vez. NO modifica `Documento.remitente` (el "De" del documento):
+        reasignar responsabilidad y cambiar remitente son operaciones
+        distintas.
         """
         doc        = self.get_object()
         usuario_id = request.data.get('usuario_id')
@@ -208,33 +274,48 @@ class DocumentoViewSet(viewsets.ModelViewSet):
         if not usuario_id:
             return Response({'error': 'usuario_id requerido'}, status=400)
 
-        # Marcar mi ítem como reasignado
-        my_item = BandejaDocumento.objects.filter(
-            documento=doc, usuario=request.user
-        ).first()
-        if my_item:
-            my_item.accion_tomada = 'reasignado'
-            my_item.save()
+        if not _es_responsable_actual(request.user, doc):
+            return Response(
+                {'error': 'Ya no eres responsable de este documento: fue reasignado a otro usuario.'},
+                status=403,
+            )
 
-        # Crear ítem en 'en_elaboracion' del remitente designado
-        BandejaDocumento.objects.get_or_create(
-            documento  = doc,
-            usuario_id = usuario_id,
-            bandeja    = 'en_elaboracion',
-            defaults={
-                'unidad_id':    unidad_id,
-                'es_urgente':   my_item.es_urgente if my_item else False,
-                'fecha_limite': my_item.fecha_limite if my_item else None,
-            },
-        )
+        from apps.usuarios.models import Usuario
+        try:
+            destino = Usuario.objects.get(pk=usuario_id)
+        except Usuario.DoesNotExist:
+            return Response({'error': 'Usuario destino no existe.'}, status=400)
 
-        SeguimientoDocumento.objects.create(
-            documento   = doc,
-            etapa       = 'reasignado',
-            usuario     = request.user,
-            unidad_id   = unidad_id,
-            observacion = f'Reasignado a usuario {usuario_id} para firma y envío',
-        )
+        with transaction.atomic():
+            # Marcar mi ítem como reasignado — deja de estar en 'en_elaboracion'
+            # activo (aunque el campo `bandeja` no cambie), pasa a "reasignados".
+            my_item = BandejaDocumento.objects.filter(
+                documento=doc, usuario=request.user
+            ).first()
+            if my_item:
+                my_item.accion_tomada = 'reasignado'
+                my_item.save()
+
+            # Crear ítem en 'en_elaboracion' del remitente designado — único
+            # responsable activo a partir de ahora.
+            BandejaDocumento.objects.get_or_create(
+                documento  = doc,
+                usuario_id = usuario_id,
+                bandeja    = 'en_elaboracion',
+                defaults={
+                    'unidad_id':    unidad_id,
+                    'es_urgente':   my_item.es_urgente if my_item else False,
+                    'fecha_limite': my_item.fecha_limite if my_item else None,
+                },
+            )
+
+            SeguimientoDocumento.objects.create(
+                documento   = doc,
+                etapa       = 'reasignado',
+                usuario     = request.user,
+                unidad_id   = unidad_id,
+                observacion = f'Reasignado a {destino.nombre_completo} para firma y envío',
+            )
         return Response({'detail': 'Documento reasignado al remitente designado.'})
 
     @action(detail=True, methods=['post'], url_path='recuperar')
@@ -294,6 +375,138 @@ class DocumentoViewSet(viewsets.ModelViewSet):
             observacion='Documento recuperado para corrección.',
         )
         return Response({'detail': 'Documento recuperado. Ya puede editarlo en "En elaboración".'})
+
+    @action(detail=True, methods=['post'], url_path='eliminar_borrador')
+    def eliminar_borrador(self, request, pk=None):
+        """
+        Envía un borrador (bandeja 'en_elaboracion') a la papelera ('eliminados').
+        Permitido para el responsable actual del documento o un
+        administrador de archivo — NO para quien ya lo reasignó, aunque sea
+        el creador original: `creado_por` no otorga propiedad permanente
+        (ver `_es_responsable_actual`).
+        """
+        doc = self.get_object()
+        if not (_es_responsable_actual(request.user, doc) or _es_admin_bandeja(request.user)):
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
+
+        comentario = (request.data.get('comentario') or '').strip()
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        # El ítem a archivar es el del responsable actual (quien lo tiene
+        # activo en 'en_elaboracion'), no necesariamente el de `creado_por`
+        # — tras una reasignación puede ser un usuario distinto.
+        item = BandejaDocumento.objects.filter(
+            documento=doc, bandeja='en_elaboracion',
+        ).exclude(accion_tomada='reasignado').first()
+        if not item:
+            return Response({'detail': 'Solo se pueden eliminar borradores en "En elaboración".'}, status=400)
+
+        item.bandeja       = 'eliminados'
+        item.accion_tomada = 'eliminado'
+        item.save()
+
+        doc.eliminado_en       = timezone.now()
+        doc.eliminado_por      = request.user
+        doc.motivo_eliminacion = comentario
+        doc.save(update_fields=['eliminado_en', 'eliminado_por', 'motivo_eliminacion'])
+
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'eliminado',
+            usuario     = request.user,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = comentario,
+        )
+        return Response({'detail': 'Borrador enviado a la papelera.'})
+
+    @action(detail=True, methods=['post'], url_path='restaurar_eliminado')
+    def restaurar_eliminado(self, request, pk=None):
+        """
+        Restaura un documento desde la papelera ('eliminados') a 'en_elaboracion'.
+        Permitido para quien tiene el documento en SU papelera, o un
+        administrador. (Un documento eliminado no tiene "responsable
+        actual" en el sentido de `_es_responsable_actual` — ya no está en
+        en_elaboracion de nadie — por eso aquí se verifica sobre el ítem de
+        papelera real, no sobre `creado_por`, que puede no coincidir si
+        quien lo eliminó fue un responsable posterior a una reasignación.)
+        """
+        doc = self.get_object()
+        item = BandejaDocumento.objects.filter(documento=doc, bandeja='eliminados').first()
+        if not item:
+            return Response({'detail': 'Este documento no está en la papelera.'}, status=400)
+        if item.usuario_id != request.user.id and not _es_admin_bandeja(request.user):
+            return Response({'detail': 'No tiene permiso para restaurar este documento.'}, status=403)
+
+        comentario = (request.data.get('comentario') or '').strip()
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        item.bandeja       = 'en_elaboracion'
+        item.accion_tomada = 'pendiente'
+        item.save()
+
+        doc.estado             = 'borrador'
+        doc.eliminado_en       = None
+        doc.eliminado_por      = None
+        doc.motivo_eliminacion = ''
+        doc.save(update_fields=['estado', 'eliminado_en', 'eliminado_por', 'motivo_eliminacion'])
+
+        SeguimientoDocumento.objects.create(
+            documento   = doc,
+            etapa       = 'restaurado',
+            usuario     = request.user,
+            unidad      = getattr(request.user, 'unidad', None),
+            observacion = comentario,
+        )
+        return Response({'detail': 'Documento restaurado a "En elaboración".'})
+
+    @action(detail=True, methods=['post'], url_path='eliminar_definitivo')
+    def eliminar_definitivo(self, request, pk=None):
+        """
+        Hard-delete definitivo de un borrador en papelera. Solo el autor del
+        documento puede ejecutarlo — sin excepción para administradores, y
+        sin importar si el autor está activo o inactivo.
+        """
+        doc = self.get_object()
+        if request.user.id != doc.creado_por_id:
+            return Response(
+                {'detail': 'Solo el autor del documento puede eliminarlo definitivamente.'}, status=403
+            )
+
+        comentario = (request.data.get('comentario') or '').strip()
+        if not comentario:
+            return Response({'detail': 'El comentario es obligatorio.'}, status=400)
+
+        # No se filtra por usuario_id: la verificación de arriba ya exige
+        # ser el autor; solo falta confirmar que el documento sigue en
+        # papelera (el ítem puede pertenecer a otro usuario si quien lo
+        # eliminó fue un responsable posterior a una reasignación).
+        item = BandejaDocumento.objects.filter(documento=doc, bandeja='eliminados').first()
+        if not item:
+            return Response(
+                {'detail': 'Solo se pueden eliminar definitivamente documentos en la papelera.'}, status=400
+            )
+
+        from apps.archivo.models import ExpedienteDocumento
+        if ExpedienteDocumento.objects.filter(documento=doc).exists():
+            return Response(
+                {'detail': 'Este documento está vinculado a un expediente de archivo y no puede eliminarse definitivamente.'},
+                status=400,
+            )
+
+        # Capturar referencias a los archivos físicos ANTES del borrado en cascada
+        # (AdjuntoDocumento.archivo no se elimina del storage automáticamente).
+        archivos_a_borrar = [a.archivo for a in doc.archivos_adjuntos.all() if a.archivo]
+
+        doc.delete()  # cascada: Destinatario, FlujoAprobacion, VersionDocumento,
+                      # BandejaDocumento, SeguimientoDocumento, Tarea,
+                      # DestinatarioExterno, AdjuntoDocumento
+
+        for f in archivos_a_borrar:
+            f.delete(save=False)
+
+        return Response({'detail': 'Documento eliminado definitivamente.'})
 
     @action(detail=True, methods=['post'], url_path='enviar_email')
     def enviar_email(self, request, pk=None):
@@ -363,6 +576,8 @@ Gobierno Autónomo Descentralizado Provincial de Cotopaxi
     @action(detail=True, methods=['post'], url_path='nueva_version')
     def nueva_version(self, request, pk=None):
         doc     = self.get_object()
+        if not _es_responsable_actual(request.user, doc):
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
         ultimo  = doc.versiones.count()
         version = VersionDocumento.objects.create(
             documento      = doc,
@@ -395,8 +610,11 @@ Gobierno Autónomo Descentralizado Provincial de Cotopaxi
         return Response(DocumentoListSerializer(docs, many=True).data)
 
 def _es_admin_bandeja(user):
+    # A diferencia de mis_permisos().es_admin, esto NO es "administrador
+    # general" sino "puede consultar la bandeja de otro funcionario por
+    # responsabilidad documental" — RESPONSABLE_ARCHIVO conserva este acceso.
     return user.is_superuser or user.roles.filter(
-        rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
+        rol__codigo__in=['ADMIN_GENERAL', 'RESPONSABLE_ARCHIVO'], activo=True
     ).exists()
 
 
@@ -496,9 +714,13 @@ class BandejaViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'], url_path='marcar_leido')
     def marcar_leido(self, request, pk=None):
         item = self.get_object()
-        item.leido    = True
-        item.leido_en = timezone.now()
-        item.save()
+        # Idempotente: repetir la llamada da el mismo resultado. `leido_en`
+        # registra la PRIMERA lectura — reabrir un documento ya leído no
+        # debe correrle la fecha ni generar una escritura innecesaria.
+        if not item.leido:
+            item.leido    = True
+            item.leido_en = timezone.now()
+            item.save()
         return Response({'detail': 'Marcado como leído.'})
 
     @action(detail=True, methods=['post'], url_path='reasignar')
@@ -617,7 +839,24 @@ class EnviarDocumentoView(viewsets.GenericViewSet):
     @action(detail=True, methods=['post'], url_path='enviar')
     def enviar(self, request, pk=None):
         from .models import Documento
-        doc = Documento.objects.get(pk=pk)
+        try:
+            doc = Documento.objects.get(pk=pk)
+        except Documento.DoesNotExist:
+            return Response({'detail': 'Documento no encontrado.'}, status=404)
+
+        # Este endpoint ("Distribuir") también se usa desde Recibidos/Enviados,
+        # donde el usuario legítimamente NO tiene ítem de elaboración para
+        # este documento — eso está bien, no requiere responsabilidad actual.
+        # Lo que sí debe bloquearse es el caso puntual de este ticket: que
+        # alguien use un ítem de elaboración YA reasignado (p. ej. el
+        # creador original tras reasignar) para disparar el efecto de este
+        # endpoint (mover ese ítem a 'enviados' y fijar estado='enviado').
+        tiene_item_reasignado = BandejaDocumento.objects.filter(
+            documento=doc, usuario=request.user, bandeja__in=['en_elaboracion', 'no_enviados'],
+            accion_tomada='reasignado',
+        ).exists()
+        if tiene_item_reasignado:
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
 
         destinatarios_internos  = request.data.get('destinatarios_internos', [])
         destinatarios_externos  = request.data.get('destinatarios_externos', [])
@@ -626,66 +865,78 @@ class EnviarDocumentoView(viewsets.GenericViewSet):
         fecha_limite            = request.data.get('fecha_limite')
         numero_referencia       = request.data.get('numero_referencia', '')
 
-        doc.estado      = 'enviado'
-        doc.fecha_envio = timezone.now()
-        doc.save()
+        try:
+            with transaction.atomic():
+                # Este endpoint (usado por "Distribuir") no depende de
+                # destinatarios ya guardados: los recibe en la misma
+                # solicitud. Se valida ANTES de crear nada ni tocar el
+                # estado — una lista vacía nunca debe poder enviar.
+                validar_documento_minimo(doc)
+                internos_validos = validar_lista_destinatarios(destinatarios_internos, destinatarios_externos)
 
-        for dest in destinatarios_internos:
-            BandejaDocumento.objects.get_or_create(
-                documento    = doc,
-                usuario_id   = dest.get('usuario_id'),
-                bandeja      = 'recibidos',
-                defaults={
-                    'unidad_id':         dest.get('unidad_id'),
-                    'instrucciones':     instrucciones,
-                    'es_urgente':        es_urgente,
-                    'fecha_limite':      fecha_limite,
-                    'numero_referencia': numero_referencia,
-                }
-            )
+                for dest in internos_validos:
+                    BandejaDocumento.objects.get_or_create(
+                        documento    = doc,
+                        usuario_id   = dest.get('usuario_id'),
+                        bandeja      = 'recibidos',
+                        defaults={
+                            'unidad_id':         dest.get('unidad_id'),
+                            'instrucciones':     instrucciones,
+                            'es_urgente':        es_urgente,
+                            'fecha_limite':      fecha_limite,
+                            'numero_referencia': numero_referencia,
+                        }
+                    )
 
-        for dest in destinatarios_externos:
-            DestinatarioExterno.objects.create(
-                documento   = doc,
-                tipo        = dest.get('tipo', 'institucion'),
-                nombre      = dest.get('nombre', ''),
-                institucion = dest.get('institucion', ''),
-                email       = dest.get('email', ''),
-                cedula_ruc  = dest.get('cedula_ruc', ''),
-            )
+                for dest in destinatarios_externos:
+                    DestinatarioExterno.objects.create(
+                        documento   = doc,
+                        tipo        = dest.get('tipo', 'institucion'),
+                        nombre      = dest.get('nombre', ''),
+                        institucion = dest.get('institucion', ''),
+                        email       = dest.get('email', ''),
+                        cedula_ruc  = dest.get('cedula_ruc', ''),
+                    )
 
-        # Mover la entrada del remitente de en_elaboracion/no_enviados → enviados
-        moved = BandejaDocumento.objects.filter(
-            documento   = doc,
-            usuario     = request.user,
-            bandeja__in = ['en_elaboracion', 'no_enviados'],
-        ).update(bandeja='enviados', accion_tomada='enviado')
-        if not moved:
-            BandejaDocumento.objects.get_or_create(
-                documento = doc,
-                usuario   = request.user,
-                bandeja   = 'enviados',
-            )
+                doc.estado = 'enviado'
+                if not doc.fecha_envio:
+                    doc.fecha_envio = timezone.now()
+                doc.save(update_fields=['estado', 'fecha_envio'])
 
-        from apps.usuarios.models import Usuario as _Usuario
-        _dest_nombres = []
-        for d in destinatarios_internos:
-            try:
-                _u = _Usuario.objects.get(pk=d.get('usuario_id'))
-                _dest_nombres.append(_u.nombre_completo)
-            except Exception:
-                pass
-        _obs_envio = (
-            ('Enviado a: ' + ', '.join(_dest_nombres) if _dest_nombres else 'Enviado')
-            + (f' — {instrucciones}' if instrucciones else '')
-        )
-        SeguimientoDocumento.objects.create(
-            documento   = doc,
-            etapa       = 'enviado',
-            usuario     = request.user,
-            unidad      = getattr(request.user, 'unidad', None),
-            observacion = _obs_envio,
-        )
+                # Mover la entrada del remitente de en_elaboracion/no_enviados → enviados
+                moved = BandejaDocumento.objects.filter(
+                    documento   = doc,
+                    usuario     = request.user,
+                    bandeja__in = ['en_elaboracion', 'no_enviados'],
+                ).update(bandeja='enviados', accion_tomada='enviado')
+                if not moved:
+                    BandejaDocumento.objects.get_or_create(
+                        documento = doc,
+                        usuario   = request.user,
+                        bandeja   = 'enviados',
+                    )
+
+                from apps.usuarios.models import Usuario as _Usuario
+                _dest_nombres = []
+                for d in internos_validos:
+                    try:
+                        _u = _Usuario.objects.get(pk=d.get('usuario_id'))
+                        _dest_nombres.append(_u.nombre_completo)
+                    except Exception:
+                        pass
+                _obs_envio = (
+                    ('Enviado a: ' + ', '.join(_dest_nombres) if _dest_nombres else 'Enviado')
+                    + (f' — {instrucciones}' if instrucciones else '')
+                )
+                SeguimientoDocumento.objects.create(
+                    documento   = doc,
+                    etapa       = 'enviado',
+                    usuario     = request.user,
+                    unidad      = getattr(request.user, 'unidad', None),
+                    observacion = _obs_envio,
+                )
+        except DocumentoInvalidoError as e:
+            return Response({'detail': str(e)}, status=400)
 
         return Response({'detail': f'Documento {doc.numero_documento} enviado correctamente.'})
 
@@ -1041,6 +1292,8 @@ class GenerarTokenFirmaECView(APIView):
         )
         if not doc:
             return Response({'error': 'Documento no encontrado.'}, status=404)
+        if not _puede_firmar_documento(request.user, doc):
+            return Response({'error': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
         cedula = getattr(request.user, 'cedula', '') or str(request.user.id)
 
         # 1. Generar PDF limpio (sin /ObjStm); pre_firma=True incluye la leyenda
@@ -1157,6 +1410,14 @@ class FirmaECCallbackView(APIView):
             except Usuario.DoesNotExist:
                 pass
 
+        # El token se generó minutos antes (GenerarTokenFirmaECView ya validó
+        # responsabilidad en ese momento); aquí se revalida por si el
+        # documento cambió de responsable mientras la firma externa estaba
+        # en curso (§20: el backend es la última barrera). Solo se aplica
+        # cuando se pudo resolver el usuario firmante por su cédula.
+        if usuario is not None and not _puede_firmar_documento(usuario, doc):
+            return HttpResponse('ERROR', content_type='text/plain', status=403)
+
         # Eliminar versiones firmadas anteriores (re-firma o reintento)
         doc.archivos_adjuntos.filter(tipo='documento').delete()
 
@@ -1210,6 +1471,8 @@ class FirmaFisicaView(APIView):
     def post(self, request, pk):
         from django.shortcuts import get_object_or_404
         doc = get_object_or_404(Documento, pk=pk)
+        if not _puede_firmar_documento(request.user, doc):
+            return Response({'detail': 'El documento ya no se encuentra bajo su responsabilidad.'}, status=403)
         observacion = request.data.get('observacion', 'Firma física manuscrita')
 
         doc.estado     = 'firmado'

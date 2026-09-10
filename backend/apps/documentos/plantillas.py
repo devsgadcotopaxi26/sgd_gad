@@ -37,6 +37,43 @@ LOGO_PREF_SRC   = _file_uri('logo_prefectura.svg') or _b64(
 MARCA_AGUA_SRC  = _file_uri('marca_agua_quipux.png') or _b64(
     os.path.join(_LOGOS_DIR, 'marca_agua_quipux.png'), 'image/png')
 
+
+def _marca_agua_borrador_datauri() -> str:
+    """
+    SVG generado (no un archivo estático) con el texto "BORRADOR" en
+    diagonal, SUTIL y PERIFÉRICO al estilo Quipux — pocas apariciones
+    pequeñas y tenues cerca de los márgenes laterales, dejando limpio el
+    bloque central de lectura. Se calcula una sola vez al importar el
+    módulo — es determinístico, no depende de doc.
+
+    Coordenadas en mm sobre viewBox 0 0 210 297 (tamaño A4), alineadas
+    contra la geometría real de la plantilla (@page margin 44mm arriba /
+    24mm abajo; .contenido con padding 40mm izq / 30mm der — ver _CSS más
+    abajo): las posiciones caen dentro de esas franjas de margen, donde el
+    texto del documento nunca llega, para que la marca casi no compita
+    visualmente con PARA/ASUNTO/cuerpo/firma aunque tenga baja opacidad.
+    """
+    posiciones = [
+        (15, 70),   (196, 70),    # franja superior: izquierda / derecha
+        (12, 165),  (199, 165),   # franja media: izquierda / derecha
+        (15, 250),  (196, 250),   # franja inferior: izquierda / derecha
+    ]
+    textos = [
+        f'<text x="{x}" y="{y}" transform="rotate(-35 {x} {y})">BORRADOR</text>'
+        for x, y in posiciones
+    ]
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="210mm" height="297mm" viewBox="0 0 210 297">'
+        '<g font-family="Liberation Sans, Carlito, Arial, sans-serif" font-size="8" '
+        'font-weight="bold" fill="#b0b0b0" fill-opacity="0.15" text-anchor="middle">'
+        + ''.join(textos) +
+        '</g></svg>'
+    )
+    return 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode('utf-8')).decode('ascii')
+
+
+MARCA_BORRADOR_SRC = _marca_agua_borrador_datauri()
+
 # ── Constantes ─────────────────────────────────────────────────────────────
 # Primera letra mayúscula — igual que Quipux
 NOMBRE_TIPO = {
@@ -106,6 +143,19 @@ _CSS = """
     transform: translate(-50%, -50%);
     width: 11cm;
     opacity: 0.04;
+    z-index: 0;
+  }
+
+  /* ── MARCA DE AGUA "BORRADOR" (solo estado='borrador', ver es_borrador) ──
+     fixed + tamaño A4 exacto → se repite igual en todas las páginas, detrás
+     del contenido (z-index 0 < .contenido z-index 1). El texto ya viene
+     repetido en diagonal dentro del propio SVG (ver _marca_agua_borrador_
+     datauri en este mismo archivo), no es un overlay del visor frontend. */
+  .marca-agua-borrador {
+    position: fixed;
+    top: 0; left: 0;
+    width: 210mm;
+    height: 297mm;
     z-index: 0;
   }
 
@@ -235,6 +285,14 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
     nombre_tipo = NOMBRE_TIPO.get(prefijo, doc.tipo_documento.nombre)
     es_interno  = prefijo in TIPOS_INTERNOS
 
+    # Fuente real de "es borrador": Documento.estado, tal cual está
+    # persistido — no el número (puede contener "TEMP" sin relación con
+    # esto), no la bandeja/accion_tomada (esas describen quién lo tiene, no
+    # si es oficial). `pre_firma=True` es la excepción explícita: ese render
+    # se envía a firmar y su resultado firmado pasa a ser el documento
+    # definitivo — jamás debe llevar la marca de "BORRADOR" incrustada.
+    es_borrador = doc.estado == 'borrador' and not pre_firma
+
     fecha_doc = _fecha_es(doc.fecha_elaboracion)
 
     # Firmante: remitente > firmado_por > creado_por
@@ -331,6 +389,7 @@ def html_documento_oficial(doc, pre_firma: bool = False) -> str:
 <body>
 
   <img src="{MARCA_AGUA_SRC}" class="marca-agua" alt="">
+  {f'<img src="{MARCA_BORRADOR_SRC}" class="marca-agua-borrador" alt="Borrador">' if es_borrador else ''}
 
   <!-- ENCABEZADO (running element → se repite en cada página) -->
   <div class="page-header">

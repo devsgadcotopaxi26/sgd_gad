@@ -78,8 +78,7 @@ tramites/TramitesPage.tsx
 tramites/ConfiguracionTramitesPage.tsx
 usuarios/OrganigramaPage.tsx
 usuarios/PerfilPage.tsx
-usuarios/PermisosPage.tsx                        # Asignación de roles + matriz de permisos
-usuarios/UsuariosPage.tsx
+usuarios/UsuariosPage.tsx                        # Asignación/revocación de roles + filtro por rol (antes en PermisosPage.tsx, eliminada por duplicidad)
 ```
 
 ## Componentes UI principales (src/components/ui/)
@@ -209,16 +208,19 @@ POST      /configuracion/test-email/                {email: "..."}
 
 ## Roles del sistema (permisos.py)
 
-| Código | Descripción |
-|--------|-------------|
-| `USUARIO` | Crea y gestiona documentos; sin menús de módulos extra |
-| `ARCHIVO` | Documentos + trámites + módulo archivo + reportes |
-| `ADMIN_ARCHIVO` | Como ARCHIVO pero con eliminación y gestión de usuarios (solo ver) |
-| `ADMIN_GENERAL` | Acceso completo a todos los módulos incluyendo ajustes |
+| Código | Nombre visible | Descripción |
+|--------|---------------|-------------|
+| `USUARIO` | Usuario | Crea y gestiona documentos; sin menús de módulos extra |
+| `ASISTENTE_ARCHIVO` | Asistente de Archivo | Documentos + trámites de ventanilla (crear/editar/reasignar/resolver) + solo consulta de trámites por email/web |
+| `GESTOR_DOCUMENTAL` | Gestor Documental | Todo lo de `ASISTENTE_ARCHIVO`, más manejo pleno de los 3 canales de trámites (ventanilla/email/web) y operación normal del módulo archivo (expedientes, transferencias, baja documental, préstamos, copias, digitalización masiva). No administra usuarios ni ajustes |
+| `RESPONSABLE_ARCHIVO` | Responsable de Archivo | Todo lo de `GESTOR_DOCUMENTAL`, más administración de archivo (incl. eliminar), organigrama y reportes. Solo lectura de usuarios (`usuarios: ['ver']`) — **no** crea/edita/elimina/bloquea usuarios ni asigna/revoca roles |
+| `ADMIN_GENERAL` | Administrador General | Acceso completo a todos los módulos incluyendo usuarios, roles y ajustes |
 
-**IMPORTANTE:** Los códigos de rol son `ADMIN_GENERAL` y `ADMIN_ARCHIVO`. El código `ADMIN` ya **no existe**. Cualquier comparación de roles debe usar los 4 códigos de la tabla. El superusuario Django hereda automáticamente `ADMIN_GENERAL`.
+**IMPORTANTE:** El código `ADMIN` no existe; tampoco existen `ADMIN_ARCHIVO` (renombrado a `RESPONSABLE_ARCHIVO` en `usuarios/0004_actualizar_catalogo_roles`) ni `ARCHIVO` (renombrado a `ASISTENTE_ARCHIVO` en `usuarios/0005_renombrar_archivo_asistente_archivo`, misma fila de `usr_rol`, mismas asignaciones `UsuarioRol`). Cualquier comparación de roles debe usar los 5 códigos de la tabla. El superusuario Django hereda automáticamente `ADMIN_GENERAL`. `mis_permisos().es_admin` / `UsuarioResumenSerializer.is_admin` son **exclusivos de `ADMIN_GENERAL`** (o superusuario) — `RESPONSABLE_ARCHIVO` es una autoridad funcional de archivo, no un administrador general, y por diseño no debe recibir el bypass total de permisos que otorga `es_admin`/`esAdmin` en el frontend.
 
-Módulos: `documentos`, `tramites`, `archivo`, `usuarios`, `organigrama`, `reportes`, `ajustes`
+El módulo `tramites` de `PERMISOS_ROL` tiene una estructura especial `canal -> acciones` (canales: `ventanilla`, `email`, `web`), porque el acceso depende del canal de ingreso del trámite. `get_permisos_usuario()` la aplana a una lista única en `permisos['tramites']` (compatibilidad con el resto del sistema) y expone además el detalle por canal en `permisos['tramites_canales']`, sin aplicarlo todavía como enforcement — queda preparado para autorización por canal en el backend.
+
+Módulos: `documentos`, `tramites` (por canal), `archivo`, `usuarios`, `organigrama`, `reportes`, `ajustes`
 
 ---
 
@@ -378,5 +380,5 @@ docker-compose up -d backend
 - OCR: idioma `spa` (español Ecuador)
 - `LogAuditoria`: `managed=False`, nunca migrar esa tabla
 - `ConfiguracionSistema`: singleton, acceder con `ConfiguracionSistema.get()`
-- Roles: comparar siempre con `['ADMIN_GENERAL', 'ADMIN_ARCHIVO']`, nunca con el antiguo `'ADMIN'`
+- Roles: comparar siempre con los 5 códigos vigentes (`USUARIO`, `ASISTENTE_ARCHIVO`, `GESTOR_DOCUMENTAL`, `RESPONSABLE_ARCHIVO`, `ADMIN_GENERAL`), nunca con el antiguo `'ADMIN'`, ni con `'ADMIN_ARCHIVO'` (renombrado a `RESPONSABLE_ARCHIVO`), ni con `'ARCHIVO'` (renombrado a `ASISTENTE_ARCHIVO`)
 - WeasyPrint: los recursos (imágenes, fuentes) deben ser rutas absolutas del sistema de archivos, no URLs externas

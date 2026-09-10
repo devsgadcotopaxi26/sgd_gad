@@ -34,8 +34,8 @@ def alertas_vencimiento():
             )
             enviados += 1
 
-        # Notificar al ciudadano si tiene email
-        if tramite.persona.notificacion_email and tramite.persona.email and dias == 1:
+        # Notificar al ciudadano si tiene email (no todos los trámites tienen persona registrada)
+        if tramite.persona and tramite.persona.notificacion_email and tramite.persona.email and dias == 1:
             from apps.auditoria.emails import email_notificacion_ciudadano
             email_notificacion_ciudadano(
                 tramite.persona.email,

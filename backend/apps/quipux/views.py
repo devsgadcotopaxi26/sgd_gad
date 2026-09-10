@@ -82,8 +82,10 @@ def _cedula_usuario(user):
 
 
 def _es_admin(user):
+    # Igual que documentos._es_admin_bandeja: consulta de bandeja histórica
+    # ajena por responsabilidad documental, no administración general.
     return user.is_superuser or user.roles.filter(
-        rol__codigo__in=['ADMIN_GENERAL', 'ADMIN_ARCHIVO'], activo=True
+        rol__codigo__in=['ADMIN_GENERAL', 'RESPONSABLE_ARCHIVO'], activo=True
     ).exists()
 
 
