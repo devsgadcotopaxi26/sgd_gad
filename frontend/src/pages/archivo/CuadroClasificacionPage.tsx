@@ -100,8 +100,9 @@ function ModalSerie({ serie, seccionId, onClose }: { serie?: Serie; seccionId?: 
   const qc = useQueryClient()
   const [form, setForm] = useState<Partial<Serie>>(serie ?? {
     seccion: seccionId, codigo: '', nombre: '',
-    origen_documentacion: 'digital', condicion_acceso: 'publico',
-    anos_gestion: 2, anos_central: 13, disposicion_final: 'conservacion', tecnica_seleccion: 'na',
+    origen_documentacion: ['digital'], condicion_acceso: 'publico',
+    conservacion_permanente: true, anos_gestion: null, anos_central: null,
+    disposicion_final: 'conservacion', tecnica_seleccion: 'na',
   })
   const [error, setError] = useState('')
 
@@ -113,6 +114,27 @@ function ModalSerie({ serie, seccionId, onClose }: { serie?: Serie; seccionId?: 
   })
 
   const set = (k: keyof Serie, v: any) => setForm(f => ({ ...f, [k]: v }))
+
+  const toggleOrigen = (v: 'fisico' | 'digital') => {
+    const actual = form.origen_documentacion ?? []
+    set('origen_documentacion', actual.includes(v) ? actual.filter(x => x !== v) : [...actual, v])
+  }
+
+  const setAnos = (k: 'anos_gestion' | 'anos_central', v: string) => {
+    if (v === '') { set(k, null); return }
+    const n = Number(v)
+    set(k, Number.isFinite(n) ? Math.max(0, n) : null)
+  }
+
+  const setPermanente = (checked: boolean) => {
+    setForm(f => ({
+      ...f,
+      conservacion_permanente: checked,
+      disposicion_final: checked ? 'conservacion' : f.disposicion_final,
+      anos_gestion: null,
+      anos_central: null,
+    }))
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
@@ -136,14 +158,14 @@ function ModalSerie({ serie, seccionId, onClose }: { serie?: Serie; seccionId?: 
               <select style={inputStyle} value={form.condicion_acceso} onChange={e => set('condicion_acceso', e.target.value)}>
                 <option value="publico">Público</option>
                 <option value="confidencial">Confidencial</option>
-                <option value="reservado">Reservado</option>
               </select>
             </div>
           </div>
 
           <div>
             <label style={labelStyle}>Nombre *</label>
-            <input style={inputStyle} placeholder="Nombre de la serie documental" value={form.nombre ?? ''} onChange={e => set('nombre', e.target.value)} />
+            <textarea style={{ ...inputStyle, resize: 'none' }} rows={2} maxLength={200} placeholder="Nombre de la serie documental"
+              value={form.nombre ?? ''} onChange={e => set('nombre', e.target.value)} />
           </div>
 
           <div>
@@ -155,35 +177,55 @@ function ModalSerie({ serie, seccionId, onClose }: { serie?: Serie; seccionId?: 
           <div>
             <label style={labelStyle}>Origen de la documentación</label>
             <div style={{ display: 'flex', gap: 6 }}>
-              {[['digital','Digital'],['fisico','Físico'],['hibrido','Híbrido']].map(([v, l]) => (
-                <button key={v} type="button" onClick={() => set('origen_documentacion', v)}
-                  style={{ flex: 1, padding: '8px 10px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: `1px solid ${form.origen_documentacion === v ? T.accentDk : T.rowBd}`, background: form.origen_documentacion === v ? T.rowSel : T.rowBg, color: form.origen_documentacion === v ? T.accentDk : T.rowSub, cursor: 'pointer' }}>
-                  {l}
-                </button>
-              ))}
+              {([['fisico','Físico'],['digital','Digital y Electrónica']] as const).map(([v, l]) => {
+                const activo = (form.origen_documentacion ?? []).includes(v)
+                return (
+                  <button key={v} type="button" onClick={() => toggleOrigen(v)}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 10px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: `1px solid ${activo ? T.accentDk : T.rowBd}`, background: activo ? T.rowSel : T.rowBg, color: activo ? T.accentDk : T.rowSub, cursor: 'pointer' }}>
+                    <span style={{ width: 14, height: 14, borderRadius: 4, border: `1.5px solid ${activo ? T.accentDk : T.rowBd}`, background: activo ? T.accentDk : 'transparent', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, lineHeight: 1 }}>
+                      {activo ? '✓' : ''}
+                    </span>
+                    {l}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
           <div style={{ background: T.rowHv, border: `0.5px solid ${T.rowBd}`, borderRadius: 10, padding: 14 }}>
             <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: T.rowSub, marginBottom: 12 }}>Tabla de plazos de conservación</p>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: T.rowTxt }}>
+              <input type="checkbox" checked={!!form.conservacion_permanente} onChange={e => setPermanente(e.target.checked)}
+                style={{ width: 15, height: 15, cursor: 'pointer', accentColor: T.accentDk }} />
+              Conservación permanente
+            </label>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
               <div>
                 <label style={{ ...labelStyle, fontSize: 10 }}>Años en Archivo de Gestión</label>
-                <input type="number" style={inputStyle} value={form.anos_gestion ?? 2} onChange={e => set('anos_gestion', Number(e.target.value))} />
+                <input type="number" min={0} disabled={!!form.conservacion_permanente}
+                  style={{ ...inputStyle, ...(form.conservacion_permanente ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                  value={form.anos_gestion ?? ''} onChange={e => setAnos('anos_gestion', e.target.value)} />
               </div>
               <div>
                 <label style={{ ...labelStyle, fontSize: 10 }}>Años en Archivo Central</label>
-                <input type="number" style={inputStyle} value={form.anos_central ?? 13} onChange={e => set('anos_central', Number(e.target.value))} />
+                <input type="number" min={0} disabled={!!form.conservacion_permanente}
+                  style={{ ...inputStyle, ...(form.conservacion_permanente ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                  value={form.anos_central ?? ''} onChange={e => setAnos('anos_central', e.target.value)} />
               </div>
             </div>
             <div style={{ marginBottom: 12 }}>
               <label style={{ ...labelStyle, fontSize: 10 }}>Base legal</label>
-              <input style={inputStyle} placeholder="Ley y artículo que determina el plazo" value={form.base_legal ?? ''} onChange={e => set('base_legal', e.target.value)} />
+              <textarea style={{ ...inputStyle, resize: 'none' }} rows={2} placeholder="Ley y artículo que determina el plazo"
+                value={form.base_legal ?? ''} onChange={e => set('base_legal', e.target.value)} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <label style={{ ...labelStyle, fontSize: 10 }}>Disposición final</label>
-                <select style={inputStyle} value={form.disposicion_final} onChange={e => set('disposicion_final', e.target.value)}>
+                <select disabled={!!form.conservacion_permanente}
+                  style={{ ...inputStyle, ...(form.conservacion_permanente ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                  value={form.disposicion_final} onChange={e => set('disposicion_final', e.target.value)}>
                   <option value="conservacion">Conservación permanente</option>
                   <option value="eliminacion">Eliminación</option>
                 </select>
@@ -205,7 +247,13 @@ function ModalSerie({ serie, seccionId, onClose }: { serie?: Serie; seccionId?: 
             Cancelar
           </button>
           <button
-            onClick={() => { if (!form.codigo || !form.nombre) { setError('Completa los campos obligatorios'); return }; mutation.mutate(form) }}
+            onClick={() => {
+              if (!form.codigo || !form.nombre) { setError('Completa los campos obligatorios'); return }
+              if (!form.conservacion_permanente && (form.anos_gestion == null || form.anos_central == null)) {
+                setError('Ingresa los años de gestión y archivo central, o marca Conservación permanente'); return
+              }
+              mutation.mutate(form)
+            }}
             disabled={mutation.isPending}
             style={{ padding: '8px 16px', fontSize: 13, fontWeight: 700, color: '#fff', background: T.accentDk, border: 'none', borderRadius: 10, cursor: 'pointer' }}>
             {serie ? 'Guardar cambios' : 'Crear serie'}
@@ -365,7 +413,7 @@ export default function CuadroClasificacionPage() {
               {series.length === 0 ? (
                 <p style={{ fontSize: 11, color: T.rowSub, textAlign: 'center', padding: 20 }}>Sin series documentales en esta sección</p>
               ) : series.map((serie: Serie) => {
-                const acceso = ACCESO_CONFIG[serie.condicion_acceso]
+                const acceso = ACCESO_CONFIG[serie.condicion_acceso] ?? ACCESO_CONFIG.confidencial
                 const AccesoIcon = acceso.icon
                 return (
                   <div key={serie.id} style={{ padding: '10px 12px', borderRadius: 10, border: `0.5px solid ${T.rowBd}`, marginBottom: 6, background: T.ctHdrBg }}
@@ -389,7 +437,7 @@ export default function CuadroClasificacionPage() {
                         <AccesoIcon size={9} /> {acceso.label}
                       </span>
                       <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 7px', borderRadius: 10, background: T.rowHv, color: T.rowSub }}>
-                        {serie.anos_gestion}a gestión + {serie.anos_central}a central
+                        {serie.conservacion_permanente ? 'Sin plazo (permanente)' : `${serie.anos_gestion}a gestión + ${serie.anos_central}a central`}
                       </span>
                       <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 7px', borderRadius: 10, background: serie.disposicion_final === 'conservacion' ? '#f0fdf4' : '#fef2f2', color: serie.disposicion_final === 'conservacion' ? '#15803d' : '#dc2626' }}>
                         {serie.disposicion_final === 'conservacion' ? 'Conservación' : 'Eliminación'}

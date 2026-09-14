@@ -381,3 +381,152 @@ class PatchBypassTest(ArchivoBase):
         exp.refresh_from_db()
         self.assertEqual(exp.estado, 'cerrado')
         self.assertIsNotNone(exp.fecha_cierre)
+
+
+# ── Correcciones al formulario de Serie Documental ─────────────────────────
+class SerieCamposTest(ArchivoBase):
+    def _payload(self, **extra):
+        base = {
+            'seccion': self.seccion.id, 'codigo': 'SER-TEST', 'nombre': 'Serie de prueba',
+            'origen_documentacion': ['digital'], 'condicion_acceso': 'publico',
+            'anos_gestion': 2, 'anos_central': 10,
+        }
+        base.update(extra)
+        return base
+
+    def test_condicion_acceso_rechaza_reservado(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(condicion_acceso='reservado'), format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('condicion_acceso', r.data)
+
+    def test_origen_documentacion_acepta_seleccion_multiple(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(origen_documentacion=['fisico', 'digital']), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertCountEqual(r.data['origen_documentacion'], ['fisico', 'digital'])
+
+    def test_origen_documentacion_rechaza_hibrido(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(origen_documentacion=['hibrido']), format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('origen_documentacion', r.data)
+
+    def test_anos_gestion_rechaza_negativo(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(anos_gestion=-1), format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('anos_gestion', r.data)
+
+    def test_anos_central_rechaza_negativo(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(anos_central=-5), format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('anos_central', r.data)
+
+    def test_base_legal_acepta_texto_largo(self):
+        texto_largo = ('Ley Orgánica de Transparencia y Acceso a la Información Pública. ' * 10).strip()  # > 300 chars
+        self.assertGreater(len(texto_largo), 300)
+        r = self.c_ges.post(f'{API}/series/', self._payload(base_legal=texto_largo), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['base_legal'], texto_largo)
+
+    def test_registro_historico_reservado_se_lee_sin_error(self):
+        # Simula un registro legado creado antes del saneamiento (bypass del serializer).
+        legado = Serie.objects.create(
+            seccion=self.seccion, codigo='SER-LEGADO', nombre='Legado',
+            condicion_acceso='reservado', origen_documentacion=['digital'],
+        )
+        r = self.c_ges.get(f'{API}/series/{legado.id}/')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data['condicion_acceso'], 'reservado')
+
+    # ── Conservación permanente ─────────────────────────────────────────
+    def test_crea_serie_normal_con_anos_validos(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(disposicion_final='eliminacion'), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertFalse(r.data['conservacion_permanente'])
+        self.assertEqual(r.data['anos_gestion'], 2)
+        self.assertEqual(r.data['anos_central'], 10)
+
+    def test_crea_serie_con_conservacion_permanente(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(
+            conservacion_permanente=True, disposicion_final='eliminacion',  # se normaliza igual
+        ), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data['conservacion_permanente'])
+        self.assertIsNone(r.data['anos_gestion'])
+        self.assertIsNone(r.data['anos_central'])
+
+    def test_permanente_fuerza_disposicion_final_conservacion(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(conservacion_permanente=True), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['disposicion_final'], 'conservacion')
+
+    def test_disposicion_conservacion_sin_checkbox_activa_permanente(self):
+        # disposicion_final='conservacion' sin marcar el checkbox -> se normaliza a permanente=True
+        r = self.c_ges.post(f'{API}/series/', self._payload(disposicion_final='conservacion'), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data['conservacion_permanente'])
+        self.assertIsNone(r.data['anos_gestion'])
+        self.assertIsNone(r.data['anos_central'])
+
+    def test_permanente_no_conserva_anos_incompatibles(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(
+            conservacion_permanente=True, anos_gestion=5, anos_central=10, disposicion_final='eliminacion',
+        ), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['disposicion_final'], 'conservacion')
+        self.assertIsNone(r.data['anos_gestion'])
+        self.assertIsNone(r.data['anos_central'])
+
+    def test_no_permanente_sin_anos_es_rechazada(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(
+            conservacion_permanente=False, anos_gestion=None, anos_central=None, disposicion_final='eliminacion',
+        ), format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_no_permanente_usa_anos_normalmente(self):
+        r = self.c_ges.post(f'{API}/series/', self._payload(
+            conservacion_permanente=False, anos_gestion=3, anos_central=15, disposicion_final='eliminacion',
+        ), format='json')
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data['anos_gestion'], 3)
+        self.assertEqual(r.data['anos_central'], 15)
+
+    def test_editar_de_normal_a_permanente(self):
+        serie = Serie.objects.create(
+            seccion=self.seccion, codigo='SER-EDIT1', nombre='Editable',
+            conservacion_permanente=False, anos_gestion=2, anos_central=10, disposicion_final='eliminacion',
+        )
+        r = self.c_ges.patch(f'{API}/series/{serie.id}/', {'conservacion_permanente': True}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        serie.refresh_from_db()
+        self.assertTrue(serie.conservacion_permanente)
+        self.assertEqual(serie.disposicion_final, 'conservacion')
+        self.assertIsNone(serie.anos_gestion)
+        self.assertIsNone(serie.anos_central)
+
+    def test_editar_de_permanente_a_normal(self):
+        serie = Serie.objects.create(
+            seccion=self.seccion, codigo='SER-EDIT2', nombre='Editable',
+            conservacion_permanente=True, anos_gestion=None, anos_central=None, disposicion_final='conservacion',
+        )
+        r = self.c_ges.patch(f'{API}/series/{serie.id}/', {
+            'conservacion_permanente': False, 'disposicion_final': 'eliminacion',
+            'anos_gestion': 4, 'anos_central': 20,
+        }, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        serie.refresh_from_db()
+        self.assertFalse(serie.conservacion_permanente)
+        self.assertEqual(serie.disposicion_final, 'eliminacion')
+        self.assertEqual(serie.anos_gestion, 4)
+        self.assertEqual(serie.anos_central, 20)
+
+    def test_registros_historicos_permanentes_siguen_consultables(self):
+        # Simula el estado post-migración: disposicion_final='conservacion' con años ya poblados
+        # (dato histórico preservado, no nulificado por la migración).
+        legado = Serie.objects.create(
+            seccion=self.seccion, codigo='SER-HIST-PERM', nombre='Histórica permanente',
+            conservacion_permanente=True, anos_gestion=2, anos_central=50, disposicion_final='conservacion',
+        )
+        r = self.c_ges.get(f'{API}/series/{legado.id}/')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data['conservacion_permanente'])
+        self.assertEqual(r.data['anos_gestion'], 2)
+        self.assertEqual(r.data['anos_central'], 50)

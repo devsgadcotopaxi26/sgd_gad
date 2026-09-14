@@ -195,7 +195,7 @@ class SerieSerializer(serializers.ModelSerializer):
             'serie_padre', 'serie_padre_nombre',
             'codigo', 'nombre', 'descripcion',
             'origen_documentacion', 'condicion_acceso',
-            'anos_gestion', 'anos_central', 'base_legal',
+            'conservacion_permanente', 'anos_gestion', 'anos_central', 'base_legal',
             'disposicion_final', 'tecnica_seleccion',
             'activo', 'creado_en',
             'total_expedientes', 'total_subseries', 'anos_total_acumulado',
@@ -208,7 +208,36 @@ class SerieSerializer(serializers.ModelSerializer):
         return obj.subseries.count()
 
     def get_anos_total_acumulado(self, obj):
+        if obj.anos_gestion is None or obj.anos_central is None:
+            return None
         return obj.anos_gestion + obj.anos_central
+
+    def validate(self, data):
+        def g(k, d=None):
+            if k in data:
+                return data[k]
+            if self.instance is not None:
+                return getattr(self.instance, k)
+            return d
+
+        permanente  = g('conservacion_permanente', False)
+        disposicion = g('disposicion_final', 'conservacion')
+
+        # El checkbox y la disposición "Conservación permanente" son equivalentes:
+        # cualquiera de los dos activa el otro, para evitar estados contradictorios.
+        if permanente or disposicion == 'conservacion':
+            data['conservacion_permanente'] = True
+            data['disposicion_final']       = 'conservacion'
+            data['anos_gestion']            = None
+            data['anos_central']            = None
+        else:
+            if g('anos_gestion') is None:
+                raise serializers.ValidationError(
+                    {'anos_gestion': 'Obligatorio cuando la serie no es de conservación permanente.'})
+            if g('anos_central') is None:
+                raise serializers.ValidationError(
+                    {'anos_central': 'Obligatorio cuando la serie no es de conservación permanente.'})
+        return data
 
 
 class ExpedienteSerializer(serializers.ModelSerializer):

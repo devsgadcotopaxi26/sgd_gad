@@ -36,17 +36,18 @@ export interface Serie {
   codigo: string
   nombre: string
   descripcion: string
-  origen_documentacion: 'fisico' | 'digital' | 'hibrido'
+  origen_documentacion: ('fisico' | 'digital')[]
   condicion_acceso: 'publico' | 'confidencial' | 'reservado'
-  anos_gestion: number
-  anos_central: number
+  conservacion_permanente: boolean
+  anos_gestion: number | null
+  anos_central: number | null
   base_legal: string
   disposicion_final: 'conservacion' | 'eliminacion'
   tecnica_seleccion: 'completa' | 'parcial' | 'na'
   activo: boolean
   total_expedientes: number
   total_subseries: number
-  anos_total_acumulado: number
+  anos_total_acumulado: number | null
 }
 
 // ── Expedientes (ciclo vital del documento) ──────────────────────────
