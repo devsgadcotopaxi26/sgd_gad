@@ -2,7 +2,12 @@
 Modelos de archivo — conforme a la Regla Técnica Nacional para la
 Organización y Mantenimiento de los Archivos Públicos (Acuerdo SGPR-2019-0107)
 """
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
+
+
+def list_origen_digital():
+    return ['digital']
 
 
 # ── Cuadro General de Clasificación Documental (Art. 28-30) ──────────
@@ -41,14 +46,12 @@ class Seccion(models.Model):
 class Serie(models.Model):
     """Nivel 3: serie o subserie documental (Art. 28.4.c)."""
     ORIGEN_CHOICES = [
-        ('fisico',    'Físico'),
-        ('digital',   'Digital'),
-        ('hibrido',   'Híbrido (físico y digital)'),
+        ('fisico',  'Físico'),
+        ('digital', 'Digital y Electrónica'),
     ]
     ACCESO_CHOICES = [
         ('publico',      'Público'),
         ('confidencial', 'Confidencial'),
-        ('reservado',    'Reservado'),
     ]
     DISPOSICION_CHOICES = [
         ('conservacion', 'Conservación permanente'),
@@ -65,13 +68,18 @@ class Serie(models.Model):
     codigo              = models.CharField(max_length=30, unique=True)
     nombre              = models.CharField(max_length=200)
     descripcion         = models.TextField(blank=True, help_text='Breve explicación del contenido de la serie (Art. 28.4.d)')
-    origen_documentacion = models.CharField(max_length=20, choices=ORIGEN_CHOICES, default='digital')
+    origen_documentacion = ArrayField(
+        models.CharField(max_length=20, choices=ORIGEN_CHOICES),
+        default=list_origen_digital, blank=True,
+        help_text='Uno o ambos: físico, digital y electrónica',
+    )
     condicion_acceso    = models.CharField(max_length=20, choices=ACCESO_CHOICES, default='publico')
 
     # Tabla de Plazos de Conservación Documental (Art. 46)
-    anos_gestion        = models.SmallIntegerField(default=2, help_text='Años en Archivo de Gestión')
-    anos_central        = models.SmallIntegerField(default=13, help_text='Años en Archivo Central (acumulado desde gestión)')
-    base_legal          = models.CharField(max_length=300, blank=True, help_text='Ley y artículo que determina el plazo')
+    conservacion_permanente = models.BooleanField(default=False, help_text='Si aplica, no tiene plazo expresado en años')
+    anos_gestion        = models.PositiveSmallIntegerField(null=True, blank=True, default=2, help_text='Años en Archivo de Gestión (no aplica si es de conservación permanente)')
+    anos_central        = models.PositiveSmallIntegerField(null=True, blank=True, default=13, help_text='Años en Archivo Central (no aplica si es de conservación permanente)')
+    base_legal          = models.TextField(blank=True, help_text='Ley y artículo que determina el plazo')
     disposicion_final   = models.CharField(max_length=20, choices=DISPOSICION_CHOICES, default='conservacion')
     tecnica_seleccion   = models.CharField(max_length=20, choices=TECNICA_SELECCION_CHOICES, default='na')
 
@@ -167,9 +175,9 @@ class Expediente(models.Model):
         if not self.fecha_cierre:
             return None
         serie = self.serie
-        if self.categoria_actual == 'gestion':
+        if self.categoria_actual == 'gestion' and serie.anos_gestion is not None:
             return self.fecha_cierre.replace(year=self.fecha_cierre.year + serie.anos_gestion)
-        if self.categoria_actual == 'central':
+        if self.categoria_actual == 'central' and serie.anos_central is not None:
             return self.fecha_cierre.replace(year=self.fecha_cierre.year + serie.anos_central)
         return None
 

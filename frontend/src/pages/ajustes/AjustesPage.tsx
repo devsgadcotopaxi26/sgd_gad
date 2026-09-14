@@ -523,6 +523,18 @@ function TabSeriesRegla() {
 
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
   const val = (k: string) => form[k] !== undefined ? form[k] : (editando?.[k] ?? '')
+  const setAnos = (k: string, v: string) => {
+    if (v === '') { set(k, null); return }
+    const n = Number(v)
+    set(k, Number.isFinite(n) ? Math.max(0, n) : null)
+  }
+  const permanente = !!val('conservacion_permanente')
+  const setPermanente = (checked: boolean) => {
+    set('conservacion_permanente', checked)
+    if (checked) set('disposicion_final', 'conservacion')
+    set('anos_gestion', null)
+    set('anos_central', null)
+  }
 
   return (
     <div>
@@ -536,18 +548,29 @@ function TabSeriesRegla() {
       {editando && (
         <div style={{ background: T.rowHv, border: `0.5px solid ${T.rowBd}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
           <p style={{ fontSize: 12, fontWeight: 700, color: T.accentDk, marginBottom: 12 }}>Editando: {editando.nombre}</p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer', fontSize: 12, fontWeight: 600, color: T.rowTxt }}>
+            <input type="checkbox" checked={permanente} onChange={e => setPermanente(e.target.checked)}
+              style={{ width: 15, height: 15, cursor: 'pointer', accentColor: T.accentDk }} />
+            Conservación permanente
+          </label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelStyle}>Años en Archivo de Gestión</label>
-              <input type="number" className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={inputStyle} value={val('anos_gestion')} onChange={e => set('anos_gestion', Number(e.target.value))} />
+              <input type="number" min={0} disabled={permanente}
+                className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={{ ...inputStyle, ...(permanente ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                value={val('anos_gestion')} onChange={e => setAnos('anos_gestion', e.target.value)} />
             </div>
             <div>
               <label style={labelStyle}>Años en Archivo Central (acumulado)</label>
-              <input type="number" className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={inputStyle} value={val('anos_central')} onChange={e => set('anos_central', Number(e.target.value))} />
+              <input type="number" min={0} disabled={permanente}
+                className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={{ ...inputStyle, ...(permanente ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                value={val('anos_central')} onChange={e => setAnos('anos_central', e.target.value)} />
             </div>
             <div>
               <label style={labelStyle}>Disposición final</label>
-              <select className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={inputStyle} value={val('disposicion_final')} onChange={e => set('disposicion_final', e.target.value)}>
+              <select disabled={permanente}
+                className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={{ ...inputStyle, ...(permanente ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                value={val('disposicion_final')} onChange={e => set('disposicion_final', e.target.value)}>
                 <option value="conservacion">Conservación permanente</option>
                 <option value="eliminacion">Eliminación</option>
               </select>
@@ -562,14 +585,13 @@ function TabSeriesRegla() {
             </div>
             <div>
               <label style={labelStyle}>Base legal</label>
-              <input className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={inputStyle} placeholder="Ej: Art. 47 COOTAD" value={val('base_legal')} onChange={e => set('base_legal', e.target.value)} />
+              <textarea className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={{ ...inputStyle, resize: 'none' }} rows={2} placeholder="Ej: Art. 47 COOTAD" value={val('base_legal')} onChange={e => set('base_legal', e.target.value)} />
             </div>
             <div>
               <label style={labelStyle}>Condición de acceso</label>
               <select className="w-full px-3 py-2.5 text-sm rounded-xl outline-none" style={inputStyle} value={val('condicion_acceso')} onChange={e => set('condicion_acceso', e.target.value)}>
                 <option value="publico">Público</option>
                 <option value="confidencial">Confidencial</option>
-                <option value="reservado">Reservado</option>
               </select>
             </div>
           </div>
@@ -600,7 +622,7 @@ function TabSeriesRegla() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontSize: 12, fontWeight: 600, color: T.rowTxt, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.nombre}</p>
                 <p style={{ fontSize: 10, color: T.rowSub, margin: '2px 0 0' }}>
-                  Gestión: {s.anos_gestion} años · Central: {s.anos_central} años · {s.disposicion_final === 'conservacion' ? '∞ Conservación' : '🗑 Eliminación'} · {s.condicion_acceso}
+                  {s.conservacion_permanente ? 'Sin plazo (permanente)' : `Gestión: ${s.anos_gestion} años · Central: ${s.anos_central} años`} · {s.disposicion_final === 'conservacion' ? '∞ Conservación' : '🗑 Eliminación'} · {s.condicion_acceso}
                 </p>
               </div>
               <button onClick={() => { setEditando(s); setForm({}) }}
